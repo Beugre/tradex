@@ -24,7 +24,7 @@ import os
 import signal
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from src import config
@@ -43,6 +43,7 @@ from src.core.breakout_detector import (
     BreakoutSignal,
     atr as compute_atr,
     detect_breakout_signals,
+    diagnose_last_candle,
 )
 from src.core.position_store import PositionStore
 from src.core.risk_manager import (
@@ -165,6 +166,18 @@ class TradeXBinanceBreakoutBot:
         self._last_cleanup_date: str = ""
         self._last_snapshot_date: str = ""
 
+        # ── Métriques & monitoring ──
+        self._daily_pnl: float = 0.0
+        self._daily_trades: int = 0
+        self._daily_date: str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        self._signals_detected: int = 0
+        self._signals_rejected: int = 0
+        self._api_latencies: list[float] = []
+        self._next_h4_close_ts: float = 0.0
+        self._last_telegram_heartbeat: float = 0.0
+        self._dd_warning_sent: bool = False
+        self._trail_last_palier: dict[str, int] = {}  # 0=initial, 1=step1, 2=step2
+
         # Breakout config
         self._breakout_cfg = BreakoutConfig(
             bb_period=config.BINANCE_BREAKOUT_BB_PERIOD,
@@ -222,6 +235,7 @@ class TradeXBinanceBreakoutBot:
 
         # Initialisation : charger les bougies + détecter les signaux existants
         self._initialize_candles()
+        self._next_h4_close_ts = self._compute_next_h4_close()
 
         try:
             while self._running:
@@ -365,27 +379,47 @@ class TradeXBinanceBreakoutBot:
         self._maybe_heartbeat()
 
     def _check_new_h4_candle(self) -> None:
-        """Détecte une nouvelle bougie H4 → recalcule les signaux Breakout."""
+        """Détecte une nouvelle bougie H4 — optimisé : skip si pas encore l'heure."""
+        now = time.time()
+
+        # Optimisation : ne vérifier que si on a dépassé le prochain close H4 (+60s buffer)
+        if self._next_h4_close_ts > 0 and now < self._next_h4_close_ts + 60:
+            return
+
         if not self._trading_pairs:
             return
         sample = self._trading_pairs[0]
         try:
-            candles = self._data.get_h4_candles(sample)
+            t0 = time.time()
+            # Fetch seulement 2 bougies (pas 200) pour vérifier le timestamp
+            candles = self._data.get_h4_candles(sample, limit=2)
+            self._record_api_latency(time.time() - t0)
+
             if candles and candles[-1].timestamp > self._last_h4_ts:
                 self._last_h4_ts = candles[-1].timestamp
+                self._next_h4_close_ts = self._compute_next_h4_close()
                 logger.info("═" * 40)
                 logger.info("🕐 Nouvelle bougie H4 — recalcul des signaux Breakout")
                 self._refresh_all_signals()
                 self._firebase_daily_cleanup()
                 self._maybe_daily_snapshot()
+                self._reset_daily_if_needed()
+            else:
+                # Pas encore de nouvelle bougie → recalculer le prochain close
+                self._next_h4_close_ts = self._compute_next_h4_close()
         except Exception as e:
             logger.debug("Erreur check H4: %s", e)
 
     def _refresh_all_signals(self) -> None:
         """Recharge bougies + détecte les signaux pour toutes les paires."""
+        signals_count = 0
+        near_miss_count = 0
+
         for symbol in self._trading_pairs:
             try:
+                t0 = time.time()
                 candles = self._data.get_h4_candles(symbol)
+                self._record_api_latency(time.time() - t0)
                 self._candles_cache[symbol] = candles
 
                 # ATR
@@ -402,6 +436,8 @@ class TradeXBinanceBreakoutBot:
                     # Signal = sur la DERNIÈRE bougie seulement (pas d'ancien signal)
                     if latest.candle_index == len(candles) - 1:
                         self._last_signal[symbol] = latest
+                        signals_count += 1
+                        self._signals_detected += 1
                         logger.info(
                             "[%s] 🔔 Signal BREAKOUT %s | entry=%s | SL=%s | ADX=%.1f | BBw=%.3f | Vol=%.1fx",
                             symbol, latest.direction.value,
@@ -412,8 +448,34 @@ class TradeXBinanceBreakoutBot:
                         self._last_signal[symbol] = None
                 else:
                     self._last_signal[symbol] = None
+
+                    # Diagnostic near-miss : quels filtres bloquent ?
+                    if candles:
+                        diag = diagnose_last_candle(candles, self._breakout_cfg)
+                        passed = diag.get("filters_passed", 0)
+                        total = diag.get("filters_total", 4)
+                        if passed >= 3:  # Near-miss : 3/4 filtres passés
+                            near_miss_count += 1
+                            self._signals_rejected += 1
+                            reasons = diag.get("reasons", [])
+                            logger.info(
+                                "[%s] ❗ Near-miss breakout (%d/%d) | %s",
+                                symbol, passed, total,
+                                " | ".join(reasons) if reasons else "?",
+                            )
+                            self._telegram.notify_signal_rejected(
+                                symbol=symbol,
+                                reasons=reasons,
+                                filters_passed=passed,
+                                filters_total=total,
+                            )
             except Exception as e:
                 logger.error("[%s] Erreur refresh signal: %s", symbol, e)
+
+        logger.info(
+            "📊 Scan H4 terminé | %d signal(s) détecté(s) | %d near-miss | %d paires analysées",
+            signals_count, near_miss_count, len(self._trading_pairs),
+        )
 
     def _check_kill_switch_month_reset(self) -> None:
         """Reset le kill-switch en début de mois."""
@@ -457,6 +519,7 @@ class TradeXBinanceBreakoutBot:
 
         # Kill-switch actif → pas de nouvelles positions
         if self._kill_switch_active:
+            logger.debug("[%s] Signal ignoré : kill-switch actif", symbol)
             return
 
         # Déjà une position ?
@@ -470,6 +533,10 @@ class TradeXBinanceBreakoutBot:
             if p.status in (PositionStatus.OPEN, PositionStatus.ZERO_RISK)
         )
         if open_count >= config.BINANCE_BREAKOUT_MAX_POSITIONS:
+            logger.info(
+                "[%s] ❌ Signal BREAKOUT ignoré : max positions atteint (%d/%d)",
+                symbol, open_count, config.BINANCE_BREAKOUT_MAX_POSITIONS,
+            )
             return
 
         self._open_breakout_position(symbol, sig)
@@ -579,6 +646,18 @@ class TradeXBinanceBreakoutBot:
                     quantity -= total_commission
 
                 logger.info("[%s] ✅ MARKET BUY fill @ %s (qty=%.8f)", symbol, _fmt(fill_price), quantity)
+
+                # Vérification slippage
+                slippage_pct = abs(fill_price - current_price) / current_price
+                if slippage_pct > config.SLIPPAGE_WARNING_PCT:
+                    logger.warning(
+                        "[%s] ⚠️ Slippage %.2f%% (expected=%s, fill=%s)",
+                        symbol, slippage_pct * 100, _fmt(current_price), _fmt(fill_price),
+                    )
+                    self._telegram.notify_warning(
+                        f"Slippage {symbol}",
+                        f"Slippage {slippage_pct*100:.2f}% (expected={_fmt(current_price)}, fill={_fmt(fill_price)})",
+                    )
             except Exception as e:
                 logger.error("[%s] ❌ MARKET BUY échoué: %s", symbol, e)
                 self._telegram.notify_error(f"Breakout {symbol} BUY échoué: {e}")
@@ -606,19 +685,23 @@ class TradeXBinanceBreakoutBot:
         # Consommer le signal (ne pas re-entrer sur la même bougie)
         self._last_signal[symbol] = None
 
-        # Notifications
+        # Notifications riches
         risk_amount = fiat_balance * risk_pct
         sl_dist_pct = abs(fill_price - sig.sl_price) / fill_price * 100
+        size_usd = quantity * fill_price
 
-        self._telegram.notify_entry(
+        self._telegram.notify_breakout_entry(
             symbol=symbol,
-            side=OrderSide.BUY,
             entry_price=fill_price,
             sl_price=sig.sl_price,
             size=quantity,
-            risk_percent=risk_pct,
-            risk_amount=risk_amount,
-            strategy=StrategyType.BREAKOUT,
+            size_usd=size_usd,
+            risk_pct=risk_pct,
+            risk_usd=risk_amount,
+            sl_distance_pct=sl_dist_pct,
+            adx=sig.adx,
+            bb_width=sig.bb_width,
+            volume_ratio=sig.volume_ratio,
         )
 
         logger.info(
@@ -694,7 +777,9 @@ class TradeXBinanceBreakoutBot:
             lock1 = config.BINANCE_BREAKOUT_TRAIL_LOCK1_PCT  # 0.2%
             lock2 = config.BINANCE_BREAKOUT_TRAIL_LOCK2_PCT  # 2%
 
+            current_palier = 0
             if gain_pct >= step2:
+                current_palier = 2
                 # Palier 2 : verrouiller lock2% de profit
                 candidate = entry * (1 + lock2)
                 new_sl = max(new_sl, candidate)
@@ -704,6 +789,7 @@ class TradeXBinanceBreakoutBot:
                     atr_trail_sl = peak - config.BINANCE_BREAKOUT_TRAIL_ATR_MULT * trail_atr
                     new_sl = max(new_sl, atr_trail_sl)
             elif gain_pct >= step1:
+                current_palier = 1
                 # Palier 1 : verrouiller lock1% de profit (quasi breakeven)
                 candidate = entry * (1 + lock1)
                 new_sl = max(new_sl, candidate)
@@ -715,10 +801,29 @@ class TradeXBinanceBreakoutBot:
                 position.peak_price = peak
                 self._save_state()
 
+                # Déterminer le label du palier
+                palier_labels = {0: "", 1: "Palier 1 (≈BE)", 2: "Palier 2 (+trailing)"}
+                palier_label = palier_labels.get(current_palier, "")
+
                 logger.info(
-                    "[%s] 📊 Trail SL ↑ %s → %s | gain=%.1f%% | peak=%s",
+                    "[%s] 📊 Trail SL ↑ %s → %s | gain=%.1f%% | peak=%s | %s",
                     symbol, _fmt(current_sl), _fmt(new_sl), gain_pct * 100, _fmt(peak),
+                    palier_label or "initial",
                 )
+
+                # Notification Telegram : uniquement sur changement de palier
+                last_palier = self._trail_last_palier.get(symbol, 0)
+                if current_palier > last_palier:
+                    self._trail_last_palier[symbol] = current_palier
+                    self._telegram.notify_breakout_trail(
+                        symbol=symbol,
+                        entry_price=entry,
+                        old_sl=current_sl,
+                        new_sl=new_sl,
+                        peak=peak,
+                        gain_pct=gain_pct * 100,
+                        palier=palier_label,
+                    )
 
                 # Firebase : mettre à jour SL + peak_price
                 if position.firebase_trade_id:
@@ -748,12 +853,27 @@ class TradeXBinanceBreakoutBot:
                         except Exception:
                             pass
 
-        # Kill-switch check
+        # Kill-switch check + DD warning
         if config.BINANCE_BREAKOUT_KILL_SWITCH and self._month_start_equity > 0:
             try:
                 balances = self._client.get_balances()
                 equity = self._calculate_equity(balances)
                 month_return = (equity - self._month_start_equity) / self._month_start_equity
+
+                # DD Warning (avant kill-switch)
+                if month_return <= config.DD_WARNING_PCT and not self._dd_warning_sent:
+                    self._dd_warning_sent = True
+                    logger.warning(
+                        "⚠️ DD Warning | equity=$%.2f | month=%.1f%% (seuil warning: %.1f%%, kill: %.1f%%)",
+                        equity, month_return * 100,
+                        config.DD_WARNING_PCT * 100, config.BINANCE_BREAKOUT_KILL_PCT * 100,
+                    )
+                    self._telegram.notify_warning(
+                        f"Drawdown {month_return*100:.1f}%",
+                        f"Equity: ${equity:,.0f} | DD mois: {month_return*100:+.1f}% "
+                        f"(kill-switch à {config.BINANCE_BREAKOUT_KILL_PCT*100:.0f}%)",
+                    )
+
                 if month_return <= config.BINANCE_BREAKOUT_KILL_PCT:
                     if not self._kill_switch_active:
                         self._kill_switch_active = True
@@ -854,10 +974,15 @@ class TradeXBinanceBreakoutBot:
         position.status = PositionStatus.CLOSED
         position.pnl = pnl_net
 
+        # Daily PnL tracking
+        self._daily_pnl += pnl_net
+        self._daily_trades += 1
+
         # Cleanup trailing state
         self._peak_prices.pop(symbol, None)
         self._trail_sl.pop(symbol, None)
         self._last_signal.pop(symbol, None)
+        self._trail_last_palier.pop(symbol, None)
         self._save_state()
 
         # Telegram
@@ -923,6 +1048,7 @@ class TradeXBinanceBreakoutBot:
         self._store.save(self._positions, {})
 
     def _maybe_heartbeat(self) -> None:
+        """Heartbeat étendu — log + Telegram périodique (niveau fund)."""
         now = time.time()
         if now - self._last_heartbeat_time < config.HEARTBEAT_INTERVAL_SECONDS:
             return
@@ -932,35 +1058,97 @@ class TradeXBinanceBreakoutBot:
             p for p in self._positions.values()
             if p.status in (PositionStatus.OPEN, PositionStatus.ZERO_RISK)
         ]
+
         try:
+            t0 = time.time()
             balances = self._client.get_balances()
+            self._record_api_latency(time.time() - t0)
             equity = self._calculate_equity(balances)
         except Exception:
             equity = 0
+            balances = []
 
-        # Résumé des positions ouvertes
+        # Equity allouée pour ce bot
+        allocated = config.BINANCE_BREAKOUT_ALLOCATED_BALANCE
+        allocated_equity = min(allocated, equity) if allocated > 0 else equity
+
+        # Drawdown mensuel
+        dd_pct = 0.0
+        if self._month_start_equity > 0:
+            dd_pct = (equity - self._month_start_equity) / self._month_start_equity * 100
+
+        # Exposition courante (somme notionnelle des positions / capital alloué)
+        exposure_notional = 0.0
+        positions_detail = []
         for pos in open_pos:
+            ticker = self._data.get_ticker(pos.symbol)
+            price = ticker.last_price if ticker else pos.entry_price
+            notional = pos.size * price
+            exposure_notional += notional
             sl = self._trail_sl.get(pos.symbol, pos.sl_price)
             peak = self._peak_prices.get(pos.symbol, pos.entry_price)
-            gain = (peak - pos.entry_price) / pos.entry_price * 100 if pos.entry_price > 0 else 0
+            gain = (price - pos.entry_price) / pos.entry_price * 100 if pos.entry_price > 0 else 0
+            positions_detail.append({
+                "symbol": pos.symbol,
+                "entry": pos.entry_price,
+                "sl": sl,
+                "peak": peak,
+                "gain_pct": gain,
+                "notional": notional,
+            })
             logger.info(
-                "  [%s] LONG @ %s | SL=%s | peak=%s (+%.1f%%)",
-                pos.symbol, _fmt(pos.entry_price), _fmt(sl), _fmt(peak), gain,
+                "  [%s] LONG @ %s | SL=%s | peak=%s | now=%s (%+.1f%%)",
+                pos.symbol, _fmt(pos.entry_price), _fmt(sl), _fmt(peak), _fmt(price), gain,
             )
 
+        exposure_pct = (exposure_notional / allocated_equity * 100) if allocated_equity > 0 else 0
+
+        # Daily PnL en %
+        daily_pnl_pct = (self._daily_pnl / allocated_equity * 100) if allocated_equity > 0 else 0
+
+        # API latency moyenne (valeurs déjà en ms)
+        avg_latency = (sum(self._api_latencies) / len(self._api_latencies)) if self._api_latencies else 0
+
+        # Vérification data stale
+        self._check_data_freshness()
+
         logger.info(
-            "💓 BREAKOUT | %d/%d positions | equity=$%.2f | kill=%s | cycle #%d",
-            len(open_pos), config.BINANCE_BREAKOUT_MAX_POSITIONS,
-            equity,
+            "💓 BREAKOUT H4 | Equity: $%.0f (alloué: $%.0f) | DD: %+.1f%% | "
+            "Expo: %.0f%% | Pos: %d/%d | PnL jour: %+.2f$ (%+.1f%%) | Kill: %s | "
+            "Signaux: %d📡 %d❌ | API: %.0fms | cycle #%d",
+            equity, allocated_equity, dd_pct,
+            exposure_pct, len(open_pos), config.BINANCE_BREAKOUT_MAX_POSITIONS,
+            self._daily_pnl, daily_pnl_pct,
             "🔴 ON" if self._kill_switch_active else "🟢 OFF",
-            self._cycle_count,
+            self._signals_detected, self._signals_rejected,
+            avg_latency, self._cycle_count,
         )
 
+        # Heartbeat Telegram (moins fréquent que le log)
+        if now - self._last_telegram_heartbeat >= config.BREAKOUT_HEARTBEAT_TELEGRAM_SECONDS:
+            self._last_telegram_heartbeat = now
+            self._telegram.notify_breakout_heartbeat(
+                equity=equity,
+                allocated_equity=allocated_equity,
+                drawdown_pct=dd_pct,
+                exposure_pct=exposure_pct,
+                open_positions=len(open_pos),
+                max_positions=config.BINANCE_BREAKOUT_MAX_POSITIONS,
+                daily_pnl=self._daily_pnl,
+                daily_pnl_pct=daily_pnl_pct,
+                kill_switch=self._kill_switch_active,
+                positions_detail=positions_detail,
+                signals_detected=self._signals_detected,
+                signals_rejected=self._signals_rejected,
+                avg_api_latency_ms=avg_latency,
+            )
+
+        # Firebase heartbeat
         try:
             fb_log_heartbeat(
                 open_positions=len(open_pos),
                 total_equity=equity,
-                total_risk_pct=0,
+                total_risk_pct=exposure_pct / 100 if exposure_pct > 0 else 0,
                 pairs_count=len(self._trading_pairs),
                 exchange=EXCHANGE_NAME,
             )
@@ -1034,6 +1222,74 @@ class TradeXBinanceBreakoutBot:
         self._client.close()
         self._telegram.close()
         logger.info("TradeX Binance Breakout arrêté proprement")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # HELPERS — Monitoring & Alertes
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _compute_next_h4_close(self) -> float:
+        """Calcule le timestamp du prochain close H4 (UTC 0/4/8/12/16/20).
+
+        Évite des appels API inutiles entre les fermetures de bougies.
+        """
+        now = datetime.now(timezone.utc)
+        next_close_hour = ((now.hour // 4) + 1) * 4
+        close_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        close_dt += timedelta(hours=next_close_hour)
+        return close_dt.timestamp()
+
+    def _record_api_latency(self, elapsed_seconds: float) -> None:
+        """Enregistre la latence d'un appel API et alerte si lent."""
+        elapsed_ms = elapsed_seconds * 1000
+        self._api_latencies.append(elapsed_ms)
+        # Garder les 100 dernières mesures
+        if len(self._api_latencies) > 100:
+            self._api_latencies = self._api_latencies[-50:]
+        # Alerte si API lente
+        if elapsed_ms > config.API_SLOW_THRESHOLD_MS:
+            logger.warning(
+                "⚠️ API lente : %.0fms (seuil: %.0fms)",
+                elapsed_ms, config.API_SLOW_THRESHOLD_MS,
+            )
+            self._telegram.notify_warning(
+                "API lente",
+                f"Appel en {elapsed_ms:.0f}ms (seuil: {config.API_SLOW_THRESHOLD_MS:.0f}ms)",
+            )
+
+    def _check_data_freshness(self) -> None:
+        """Vérifie que les données de marché ne sont pas stale."""
+        if self._last_h4_ts <= 0:
+            return
+        # Timestamp de la dernière bougie en secondes (Binance renvoie ms)
+        last_candle_s = self._last_h4_ts / 1000 if self._last_h4_ts > 1e12 else self._last_h4_ts
+        age_seconds = time.time() - last_candle_s
+        if age_seconds > config.DATA_STALE_THRESHOLD_SECONDS:
+            hours = age_seconds / 3600
+            logger.warning(
+                "⚠️ Data stale : dernière bougie il y a %.1fh (seuil: %.0fh)",
+                hours, config.DATA_STALE_THRESHOLD_SECONDS / 3600,
+            )
+            self._telegram.notify_warning(
+                "Data stale",
+                f"Dernière bougie H4 reçue il y a {hours:.1f}h "
+                f"(seuil: {config.DATA_STALE_THRESHOLD_SECONDS / 3600:.0f}h)",
+            )
+
+    def _reset_daily_if_needed(self) -> None:
+        """Reset les métriques daily si le jour a changé."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if today != self._daily_date:
+            logger.info(
+                "📅 Nouveau jour %s | PnL veille: $%+.2f | Trades: %d | Signaux: %d/%d",
+                today, self._daily_pnl, self._daily_trades,
+                self._signals_detected, self._signals_rejected,
+            )
+            self._daily_pnl = 0.0
+            self._daily_trades = 0
+            self._daily_date = today
+            self._signals_detected = 0
+            self._signals_rejected = 0
+            self._dd_warning_sent = False
 
 
 # ── Point d'entrée ─────────────────────────────────────────────────────────────

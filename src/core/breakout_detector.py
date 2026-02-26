@@ -327,3 +327,96 @@ def detect_breakout_signals(
             ))
 
     return signals
+
+
+# ── Diagnostic des filtres ─────────────────────────────────────────────────────
+
+
+def diagnose_last_candle(
+    candles: list[Candle],
+    cfg: BreakoutConfig,
+) -> dict:
+    """Diagnostique les 4 filtres sur la dernière bougie.
+
+    Retourne un dict avec le statut de chaque filtre, les valeurs observées
+    et un résumé filters_passed / filters_total.
+    Utile pour comprendre pourquoi un signal n'a pas été généré.
+    """
+    n = len(candles)
+    warmup = max(cfg.bb_period, cfg.donchian_period, 2 * cfg.adx_period) + 5
+    if n < warmup:
+        return {"insufficient_data": True, "filters_passed": 0, "filters_total": 4}
+
+    closes = [c.close for c in candles]
+    volumes = [c.volume for c in candles]
+
+    bb_upper, bb_mid, bb_lower = bollinger_bands(closes, cfg.bb_period, cfg.bb_std)
+    bbw_vals = bb_width(bb_upper, bb_mid, bb_lower)
+    bbw_avg_vals = sma([x if x is not None else 0.0 for x in bbw_vals], cfg.bb_period)
+    dc_h, dc_l = donchian_channel(candles, cfg.donchian_period)
+    adx_vals = adx(candles, cfg.adx_period)
+    vol_avg_vals = sma(volumes, cfg.vol_avg_period)
+
+    i = n - 1
+    c = candles[i]
+
+    result: dict = {"reasons": []}
+
+    # 1. Donchian break
+    if dc_h[i] is not None:
+        is_break = c.close > dc_h[i]  # type: ignore[operator]
+        result["donchian_break"] = is_break
+        result["donchian_high"] = dc_h[i]
+        dist = (c.close - dc_h[i]) / dc_h[i] * 100 if dc_h[i] > 0 else 0  # type: ignore[operator]
+        result["donchian_distance_pct"] = dist
+        if not is_break:
+            result["reasons"].append(f"Donchian: close {c.close:.2f} < high {dc_h[i]:.2f} ({dist:+.1f}%)")
+    else:
+        result["donchian_break"] = False
+        result["reasons"].append("Donchian: données insuffisantes")
+
+    # 2. BB Width expanding
+    if bbw_vals[i] is not None and bbw_avg_vals[i] is not None and bbw_avg_vals[i] > 0:  # type: ignore[operator]
+        threshold = cfg.bb_width_expansion * bbw_avg_vals[i]  # type: ignore[operator]
+        is_expanding = bbw_vals[i] > threshold  # type: ignore[operator]
+        result["bb_expanding"] = is_expanding
+        result["bb_width"] = bbw_vals[i]
+        result["bb_width_ratio"] = bbw_vals[i] / threshold if threshold > 0 else 0  # type: ignore[operator]
+        if not is_expanding:
+            result["reasons"].append(
+                f"BB Width: {bbw_vals[i]:.4f} < {threshold:.4f} (ratio {result['bb_width_ratio']:.2f}x)"
+            )
+    else:
+        result["bb_expanding"] = False
+        result["reasons"].append("BB Width: données insuffisantes")
+
+    # 3. ADX strong
+    if adx_vals[i] is not None:
+        is_strong = adx_vals[i] > cfg.adx_threshold  # type: ignore[operator]
+        result["adx_strong"] = is_strong
+        result["adx_value"] = adx_vals[i]
+        if not is_strong:
+            result["reasons"].append(f"ADX: {adx_vals[i]:.1f} < {cfg.adx_threshold:.0f}")
+    else:
+        result["adx_strong"] = False
+        result["reasons"].append("ADX: données insuffisantes")
+
+    # 4. Volume above average
+    if vol_avg_vals[i] is not None and vol_avg_vals[i] > 0:  # type: ignore[operator]
+        vol_ratio = c.volume / vol_avg_vals[i]  # type: ignore[operator]
+        is_high = c.volume > cfg.vol_multiplier * vol_avg_vals[i]  # type: ignore[operator]
+        result["volume_high"] = is_high
+        result["volume_ratio"] = vol_ratio
+        if not is_high:
+            result["reasons"].append(f"Volume: {vol_ratio:.2f}x < {cfg.vol_multiplier:.1f}x requis")
+    else:
+        result["volume_high"] = False
+        result["reasons"].append("Volume: données insuffisantes")
+
+    # Résumé
+    filters = ["donchian_break", "bb_expanding", "adx_strong", "volume_high"]
+    passed = sum(1 for f in filters if result.get(f, False))
+    result["filters_passed"] = passed
+    result["filters_total"] = len(filters)
+
+    return result

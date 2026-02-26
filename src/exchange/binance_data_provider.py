@@ -30,6 +30,7 @@ class BinanceDataProvider:
         self,
         symbol: str,
         since: Optional[int] = None,
+        limit: int = 200,
     ) -> list[Candle]:
         """
         Récupère les bougies H4 pour un symbole.
@@ -37,6 +38,7 @@ class BinanceDataProvider:
         Args:
             symbol: Paire (ex: "BTCUSDC").
             since: Timestamp Unix ms à partir duquel récupérer.
+            limit: Nombre max de bougies à récupérer (défaut: 200).
 
         Returns:
             Liste de Candle triées par timestamp croissant.
@@ -45,15 +47,13 @@ class BinanceDataProvider:
             symbol=symbol,
             interval=H4_INTERVAL_MINUTES,
             since=since,
-            limit=200,
+            limit=limit,
         )
         # Trier par timestamp croissant
         candles.sort(key=lambda c: c.timestamp)
-        logger.info(
-            "[%s] %d bougies H4 récupérées (depuis ts=%s)",
-            symbol,
-            len(candles),
-            since,
+        logger.debug(
+            "[%s] %d bougies H4 récupérées (limit=%d, depuis ts=%s)",
+            symbol, len(candles), limit, since,
         )
         return candles
 

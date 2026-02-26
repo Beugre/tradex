@@ -100,6 +100,17 @@ BINANCE_BREAKOUT_KILL_SWITCH: bool = os.getenv(
 ).lower() in ("true", "1", "yes")
 BINANCE_BREAKOUT_KILL_PCT: float = float(os.getenv("BINANCE_BREAKOUT_KILL_PCT", "-0.10"))
 
+# ── Monitoring & Alertes (Breakout) ────────────────────────────────────────────
+BREAKOUT_HEARTBEAT_TELEGRAM_SECONDS: int = int(
+    os.getenv("BREAKOUT_HEARTBEAT_TELEGRAM_SECONDS", "3600")  # Heartbeat Telegram 1x/heure
+)
+API_SLOW_THRESHOLD_MS: float = float(os.getenv("API_SLOW_THRESHOLD_MS", "5000"))
+DATA_STALE_THRESHOLD_SECONDS: int = int(
+    os.getenv("DATA_STALE_THRESHOLD_SECONDS", "18000")  # 5h (H4 + 1h marge)
+)
+SLIPPAGE_WARNING_PCT: float = float(os.getenv("SLIPPAGE_WARNING_PCT", "0.005"))
+DD_WARNING_PCT: float = float(os.getenv("DD_WARNING_PCT", "-0.05"))
+
 # ── Telegram ───────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")

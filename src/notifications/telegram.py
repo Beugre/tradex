@@ -27,12 +27,14 @@ from src.core.models import (
 _STRATEGY_LABEL = {
     StrategyType.TREND: "📊 TREND",
     StrategyType.RANGE: "🔄 RANGE",
+    StrategyType.BREAKOUT: "🔥 BREAKOUT",
 }
 
 logger = logging.getLogger(__name__)
 
 TELEGRAM_API_URL = "https://api.telegram.org"
 DASHBOARD_URL = "http://213.199.41.168:8502"
+BREAKOUT_DASHBOARD_URL = "http://213.199.41.168:8504"
 
 
 def _fp(price: float) -> str:
@@ -248,6 +250,123 @@ class TelegramNotifier:
         """Notification d'erreur critique."""
         message = f"⚠️ *Erreur TradeX*\n  `{error_message}`"
         self._send(message)
+
+    # ── Breakout-specific ──────────────────────────────────────────────────────
+
+    def notify_breakout_heartbeat(
+        self,
+        equity: float,
+        allocated_equity: float,
+        drawdown_pct: float,
+        exposure_pct: float,
+        open_positions: int,
+        max_positions: int,
+        daily_pnl: float,
+        daily_pnl_pct: float,
+        kill_switch: bool,
+        positions_detail: list[dict] | None = None,
+        signals_detected: int = 0,
+        signals_rejected: int = 0,
+        avg_api_latency_ms: float = 0,
+    ) -> None:
+        """Heartbeat périodique niveau fund pour le bot Breakout."""
+        kill_emoji = "🔴 ON" if kill_switch else "🟢 OFF"
+        dd_warn = " ⚠️" if drawdown_pct < -5 else ""
+        lines = [
+            "💓 *BREAKOUT H4*",
+            f"  Equity: `${equity:,.0f}` (alloué: `${allocated_equity:,.0f}`)",
+            f"  DD: `{drawdown_pct:+.1f}%`{dd_warn} | Expo: `{exposure_pct:.0f}%`",
+            f"  Pos: `{open_positions}/{max_positions}` | PnL jour: `{daily_pnl:+.2f}$` (`{daily_pnl_pct:+.1f}%`)",
+            f"  Kill: {kill_emoji} | Signaux: {signals_detected}📡 {signals_rejected}❌",
+        ]
+
+        if positions_detail:
+            lines.append("")
+            for p in positions_detail:
+                gain = p.get("gain_pct", 0)
+                emoji = "🟢" if gain >= 0 else "🔴"
+                lines.append(
+                    f"  {emoji} `{p['symbol']}` @ `{_fp(p['entry'])}` | "
+                    f"SL=`{_fp(p['sl'])}` | peak=`{_fp(p['peak'])}` (`{gain:+.1f}%`)"
+                )
+
+        if avg_api_latency_ms > 0:
+            lines.append(f"  ⏱️ API: `{avg_api_latency_ms:.0f}ms` moy")
+        lines.append(f"[Dashboard]({BREAKOUT_DASHBOARD_URL})")
+        self._send("\n".join(lines))
+
+    def notify_signal_rejected(
+        self,
+        symbol: str,
+        reasons: list[str],
+        filters_passed: int = 0,
+        filters_total: int = 4,
+    ) -> None:
+        """Notification quand un breakout est proche mais filtré."""
+        reason_text = "\n".join(f"  → {r}" for r in reasons)
+        message = (
+            f"❌ *{symbol}* breakout proche ({filters_passed}/{filters_total} filtres)\n"
+            f"{reason_text}\n"
+            f"[Dashboard]({BREAKOUT_DASHBOARD_URL})"
+        )
+        self._send(message)
+
+    def notify_breakout_entry(
+        self,
+        symbol: str,
+        entry_price: float,
+        sl_price: float,
+        size: float,
+        size_usd: float,
+        risk_pct: float,
+        risk_usd: float,
+        sl_distance_pct: float,
+        adx: float = 0,
+        bb_width: float = 0,
+        volume_ratio: float = 0,
+    ) -> None:
+        """Notification riche d'entrée Breakout."""
+        base = symbol.replace("USDC", "").replace("-", "")
+        message = (
+            f"🚀 *LONG {symbol}* 🔥 BREAKOUT\n"
+            f"  Size: `{size:.6f} {base}` (`${size_usd:.0f}`)\n"
+            f"  Entrée: `{_fp(entry_price)}` | SL: `{_fp(sl_price)}` (`{sl_distance_pct:-.1f}%`)\n"
+            f"  Risk: `{risk_pct*100:.1f}%` (`${risk_usd:.2f}`)\n"
+            f"  ADX=`{adx:.1f}` | BBw=`{bb_width:.4f}` | Vol=`{volume_ratio:.1f}x`\n"
+            f"[Dashboard]({BREAKOUT_DASHBOARD_URL})"
+        )
+        self._send(message)
+
+    def notify_breakout_trail(
+        self,
+        symbol: str,
+        entry_price: float,
+        old_sl: float,
+        new_sl: float,
+        peak: float,
+        gain_pct: float,
+        palier: str = "",
+    ) -> None:
+        """Notification de trailing stop Breakout avec détail du palier."""
+        sl_vs_entry = (new_sl - entry_price) / entry_price * 100 if entry_price > 0 else 0
+        message = (
+            f"🔒 *TRAIL {symbol}*\n"
+            f"  SL: `{_fp(old_sl)}` → `{_fp(new_sl)}` (`{sl_vs_entry:+.1f}%` vs entry)\n"
+            f"  Peak: `{_fp(peak)}` (`{gain_pct:+.1f}%`)"
+        )
+        if palier:
+            message += f" | {palier}"
+        message += f"\n[Dashboard]({BREAKOUT_DASHBOARD_URL})"
+        self._send(message)
+
+    def notify_warning(self, title: str, detail: str) -> None:
+        """Notification d'alerte anormale (API slow, data stale, slippage, DD)."""
+        message = f"⚠️ *WARNING: {title}*\n  {detail}"
+        self._send(message)
+
+    def send_raw(self, text: str) -> None:
+        """Envoie un message brut (public)."""
+        self._send(text)
 
     # ── Envoi ──────────────────────────────────────────────────────────────────
 
