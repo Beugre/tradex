@@ -1,0 +1,31 @@
+[Unit]
+Description=TradeX – Bot de trading crypto Dow Theory
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tradex
+Group=tradex
+WorkingDirectory=/opt/tradex
+ExecStart=/opt/tradex/.venv/bin/python -m src.bot
+Restart=always
+RestartSec=10
+
+# Environnement
+EnvironmentFile=/opt/tradex/.env
+
+# Sécurité
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/tradex/logs
+PrivateTmp=true
+
+# Logs → journalctl
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tradex
+
+[Install]
+WantedBy=multi-user.target

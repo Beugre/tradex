@@ -1,0 +1,23 @@
+[Unit]
+Description=TradeX Binance Streamlit Dashboard
+After=network.target tradex-binance.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/tradex
+ExecStart=/opt/tradex/.venv/bin/streamlit run dashboard/app_binance.py \
+    --server.port=8503 \
+    --server.address=0.0.0.0 \
+    --server.headless=true \
+    --browser.gatherUsageStats=false \
+    --theme.primaryColor="#f0b90b" \
+    --theme.backgroundColor="#0e1117" \
+    --theme.secondaryBackgroundColor="#1a1d23" \
+    --theme.textColor="#fafafa"
+EnvironmentFile=/opt/tradex/.env
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

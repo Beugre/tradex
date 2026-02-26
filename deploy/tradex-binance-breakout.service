@@ -1,0 +1,31 @@
+[Unit]
+Description=TradeX Binance – Bot Breakout Volatility Expansion (Long Only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tradex
+Group=tradex
+WorkingDirectory=/opt/tradex
+ExecStart=/opt/tradex/.venv/bin/python -m src.bot_binance_breakout
+Restart=always
+RestartSec=10
+
+# Environnement
+EnvironmentFile=/opt/tradex/.env
+
+# Sécurité
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/tradex/logs /opt/tradex/data
+PrivateTmp=true
+
+# Logs → journalctl
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tradex-binance-breakout
+
+[Install]
+WantedBy=multi-user.target
