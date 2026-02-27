@@ -157,6 +157,18 @@ RANGE_SL_BUFFER_PERCENT: float = float(
 RANGE_WIDTH_MIN: float = float(os.getenv("RANGE_WIDTH_MIN", "0.02"))
 RANGE_COOLDOWN_BARS: int = int(os.getenv("RANGE_COOLDOWN_BARS", "3"))
 
+# Trail@TP : avant que le TP OCO ne fill, on swap vers un nouvel OCO
+# avec SL = TP_actuel × (1 - SL_LOCK) et TP = TP_actuel × (1 + STEP)
+BINANCE_RANGE_TRAIL_STEP_PCT: float = float(
+    os.getenv("BINANCE_RANGE_TRAIL_STEP_PCT", "0.01")   # +1% par palier
+)
+BINANCE_RANGE_TRAIL_SL_LOCK_PCT: float = float(
+    os.getenv("BINANCE_RANGE_TRAIL_SL_LOCK_PCT", "0.02")  # SL = 0.98 × TP actuel
+)
+BINANCE_RANGE_TRAIL_SWAP_PCT: float = float(
+    os.getenv("BINANCE_RANGE_TRAIL_SWAP_PCT", "0.005")   # swap quand < 0.5% du TP
+)
+
 # ── Maker-First Order Execution ────────────────────────────────────────────────
 # Place un ordre limit passif (maker 0%) → attend X secondes → si pas rempli,
 # annule et place un limit agressif (taker 0.09%)

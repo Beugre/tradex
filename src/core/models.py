@@ -194,6 +194,9 @@ class Position:
     tp_price: Optional[float] = None        # Take Profit (utilisé par RANGE)
     pnl: Optional[float] = None             # P&L réalisé à la clôture
     firebase_trade_id: Optional[str] = None  # ID du doc Firebase pour tracking
+    trailing_active: bool = False            # Trail@TP actif (après TP OCO rempli)
+    trailing_steps: int = 0                  # Nombre de paliers franchis
+    trailing_sl: Optional[float] = None      # SL trailing courant
 
     def to_dict(self) -> dict:
         """Sérialise la position en dictionnaire JSON-compatible."""
@@ -212,6 +215,9 @@ class Position:
             "tp_price": self.tp_price,
             "pnl": self.pnl,
             "firebase_trade_id": self.firebase_trade_id,
+            "trailing_active": self.trailing_active,
+            "trailing_steps": self.trailing_steps,
+            "trailing_sl": self.trailing_sl,
         }
 
     @classmethod
@@ -232,6 +238,9 @@ class Position:
             tp_price=data.get("tp_price"),
             pnl=data.get("pnl"),
             firebase_trade_id=data.get("firebase_trade_id"),
+            trailing_active=data.get("trailing_active", False),
+            trailing_steps=data.get("trailing_steps", 0),
+            trailing_sl=data.get("trailing_sl"),
         )
 
 

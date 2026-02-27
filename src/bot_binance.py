@@ -62,7 +62,6 @@ from src.firebase.trade_logger import (
     log_trade_opened,
     log_trade_closed,
     log_zero_risk_applied,
-    log_trailing_sl_update,
     log_trend_change as fb_log_trend_change,
     log_heartbeat as fb_log_heartbeat,
     log_event as fb_log_event,
@@ -450,22 +449,37 @@ class TradeXBinanceBot:
                         filled_price = cq / eq
 
                     if is_tp:
-                        reason = "TP Range atteint (OCO)"
-                        logger.info(
-                            "[%s] 🎯 OCO TP FILLED | prix=%.6f",
-                            symbol, filled_price,
-                        )
+                        if position.trailing_active:
+                            reason = f"TP Trail atteint (step {position.trailing_steps})"
+                            logger.info(
+                                "[%s] 🏁 OCO TP FILLED (trail step %d) | prix=%.6f",
+                                symbol, position.trailing_steps, filled_price,
+                            )
+                        else:
+                            reason = "TP Range atteint (OCO)"
+                            logger.info(
+                                "[%s] 🎯 OCO TP FILLED | prix=%.6f",
+                                symbol, filled_price,
+                            )
                     elif is_sl:
-                        reason = "SL atteint (OCO breakout)"
-                        logger.warning(
-                            "[%s] 🛑 OCO SL FILLED | prix=%.6f",
-                            symbol, filled_price,
-                        )
-                        # Activer le cooldown
-                        rs = self._ranges.get(symbol)
-                        if rs:
-                            activate_cooldown(rs, config.RANGE_COOLDOWN_BARS)
-                            self._save_state()
+                        if position.trailing_active:
+                            reason = f"SL Trail atteint (step {position.trailing_steps})"
+                            logger.info(
+                                "[%s] 🏁 OCO SL FILLED (trail step %d) | prix=%.6f",
+                                symbol, position.trailing_steps, filled_price,
+                            )
+                            # Pas de cooldown : le SL trail est en profit
+                        else:
+                            reason = "SL atteint (OCO breakout)"
+                            logger.warning(
+                                "[%s] 🛑 OCO SL FILLED | prix=%.6f",
+                                symbol, filled_price,
+                            )
+                            # Activer le cooldown (vrai SL perdant)
+                            rs = self._ranges.get(symbol)
+                            if rs:
+                                activate_cooldown(rs, config.RANGE_COOLDOWN_BARS)
+                                self._save_state()
                     else:
                         reason = f"OCO exécuté ({filled_type})"
                         filled_price = filled_price or position.entry_price
@@ -505,8 +519,15 @@ class TradeXBinanceBot:
 
     def _process_symbol(self, symbol: str) -> None:
         """Traite un symbole : prix → décision → action."""
-        # Skip si un OCO est actif (l'exchange gère le SL/TP)
+        # OCO actif → vérifier si on doit swap l'OCO (Trail@TP)
         if symbol in self._oco_orders:
+            position = self._positions.get(symbol)
+            if position and position.tp_price and position.status in (
+                PositionStatus.OPEN, PositionStatus.ZERO_RISK
+            ):
+                ticker = self._data.get_ticker(symbol)
+                if ticker:
+                    self._check_trail_swap(symbol, position, ticker)
             return
 
         ticker = self._data.get_ticker(symbol)
@@ -627,6 +648,135 @@ class TradeXBinanceBot:
                 self._save_state()
             self._close_position_market(symbol, price, "SL atteint (manual breakout)")
             return
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TRAIL@TP – Swap d'OCO quand le prix approche du TP
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _check_trail_swap(
+        self, symbol: str, position: Position, ticker
+    ) -> None:
+        """Vérifie si le prix est assez proche du TP pour swapper l'OCO.
+
+        Logique :
+          - Prix à < SWAP_PCT du TP → cancel OCO → nouvel OCO step+1
+          - Nouveau SL = TP_actuel × (1 - SL_LOCK_PCT)  (ex: 0.98 × TP)
+          - Nouveau TP = TP_actuel × (1 + STEP_PCT)       (ex: 1.01 × TP)
+          - Si on arrive trop tard (TP fill) → close classique (graceful)
+        """
+        price = ticker.last_price
+        tp = position.tp_price
+        if tp is None or tp <= 0:
+            return
+
+        # Vérifier l'invalidation de tendance
+        trend = self._trends.get(symbol)
+        if trend:
+            old_direction = trend.direction
+            trend = check_trend_invalidation(trend, ticker.last_price)
+            if trend.direction != old_direction:
+                self._trends[symbol] = trend
+                logger.warning(
+                    "[%s] ⚠️ INVALIDATION (trail) | %s → %s | prix=%s",
+                    symbol, old_direction.value, trend.direction.value, _fmt(price),
+                )
+                self._telegram.notify_trend_change(trend, old_direction)
+                if trend.direction in (TrendDirection.BULLISH, TrendDirection.BEARISH):
+                    logger.warning("[%s] TRAIL FORCED EXIT | tendance %s", symbol, trend.direction.value)
+                    self._close_position_market(symbol, price, "Tendance confirmée (trail forcé)")
+                    return
+
+        # ── Proximité au TP → swap OCO ──
+        swap_pct = config.BINANCE_RANGE_TRAIL_SWAP_PCT
+        step_pct = config.BINANCE_RANGE_TRAIL_STEP_PCT
+        sl_lock_pct = config.BINANCE_RANGE_TRAIL_SL_LOCK_PCT
+
+        if position.side == OrderSide.BUY:
+            distance_pct = (tp - price) / tp if tp > 0 else 1.0
+        else:
+            distance_pct = (price - tp) / tp if tp > 0 else 1.0
+
+        if distance_pct > swap_pct:
+            return  # Pas encore assez proche
+
+        # On est dans la zone de swap → cancel OCO + nouveau OCO
+        logger.info(
+            "[%s] 🔄 Trail swap | prix=%s | distance=%.3f%% < seuil=%.1f%% | step %d→%d",
+            symbol, _fmt(price), distance_pct * 100, swap_pct * 100,
+            position.trailing_steps, position.trailing_steps + 1,
+        )
+
+        # 1. Cancel l'OCO actuel
+        oco_info = self._oco_orders.get(symbol)
+        if oco_info and not self.dry_run:
+            try:
+                self._client.cancel_order_list(
+                    symbol=symbol,
+                    order_list_id=oco_info.get("order_list_id"),
+                )
+                logger.info("[%s] OCO annulé pour swap trail", symbol)
+            except Exception as e:
+                # L'OCO a peut-être déjà fill → _check_oco_fills le détectera
+                logger.warning("[%s] Cancel OCO pour swap échoué: %s", symbol, e)
+                return
+        self._oco_orders.pop(symbol, None)
+
+        # 2. Calculer les nouveaux niveaux
+        if position.side == OrderSide.BUY:
+            new_tp = tp * (1 + step_pct)
+            new_sl = tp * (1 - sl_lock_pct)
+        else:
+            new_tp = tp * (1 - step_pct)
+            new_sl = tp * (1 + sl_lock_pct)
+
+        old_tp = tp
+        old_sl = position.sl_price
+
+        # 3. Mettre à jour la position
+        position.tp_price = new_tp
+        position.sl_price = new_sl
+        position.trailing_active = True
+        position.trailing_steps += 1
+        position.trailing_sl = new_sl
+        position.status = PositionStatus.ZERO_RISK
+        self._positions[symbol] = position
+        self._save_state()
+
+        # 4. Placer le nouvel OCO
+        if not self.dry_run:
+            success = self._place_oco(symbol, position)
+            if not success:
+                # L'OCO sera re-tenté au prochain cycle via _process_symbol
+                logger.warning("[%s] Nouvel OCO trail échoué — retry prochain cycle", symbol)
+        else:
+            logger.info(
+                "[DRY-RUN] Trail OCO swap | SL=%s → %s | TP=%s → %s",
+                _fmt(old_sl), _fmt(new_sl), _fmt(old_tp), _fmt(new_tp),
+            )
+
+        # 5. Notifications
+        self._telegram.send_raw(
+            f"🔄 Trail step {position.trailing_steps} – {symbol}\n"
+            f"  SL: {_fmt(old_sl)} → {_fmt(new_sl)}\n"
+            f"  TP: {_fmt(old_tp)} → {_fmt(new_tp)}\n"
+            f"  Prix: {_fmt(price)}"
+        )
+        try:
+            fb_log_event(
+                event_type="trail_oco_swap",
+                data={
+                    "step": position.trailing_steps,
+                    "old_tp": old_tp,
+                    "new_tp": new_tp,
+                    "old_sl": old_sl,
+                    "new_sl": new_sl,
+                    "price": price,
+                },
+                symbol=symbol,
+                exchange=EXCHANGE_NAME,
+            )
+        except Exception:
+            pass
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENTRÉE EN POSITION
