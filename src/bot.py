@@ -1307,7 +1307,12 @@ class TradeXBot:
                     "[%s] ⏳ Close en cooldown (échec #%d) — retry dans %ds",
                     symbol, fail_info["count"], remaining,
                 )
-            return
+                return
+            # Cooldown expiré → on retente la clôture
+            logger.info(
+                "[%s] 🔄 Cooldown expiré (échec #%d) — nouvelle tentative de clôture",
+                symbol, fail_info["count"],
+            )
 
         # ── Ajuster la taille au solde réel (évite "Insufficient balance") ──
         exit_size = position.size
@@ -1319,9 +1324,29 @@ class TradeXBot:
                 base_bal = next(
                     (b for b in balances if b.currency == base_currency), None
                 )
-                if base_bal and base_bal.available < position.size:
+                real_available = base_bal.available if base_bal else 0.0
+
+                if real_available <= 0:
+                    # ── Position fantôme : solde réel = 0 → purger ──
+                    logger.warning(
+                        "[%s] 👻 Position FANTÔME détectée — solde %s = 0 sur l'exchange. "
+                        "Suppression de la position locale (entry=%.8f, size=%.8f)",
+                        symbol, base_currency, position.entry_price, position.size,
+                    )
+                    self._telegram.notify_error(
+                        f"👻 Position fantôme supprimée : {symbol}\n"
+                        f"Entry: {position.entry_price} | Size: {position.size}\n"
+                        f"Solde réel {base_currency} = 0 → position purgée"
+                    )
+                    del self._positions[symbol]
+                    if symbol in self._close_failures:
+                        del self._close_failures[symbol]
+                    self._save_state()
+                    return
+
+                if real_available < position.size:
                     old_size = position.size
-                    exit_size = base_bal.available
+                    exit_size = real_available
                     logger.info(
                         "[%s] 📐 Ajustement taille sortie : %.8f → %.8f (solde réel %s)",
                         symbol, old_size, exit_size, base_currency,
