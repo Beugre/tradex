@@ -1314,6 +1314,26 @@ class TradeXBot:
                 symbol, fail_info["count"],
             )
 
+        # ── Annuler les ordres actifs existants (libère le solde réservé) ──
+        if position.side == OrderSide.BUY:
+            try:
+                active_orders = self._client.get_active_orders([symbol])
+                for ao in active_orders:
+                    ao_side = (ao.get("side") or "").lower()
+                    ao_id = ao.get("venue_order_id") or ao.get("id")
+                    if ao_side == "sell" and ao_id:
+                        logger.info(
+                            "[%s] 🧹 Annulation ordre SELL actif %s avant clôture",
+                            symbol, ao_id,
+                        )
+                        try:
+                            self._client.cancel_order(ao_id)
+                        except Exception as cancel_err:
+                            logger.warning("[%s] ⚠️ Cancel ordre actif échoué: %s", symbol, cancel_err)
+                        time.sleep(0.5)  # laisser l'exchange libérer le réservé
+            except Exception as e:
+                logger.warning("[%s] ⚠️ Impossible de vérifier les ordres actifs: %s", symbol, e)
+
         # ── Ajuster la taille au solde réel (évite "Insufficient balance") ──
         exit_size = position.size
         if position.side == OrderSide.BUY:
@@ -1325,8 +1345,9 @@ class TradeXBot:
                     (b for b in balances if b.currency == base_currency), None
                 )
                 real_available = base_bal.available if base_bal else 0.0
+                real_total = (base_bal.available + base_bal.reserved) if base_bal else 0.0
 
-                if real_available <= 0:
+                if real_total <= 0:
                     # ── Position fantôme : solde réel = 0 → purger ──
                     logger.warning(
                         "[%s] 👻 Position FANTÔME détectée — solde %s = 0 sur l'exchange. "
@@ -1344,7 +1365,15 @@ class TradeXBot:
                     self._save_state()
                     return
 
-                if real_available < position.size:
+                if real_available <= 0:
+                    # Solde total > 0 mais available = 0 → probablement un ordre réservé non annulé
+                    logger.warning(
+                        "[%s] ⚠️ Solde %s available=0 mais total=%.2f (reserved=%.2f) — "
+                        "un ordre actif bloque peut-être le solde",
+                        symbol, base_currency, real_total, base_bal.reserved if base_bal else 0,
+                    )
+                    # On ne purge pas, on laisse le backoff retry après l'annulation
+                elif real_available < position.size:
                     old_size = position.size
                     exit_size = real_available
                     logger.info(
