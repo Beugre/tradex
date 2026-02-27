@@ -940,7 +940,7 @@ class TradeXBinanceBreakoutBot:
         else:
             logger.info("[DRY-RUN] MARKET SELL %s qty=%s", symbol, qty_str)
 
-        self._finalize_close(symbol, actual_price, reason)
+        self._finalize_close(symbol, actual_price, reason, close_qty)
 
     def _close_all_positions(self, reason: str) -> None:
         """Ferme toutes les positions ouvertes (kill-switch)."""
@@ -951,24 +951,29 @@ class TradeXBinanceBreakoutBot:
                 if ticker:
                     self._close_breakout_position(symbol, ticker.last_price, reason)
 
-    def _finalize_close(self, symbol: str, exit_price: float, reason: str) -> None:
+    def _finalize_close(self, symbol: str, exit_price: float, reason: str,
+                        actual_exit_size: Optional[float] = None) -> None:
         """Finalise la clôture : PnL, nettoyage, notifications, Firebase."""
         position = self._positions.get(symbol)
         if not position:
             return
 
-        # PnL
-        pnl_gross = (exit_price - position.entry_price) * position.size
-        notional = position.size * position.entry_price
+        # Taille réellement vendue (après ajustement au solde réel)
+        exit_size = actual_exit_size if actual_exit_size is not None else position.size
+
+        # PnL — calculé sur la taille réellement vendue
+        pnl_gross = (exit_price - position.entry_price) * exit_size
+        notional = exit_size * position.entry_price
         fee_rate = config.BINANCE_TAKER_FEE
-        fees = notional * fee_rate + position.size * exit_price * fee_rate
+        fees = notional * fee_rate + exit_size * exit_price * fee_rate
         pnl_net = pnl_gross - fees
         pnl_pct = pnl_net / notional if notional > 0 else 0
 
         pnl_emoji = "🟢" if pnl_net >= 0 else "🔴"
         logger.info(
-            "[%s] %s CLOSE BREAKOUT | %s | PnL=$%+.4f (%+.2f%%) | fees=$%.4f",
+            "[%s] %s CLOSE BREAKOUT | %s | PnL=$%+.4f (%+.2f%%) | fees=$%.4f | size=%.8f (orig=%.8f)",
             symbol, pnl_emoji, reason, pnl_net, pnl_pct * 100, fees,
+            exit_size, position.size,
         )
 
         position.status = PositionStatus.CLOSED
@@ -1005,6 +1010,7 @@ class TradeXBinanceBreakoutBot:
                     reason=reason,
                     fill_type="taker",
                     equity_after=equity_after,
+                    actual_exit_size=exit_size,
                 )
             except Exception as e:
                 logger.warning("🔥 Firebase log_trade_closed échoué: %s", e)

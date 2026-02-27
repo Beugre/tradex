@@ -1387,7 +1387,7 @@ class TradeXBot:
         original_size = position.size
         position.size = exit_size
         exit_order = build_exit_order(position, exit_price)
-        position.size = original_size  # restaurer pour les calculs PnL
+        position.size = original_size  # restaurer la taille originale sur l'objet
 
         fill_type = "dry-run"
         actual_exit_price = exit_price  # fallback = prix demandé
@@ -1499,18 +1499,19 @@ class TradeXBot:
                     pass
 
         # ── LOG STRUCTURÉ POST-CLÔTURE ──────────────────────────────────
-        notional_entry = position.size * position.entry_price
-        notional_exit = position.size * actual_exit_price
+        # exit_size = taille réellement vendue (ajustée au solde réel)
+        notional_entry = exit_size * position.entry_price
+        notional_exit = exit_size * actual_exit_price
 
-        # PnL brut (avant fees)
+        # PnL brut (avant fees) — sur la taille réellement vendue
         if position.side == OrderSide.BUY:
-            pnl_gross = (actual_exit_price - position.entry_price) * position.size
+            pnl_gross = (actual_exit_price - position.entry_price) * exit_size
         else:
-            pnl_gross = (position.entry_price - actual_exit_price) * position.size
+            pnl_gross = (position.entry_price - actual_exit_price) * exit_size
         pnl_pct = pnl_gross / notional_entry if notional_entry > 0 else 0.0
 
-        # Fees estimées
-        fee_entry_pct = 0.0 if position.venue_order_id == "recovered" else 0.0  # maker à l'entrée
+        # Fees estimées (Revolut X : maker 0%, taker 0.09%)
+        fee_entry_pct = 0.0  # maker à l'entrée
         fee_exit_pct = 0.0 if fill_type == "maker" else 0.0009  # taker = 0.09%
         fee_entry_usd = notional_entry * fee_entry_pct
         fee_exit_usd = notional_exit * fee_exit_pct
@@ -1565,8 +1566,8 @@ class TradeXBot:
             symbol, position.entry_price, actual_exit_price, exit_price,
         )
         logger.info(
-            "[%s]   Size=%.4f | Notional=$%.2f",
-            symbol, position.size, notional_exit,
+            "[%s]   Size=%.8f (original=%.8f) | Notional=$%.2f",
+            symbol, exit_size, position.size, notional_exit,
         )
         logger.info(
             "[%s]   Execution=%s | Slippage=%.4f%%",
@@ -1608,6 +1609,7 @@ class TradeXBot:
                     reason=reason,
                     fill_type=fill_type,
                     equity_after=equity_after,
+                    actual_exit_size=exit_size,
                 )
             except Exception as e:
                 logger.warning("🔥 Firebase log_trade_closed échoué: %s", e)

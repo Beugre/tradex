@@ -983,10 +983,11 @@ class TradeXBinanceBot:
         else:
             logger.info("[DRY-RUN] Close MARKET %s %s qty=%s", exit_side, symbol, qty_str)
 
-        self._finalize_close(symbol, actual_price, reason, "taker")
+        self._finalize_close(symbol, actual_price, reason, "taker", close_qty)
 
     def _finalize_close(
-        self, symbol: str, exit_price: float, reason: str, fill_type: str
+        self, symbol: str, exit_price: float, reason: str, fill_type: str,
+        actual_exit_size: Optional[float] = None,
     ) -> None:
         """Finalise la clôture d'une position (PnL, Firebase, notifications)."""
         position = self._positions.get(symbol)
@@ -1002,22 +1003,26 @@ class TradeXBinanceBot:
                 except Exception:
                     pass
 
-        # PnL
-        if position.side == OrderSide.BUY:
-            pnl_gross = (exit_price - position.entry_price) * position.size
-        else:
-            pnl_gross = (position.entry_price - exit_price) * position.size
+        # Taille réellement vendue (après ajustement au solde réel)
+        exit_size = actual_exit_size if actual_exit_size is not None else position.size
 
-        notional = position.size * position.entry_price
+        # PnL — calculé sur la taille réellement vendue
+        if position.side == OrderSide.BUY:
+            pnl_gross = (exit_price - position.entry_price) * exit_size
+        else:
+            pnl_gross = (position.entry_price - exit_price) * exit_size
+
+        notional = exit_size * position.entry_price
         fee_rate = config.BINANCE_TAKER_FEE if fill_type == "taker" else config.BINANCE_MAKER_FEE
-        fees = notional * fee_rate + position.size * exit_price * fee_rate
+        fees = notional * fee_rate + exit_size * exit_price * fee_rate
         pnl_net = pnl_gross - fees
         pnl_pct = pnl_net / notional if notional > 0 else 0
 
         pnl_emoji = "🟢" if pnl_net >= 0 else "🔴"
         logger.info(
-            "[%s] %s CLOSE | %s | PnL=$%+.4f (%+.2f%%) | fees=$%.4f",
+            "[%s] %s CLOSE | %s | PnL=$%+.4f (%+.2f%%) | fees=$%.4f | size=%.8f (orig=%.8f)",
             symbol, pnl_emoji, reason, pnl_net, pnl_pct * 100, fees,
+            exit_size, position.size,
         )
 
         position.status = PositionStatus.CLOSED
@@ -1046,6 +1051,7 @@ class TradeXBinanceBot:
                     reason=reason,
                     fill_type=fill_type,
                     equity_after=equity_after,
+                    actual_exit_size=exit_size,
                 )
             except Exception as e:
                 logger.warning("🔥 Firebase log_trade_closed échoué: %s", e)

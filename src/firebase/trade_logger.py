@@ -161,21 +161,36 @@ def log_trade_closed(
     reason: str,
     fill_type: str,
     equity_after: float,
+    actual_exit_size: Optional[float] = None,
 ) -> bool:
-    """Met à jour le trade avec les données de clôture."""
+    """Met à jour le trade avec les données de clôture.
+
+    Args:
+        actual_exit_size: Taille réellement vendue (après ajustement au solde réel).
+                          Si None, utilise position.size (comportement legacy).
+    """
     now = datetime.now(timezone.utc)
 
-    # Calcul P&L
-    if position.side == OrderSide.BUY:
-        pnl_usd = (exit_price - position.entry_price) * position.size
-    else:
-        pnl_usd = (position.entry_price - exit_price) * position.size
+    # Taille réellement échangée (peut différer de position.size à cause des fees d'achat)
+    exit_size = actual_exit_size if actual_exit_size is not None else position.size
 
-    pnl_pct = pnl_usd / (position.size * position.entry_price) if position.size * position.entry_price > 0 else 0
+    # Calcul P&L brut — sur la taille réellement vendue
+    if position.side == OrderSide.BUY:
+        pnl_gross = (exit_price - position.entry_price) * exit_size
+    else:
+        pnl_gross = (position.entry_price - exit_price) * exit_size
+
+    notional_entry = exit_size * position.entry_price
+    pnl_pct = pnl_gross / notional_entry if notional_entry > 0 else 0
 
     # Fees
-    fee_entry = _estimate_fee(position.size * position.entry_price, "maker")
-    fee_exit = _estimate_fee(position.size * exit_price, fill_type)
+    fee_entry = _estimate_fee(exit_size * position.entry_price, "maker")
+    fee_exit = _estimate_fee(exit_size * exit_price, fill_type)
+    fees_total = fee_entry + fee_exit
+
+    # PnL net = brut - fees
+    pnl_net = pnl_gross - fees_total
+    pnl_net_pct = pnl_net / notional_entry if notional_entry > 0 else 0
 
     # Holding time
     # On retrouve l'heure d'ouverture depuis Firebase
@@ -197,10 +212,14 @@ def log_trade_closed(
         "holding_time_hours": holding_hours,
         "closed_at": now.isoformat(),
 
+        "actual_exit_size": exit_size,
+        "fees_entry": fee_entry,
         "fees_exit": fee_exit,
-        "fees_total": fee_entry + fee_exit,
-        "pnl_usd": round(pnl_usd, 4),
+        "fees_total": fees_total,
+        "pnl_usd": round(pnl_gross, 4),
+        "pnl_net_usd": round(pnl_net, 4),
         "pnl_pct": round(pnl_pct, 6),
+        "pnl_net_pct": round(pnl_net_pct, 6),
         "equity_after": equity_after,
 
         "is_zero_risk_applied": position.is_zero_risk_applied,
@@ -209,11 +228,11 @@ def log_trade_closed(
 
     ok = update_document("trades", trade_id, updates)
     if ok:
-        emoji = "🟢" if pnl_usd >= 0 else "🔴"
+        emoji = "🟢" if pnl_net >= 0 else "🔴"
         logger.info(
-            "🔥 [%s] Trade CLOSED %s → PnL $%+.2f (%+.2f%%) | %s | %.1fh",
-            position.symbol, emoji, pnl_usd, pnl_pct * 100,
-            reason, holding_hours or 0,
+            "🔥 [%s] Trade CLOSED %s → PnL brut=$%+.2f | net=$%+.2f (%+.2f%%) | fees=$%.4f | %s | %.1fh",
+            position.symbol, emoji, pnl_gross, pnl_net, pnl_net_pct * 100,
+            fees_total, reason, holding_hours or 0,
         )
     return ok
 
