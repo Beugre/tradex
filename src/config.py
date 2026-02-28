@@ -111,6 +111,64 @@ DATA_STALE_THRESHOLD_SECONDS: int = int(
 SLIPPAGE_WARNING_PCT: float = float(os.getenv("SLIPPAGE_WARNING_PCT", "0.005"))
 DD_WARNING_PCT: float = float(os.getenv("DD_WARNING_PCT", "-0.05"))
 
+# ── Binance CrashBot (Dip Buy) ────────────────────────────────────────────────
+BINANCE_CRASHBOT_ALLOCATED_BALANCE: float = float(
+    os.getenv("BINANCE_CRASHBOT_ALLOCATED_BALANCE", "0")
+)
+BINANCE_CRASHBOT_RISK_PERCENT: float = float(
+    os.getenv("BINANCE_CRASHBOT_RISK_PERCENT", "0.05")
+)
+BINANCE_CRASHBOT_MAX_POSITIONS: int = int(
+    os.getenv("BINANCE_CRASHBOT_MAX_POSITIONS", "5")
+)
+BINANCE_CRASHBOT_POLLING_SECONDS: int = int(
+    os.getenv("BINANCE_CRASHBOT_POLLING_SECONDS", "30")
+)
+BINANCE_CRASHBOT_PAIRS: list[str] = [
+    p.strip() for p in
+    os.getenv("BINANCE_CRASHBOT_PAIRS", "").split(",")
+    if p.strip()
+]
+# Crash detection params
+BINANCE_CRASHBOT_DROP_THRESHOLD: float = float(
+    os.getenv("BINANCE_CRASHBOT_DROP_THRESHOLD", "0.20")
+)
+BINANCE_CRASHBOT_LOOKBACK_BARS: int = int(
+    os.getenv("BINANCE_CRASHBOT_LOOKBACK_BARS", "12")
+)
+BINANCE_CRASHBOT_TP_PCT: float = float(
+    os.getenv("BINANCE_CRASHBOT_TP_PCT", "0.08")
+)
+BINANCE_CRASHBOT_SL_PCT: float = float(
+    os.getenv("BINANCE_CRASHBOT_SL_PCT", "0.02")
+)
+BINANCE_CRASHBOT_ATR_SL_MULT: float = float(
+    os.getenv("BINANCE_CRASHBOT_ATR_SL_MULT", "1.5")
+)
+BINANCE_CRASHBOT_ATR_PERIOD: int = int(
+    os.getenv("BINANCE_CRASHBOT_ATR_PERIOD", "14")
+)
+BINANCE_CRASHBOT_TRAIL_STEP_PCT: float = float(
+    os.getenv("BINANCE_CRASHBOT_TRAIL_STEP_PCT", "0.005")
+)
+BINANCE_CRASHBOT_TRAIL_TRIGGER_BUFFER: float = float(
+    os.getenv("BINANCE_CRASHBOT_TRAIL_TRIGGER_BUFFER", "0.0005")
+)
+BINANCE_CRASHBOT_COOLDOWN_BARS: int = int(
+    os.getenv("BINANCE_CRASHBOT_COOLDOWN_BARS", "6")
+)
+# Kill-switch mensuel
+BINANCE_CRASHBOT_KILL_SWITCH: bool = os.getenv(
+    "BINANCE_CRASHBOT_KILL_SWITCH", "true"
+).lower() in ("true", "1", "yes")
+BINANCE_CRASHBOT_KILL_PCT: float = float(
+    os.getenv("BINANCE_CRASHBOT_KILL_PCT", "-0.10")
+)
+# Heartbeat Telegram CrashBot
+CRASHBOT_HEARTBEAT_TELEGRAM_SECONDS: int = int(
+    os.getenv("CRASHBOT_HEARTBEAT_TELEGRAM_SECONDS", "3600")
+)
+
 # ── Telegram ───────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")

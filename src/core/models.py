@@ -53,6 +53,7 @@ class StrategyType(Enum):
     TREND = "TREND"            # Trend following (Dow Theory)
     RANGE = "RANGE"            # Mean reversion (range)
     BREAKOUT = "BREAKOUT"      # Breakout Volatility Expansion
+    CRASHBOT = "CRASHBOT"      # Dip Buy (crash recovery)
 
 
 # ── Structures de données ──────────────────────────────────────────────────────

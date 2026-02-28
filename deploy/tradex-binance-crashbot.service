@@ -1,0 +1,25 @@
+[Unit]
+Description=TradeX Binance – Bot CrashBot Dip Buy (Long Only, Step Trail)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tradex
+Group=tradex
+WorkingDirectory=/opt/tradex
+ExecStart=/opt/tradex/.venv/bin/python -m src.bot_binance_crashbot
+Restart=always
+RestartSec=10
+EnvironmentFile=/opt/tradex/.env
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/tradex/logs /opt/tradex/data
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tradex-binance-crashbot
+
+[Install]
+WantedBy=multi-user.target

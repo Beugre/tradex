@@ -28,6 +28,7 @@ _STRATEGY_LABEL = {
     StrategyType.TREND: "📊 TREND",
     StrategyType.RANGE: "🔄 RANGE",
     StrategyType.BREAKOUT: "🔥 BREAKOUT",
+    StrategyType.CRASHBOT: "💥 CRASHBOT",
 }
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ logger = logging.getLogger(__name__)
 TELEGRAM_API_URL = "https://api.telegram.org"
 DASHBOARD_URL = "http://213.199.41.168:8502"
 BREAKOUT_DASHBOARD_URL = "http://213.199.41.168:8504"
+CRASHBOT_DASHBOARD_URL = "http://213.199.41.168:8504"
 
 
 def _fp(price: float) -> str:
@@ -358,6 +360,96 @@ class TelegramNotifier:
             message += f" | {palier}"
         message += f"\n[Dashboard]({BREAKOUT_DASHBOARD_URL})"
         self._send(message)
+
+    def notify_crashbot_entry(
+        self,
+        symbol: str,
+        entry_price: float,
+        sl_price: float,
+        tp_price: float,
+        size: float,
+        size_usd: float,
+        risk_pct: float,
+        risk_usd: float,
+        sl_distance_pct: float,
+        drop_pct: float,
+    ) -> None:
+        """Notification riche d'entrée CrashBot (Dip Buy)."""
+        base = symbol.replace("USDC", "").replace("-", "")
+        message = (
+            f"💥 *LONG {symbol}* 📉 DIP BUY\n"
+            f"  Drop: `{drop_pct*100:+.1f}%` en 48h\n"
+            f"  Size: `{size:.6f} {base}` (`${size_usd:.0f}`)\n"
+            f"  Entrée: `{_fp(entry_price)}` | SL: `{_fp(sl_price)}` (`{sl_distance_pct:-.1f}%`)\n"
+            f"  TP: `{_fp(tp_price)}` (`+{(tp_price/entry_price - 1)*100:.1f}%`)\n"
+            f"  Risk: `{risk_pct*100:.1f}%` (`${risk_usd:.2f}`)\n"
+            f"[Dashboard]({CRASHBOT_DASHBOARD_URL})"
+        )
+        self._send(message)
+
+    def notify_crashbot_trail(
+        self,
+        symbol: str,
+        entry_price: float,
+        old_sl: float,
+        new_sl: float,
+        old_tp: float,
+        new_tp: float,
+        gain_pct: float,
+        steps: int,
+    ) -> None:
+        """Notification de step trailing CrashBot."""
+        sl_vs_entry = (new_sl - entry_price) / entry_price * 100 if entry_price > 0 else 0
+        message = (
+            f"🔒 *TRAIL {symbol}* (step {steps})\n"
+            f"  SL: `{_fp(old_sl)}` → `{_fp(new_sl)}` (`{sl_vs_entry:+.1f}%` vs entry)\n"
+            f"  TP: `{_fp(old_tp)}` → `{_fp(new_tp)}`\n"
+            f"  Gain peak: `{gain_pct:+.1f}%`\n"
+            f"[Dashboard]({CRASHBOT_DASHBOARD_URL})"
+        )
+        self._send(message)
+
+    def notify_crashbot_heartbeat(
+        self,
+        equity: float,
+        allocated_equity: float,
+        drawdown_pct: float,
+        exposure_pct: float,
+        open_positions: int,
+        max_positions: int,
+        daily_pnl: float,
+        daily_pnl_pct: float,
+        kill_switch: bool,
+        positions_detail: list[dict],
+        signals_detected: int,
+        avg_api_latency_ms: float = 0,
+    ) -> None:
+        """Heartbeat périodique CrashBot."""
+        kill_emoji = "🔴 ON" if kill_switch else "🟢 OFF"
+        dd_emoji = "⚠️" if drawdown_pct < -3 else ""
+        lines = [
+            f"💓 *CRASHBOT H4*",
+            f"  Equity: `${equity:,.0f}` (alloué: `${allocated_equity:,.0f}`)",
+            f"  DD mois: `{drawdown_pct:+.1f}%` {dd_emoji}",
+            f"  Expo: `{exposure_pct:.0f}%` | Pos: `{open_positions}/{max_positions}`",
+            f"  PnL jour: `${daily_pnl:+.2f}` (`{daily_pnl_pct:+.1f}%`)",
+            f"  Kill: {kill_emoji} | Signaux: {signals_detected}📡",
+        ]
+
+        if positions_detail:
+            lines.append("")
+            for p in positions_detail:
+                gain = p.get("gain_pct", 0)
+                emoji = "🟢" if gain >= 0 else "🔴"
+                lines.append(
+                    f"  {emoji} `{p['symbol']}` @ `{_fp(p['entry'])}` | "
+                    f"SL=`{_fp(p['sl'])}` | TP=`{_fp(p.get('tp', 0))}` (`{gain:+.1f}%`)"
+                )
+
+        if avg_api_latency_ms > 0:
+            lines.append(f"  ⏱️ API: `{avg_api_latency_ms:.0f}ms` moy")
+        lines.append(f"[Dashboard]({CRASHBOT_DASHBOARD_URL})")
+        self._send("\n".join(lines))
 
     def notify_warning(self, title: str, detail: str) -> None:
         """Notification d'alerte anormale (API slow, data stale, slippage, DD)."""
