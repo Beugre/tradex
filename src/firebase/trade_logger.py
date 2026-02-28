@@ -254,6 +254,29 @@ def log_trailing_sl_update(trade_id: str, new_sl: float) -> bool:
     })
 
 
+def log_trailing_activation(
+    trade_id: str,
+    step: int,
+    new_sl: float,
+    new_tp: float,
+    old_sl: float,
+    old_tp: float,
+    price: float,
+) -> bool:
+    """Met à jour le document trade avec les infos de trailing (step, SL, TP)."""
+    return update_document("trades", trade_id, {
+        "trailing_active": True,
+        "trailing_steps": step,
+        "sl_price": new_sl,
+        "tp_price": new_tp,
+        "trailing_old_sl": old_sl,
+        "trailing_old_tp": old_tp,
+        "trailing_price_at_swap": price,
+        "status": "TRAILING",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # EVENTS (tendance, erreurs, heartbeat)
 # ═══════════════════════════════════════════════════════════════════════════════

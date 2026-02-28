@@ -62,6 +62,7 @@ from src.firebase.trade_logger import (
     log_trade_opened,
     log_trade_closed,
     log_zero_risk_applied,
+    log_trailing_activation as fb_log_trailing_activation,
     log_trend_change as fb_log_trend_change,
     log_heartbeat as fb_log_heartbeat,
     log_event as fb_log_event,
@@ -777,6 +778,21 @@ class TradeXBinanceBot:
             )
         except Exception:
             pass
+
+        # 6. Mise à jour du document trade Firebase (trailing_active, steps, SL, TP)
+        if position.firebase_trade_id:
+            try:
+                fb_log_trailing_activation(
+                    trade_id=position.firebase_trade_id,
+                    step=position.trailing_steps,
+                    new_sl=new_sl,
+                    new_tp=new_tp,
+                    old_sl=old_sl,
+                    old_tp=old_tp,
+                    price=price,
+                )
+            except Exception:
+                pass
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENTRÉE EN POSITION
