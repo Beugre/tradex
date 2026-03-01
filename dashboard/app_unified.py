@@ -800,6 +800,15 @@ def render_overview():
     st.title("🏠 Overview")
     st.caption("Vue consolidée des 2 bots de trading")
 
+    # ── Allocation (source de vérité pour l'equity par bot) ──────────────
+    alloc = _fetch_current_allocation()
+
+    # Mapping allocation → equity par bot
+    alloc_equity = {}
+    if alloc:
+        alloc_equity["binance"] = alloc.get("trail_balance")
+        alloc_equity["crashbot"] = alloc.get("crash_balance")
+
     # ── Summary cards ──────────────────────────────────────────────────────
     cols = st.columns(2)
     total_equity = 0.0
@@ -814,21 +823,24 @@ def render_overview():
         n_open = len(d["open"])
         total_open += n_open
 
-        # Fallback: equity depuis les snapshots si pas dans les stats
-        snap_equity = None
-        snap = d["snapshots"]
-        if not snap.empty and "equity" in snap.columns:
-            last_eq = snap.sort_values("date").iloc[-1].get("equity", None)
-            if pd.notna(last_eq):
-                snap_equity = float(last_eq)
+        # Equity : allocation > snapshot > stats
+        eq = alloc_equity.get(key)
+        if eq is None:
+            snap = d["snapshots"]
+            if not snap.empty and "equity" in snap.columns:
+                last_eq = snap.sort_values("date").iloc[-1].get("equity", None)
+                if pd.notna(last_eq):
+                    eq = float(last_eq)
+        if eq is None and stats:
+            eq = stats.get("equity")
+
+        total_equity += eq or 0
 
         with cols[i]:
             st.markdown(f"### {cfg['icon']} {cfg['label']}")
             if stats:
-                eq = stats["equity"] or snap_equity
                 pnl = stats["total_pnl"]
                 wr = stats["win_rate"]
-                total_equity += eq or 0
                 total_pnl += pnl
                 total_trades += stats["n_trades"]
                 total_wins += stats["n_wins"]
@@ -838,10 +850,6 @@ def render_overview():
                 st.metric("Win Rate", f"{wr:.1f}%", f"{stats['n_wins']}W / {stats['n_losses']}L")
                 st.metric("Positions", f"{n_open}/{cfg['max_pos']}")
             else:
-                # Pas de trades fermés mais on a peut-être l'equity via snapshot
-                eq = snap_equity
-                total_equity += eq or 0
-
                 st.metric("Equity", f"${eq:,.2f}" if eq else "—")
                 st.metric("P&L", "$0.00")
                 st.metric("Win Rate", "— (0 trades)")
@@ -850,7 +858,6 @@ def render_overview():
     st.divider()
 
     # ── Allocation dynamique ───────────────────────────────────────────────
-    alloc = _fetch_current_allocation()
     if alloc:
         st.subheader("⚖️ Allocation dynamique")
 
