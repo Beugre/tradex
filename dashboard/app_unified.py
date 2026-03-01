@@ -1,5 +1,5 @@
 """
-TradeX Unified Dashboard — Overview + 3 onglets (Revolut · Binance Range · Binance CrashBot).
+TradeX Unified Dashboard — Overview + 2 onglets (Binance Range · Binance CrashBot).
 Un seul processus Streamlit, port 8502.
 Lit les données depuis Firebase Firestore.
 """
@@ -240,7 +240,7 @@ def _compute_stats(closed: pd.DataFrame) -> dict:
 
 st.sidebar.image("https://img.icons8.com/color/96/combo-chart.png", width=60)
 st.sidebar.title("TradeX")
-st.sidebar.caption("Dashboard unifié — 3 bots")
+st.sidebar.caption("Dashboard unifié — 2 bots")
 
 days_filter = st.sidebar.slider("Période (jours)", 1, 90, 30)
 
@@ -261,7 +261,6 @@ if auto_refresh:
 # ══════════════════════════════════════════════════════════════════════════════
 
 BOTS = {
-    "revolut": {"label": "Revolut Range", "icon": "⚫", "exchange": "revolut", "color": "#2196f3", "max_pos": 3},
     "binance": {"label": "Binance Range", "icon": "🟡", "exchange": "binance", "color": "#f0b90b", "max_pos": 3},
     "crashbot": {"label": "Binance CrashBot", "icon": "💥", "exchange": "binance-crashbot", "color": "#7c4dff", "max_pos": 5},
 }
@@ -269,7 +268,7 @@ BOTS = {
 
 @st.cache_data(ttl=55)
 def _load_all(days: int):
-    """Charge les données des 3 bots en un seul appel caché."""
+    """Charge les données des 2 bots en un seul appel caché."""
     data = {}
     for key, cfg in BOTS.items():
         ex = cfg["exchange"]
@@ -799,10 +798,10 @@ def _render_advanced_stats(closed: pd.DataFrame):
 
 def render_overview():
     st.title("🏠 Overview")
-    st.caption("Vue consolidée des 3 bots de trading")
+    st.caption("Vue consolidée des 2 bots de trading")
 
     # ── Summary cards ──────────────────────────────────────────────────────
-    cols = st.columns(3)
+    cols = st.columns(2)
     total_equity = 0.0
     total_pnl = 0.0
     total_trades = 0
@@ -815,10 +814,18 @@ def render_overview():
         n_open = len(d["open"])
         total_open += n_open
 
+        # Fallback: equity depuis les snapshots si pas dans les stats
+        snap_equity = None
+        snap = d["snapshots"]
+        if not snap.empty and "equity" in snap.columns:
+            last_eq = snap.sort_values("date").iloc[-1].get("equity", None)
+            if pd.notna(last_eq):
+                snap_equity = float(last_eq)
+
         with cols[i]:
             st.markdown(f"### {cfg['icon']} {cfg['label']}")
             if stats:
-                eq = stats["equity"]
+                eq = stats["equity"] or snap_equity
                 pnl = stats["total_pnl"]
                 wr = stats["win_rate"]
                 total_equity += eq or 0
@@ -831,9 +838,13 @@ def render_overview():
                 st.metric("Win Rate", f"{wr:.1f}%", f"{stats['n_wins']}W / {stats['n_losses']}L")
                 st.metric("Positions", f"{n_open}/{cfg['max_pos']}")
             else:
-                st.metric("Equity", "—")
-                st.metric("P&L", "—")
-                st.metric("Win Rate", "—")
+                # Pas de trades fermés mais on a peut-être l'equity via snapshot
+                eq = snap_equity
+                total_equity += eq or 0
+
+                st.metric("Equity", f"${eq:,.2f}" if eq else "—")
+                st.metric("P&L", "$0.00")
+                st.metric("Win Rate", "— (0 trades)")
                 st.metric("Positions", f"{n_open}/{cfg['max_pos']}")
 
     st.divider()
@@ -992,35 +1003,7 @@ def render_overview():
         })
         st.dataframe(show, use_container_width=True, hide_index=True)
     else:
-        st.info("Aucune position ouverte sur les 3 bots")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  TAB: Revolut Range
-# ══════════════════════════════════════════════════════════════════════════════
-
-def render_revolut():
-    d = all_data["revolut"]
-    cfg = BOTS["revolut"]
-
-    st.title(f"{cfg['icon']} Revolut Range")
-    _render_kpis(d["stats"], len(d["open"]), cfg["max_pos"])
-    st.divider()
-
-    _render_positions(d["open"])
-    _render_alerts(d["open"], cfg["exchange"])
-    st.divider()
-
-    _render_equity_curve(d["snapshots"], d["closed"], cfg["color"])
-    _render_cumulative_pnl(d["closed"], cfg["color"])
-    st.divider()
-
-    _render_daily_pnl(d["closed"])
-    _render_pair_performance(d["closed"])
-    st.divider()
-
-    _render_last_trades(d["closed"])
-    _render_pnl_distribution(d["closed"], cfg["color"], "strategy")
+        st.info("Aucune position ouverte sur les 2 bots")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1091,18 +1074,14 @@ def render_binance_crashbot():
 #  Main — Tabs
 # ══════════════════════════════════════════════════════════════════════════════
 
-tab_overview, tab_revolut, tab_binance, tab_crashbot = st.tabs([
+tab_overview, tab_binance, tab_crashbot = st.tabs([
     "🏠 Overview",
-    "⚫ Revolut Range",
     "🟡 Binance Range",
     "💥 Binance CrashBot",
 ])
 
 with tab_overview:
     render_overview()
-
-with tab_revolut:
-    render_revolut()
 
 with tab_binance:
     render_binance_range()
