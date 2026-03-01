@@ -69,6 +69,7 @@ from src.firebase.trade_logger import (
     log_close_failure as fb_log_close_failure,
     clear_close_failure as fb_clear_close_failure,
     cleanup_old_events as fb_cleanup_events,
+    get_cumulative_pnl as fb_get_cumulative_pnl,
 )
 
 # ── Logging ────────────────────────────────────────────────────────────────────
@@ -184,6 +185,9 @@ class TradeXBinanceBot:
         # Firebase cleanup
         self._last_cleanup_date: str = ""
 
+        # Equity allouée
+        self._cumulative_pnl: float = 0.0  # PnL cumulé (chargé depuis Firebase au démarrage)
+
         if dry_run:
             logger.info("🔧 Mode DRY-RUN activé — aucun ordre ne sera exécuté")
 
@@ -226,6 +230,7 @@ class TradeXBinanceBot:
         logger.info("═" * 60)
 
         # Initialiser les tendances
+        self._init_cumulative_pnl()
         self._initialize()
 
         try:
@@ -1003,7 +1008,7 @@ class TradeXBinanceBot:
 
         # 🔥 Firebase
         try:
-            current_equity = self._calculate_equity(balances)
+            current_equity = self._calculate_allocated_equity()
             portfolio_risk = check_total_risk_exposure(
                 [p for p in self._positions.values()
                  if p.status in (PositionStatus.OPEN, PositionStatus.ZERO_RISK)],
@@ -1199,13 +1204,11 @@ class TradeXBinanceBot:
         # Telegram
         self._telegram.notify_sl_hit(position, exit_price)
 
-        # Equity
-        equity_after = 0.0
-        try:
-            balances = self._client.get_balances()
-            equity_after = self._calculate_equity(balances)
-        except Exception:
-            pass
+        # Incrémenter le PnL cumulé en mémoire
+        self._cumulative_pnl += pnl_net
+
+        # Equity allouée
+        equity_after = self._calculate_allocated_equity()
 
         # Firebase
         if position.firebase_trade_id:
@@ -1225,6 +1228,46 @@ class TradeXBinanceBot:
     # ═══════════════════════════════════════════════════════════════════════════
     # HELPERS
     # ═══════════════════════════════════════════════════════════════════════════
+
+    def _init_cumulative_pnl(self) -> None:
+        """Charge le PnL cumulé depuis Firebase (somme des trades CLOSED)."""
+        try:
+            self._cumulative_pnl = fb_get_cumulative_pnl(EXCHANGE_NAME)
+            logger.info(
+                "📊 PnL cumulé chargé depuis Firebase: $%+.2f",
+                self._cumulative_pnl,
+            )
+        except Exception as e:
+            logger.warning("⚠️ Impossible de charger le PnL cumulé: %s", e)
+            self._cumulative_pnl = 0.0
+
+    def _calculate_allocated_equity(self) -> float:
+        """Calcule l'equity allouée au bot Range.
+
+        Formule : ALLOCATED_BALANCE + cumulative_realized_pnl + unrealized_pnl
+        """
+        allocated = config.BINANCE_RANGE_ALLOCATED_BALANCE
+        if allocated <= 0:
+            return self._calculate_equity()
+
+        # PnL non réalisé des positions ouvertes
+        unrealized_pnl = 0.0
+        for pos in self._positions.values():
+            if pos.status not in (PositionStatus.OPEN, PositionStatus.ZERO_RISK):
+                continue
+            try:
+                ticker = self._data.get_ticker(pos.symbol)
+                if ticker:
+                    price = ticker.last_price
+                    if pos.side == OrderSide.BUY:
+                        unrealized_pnl += (price - pos.entry_price) * pos.size
+                    else:
+                        unrealized_pnl += (pos.entry_price - price) * pos.size
+            except Exception:
+                pass
+
+        equity = allocated + self._cumulative_pnl + unrealized_pnl
+        return max(equity, 0.0)
 
     def _calculate_equity(self, balances: Optional[list[Balance]] = None) -> float:
         """Calcule l'equity totale du compte Binance."""
@@ -1319,25 +1362,22 @@ class TradeXBinanceBot:
             p for p in self._positions.values()
             if p.status in (PositionStatus.OPEN, PositionStatus.ZERO_RISK)
         ]
-        try:
-            balances = self._client.get_balances()
-            equity = self._calculate_equity(balances)
-        except Exception:
-            equity = 0
-            balances = []
+
+        allocated_equity = self._calculate_allocated_equity()
 
         logger.info(
-            "💓 BINANCE | %d/%d positions | equity=$%.2f | cycle #%d",
+            "💓 BINANCE RANGE | %d/%d positions | equity=$%.2f | cycle #%d",
             len(open_pos), config.BINANCE_MAX_SIMULTANEOUS_POSITIONS,
-            equity, self._cycle_count,
+            allocated_equity, self._cycle_count,
         )
 
         try:
             fb_log_heartbeat(
                 open_positions=len(open_pos),
-                total_equity=equity,
+                total_equity=allocated_equity,
                 total_risk_pct=0,
                 pairs_count=len(self._trading_pairs),
+                exchange=EXCHANGE_NAME,
             )
         except Exception:
             pass

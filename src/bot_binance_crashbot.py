@@ -62,6 +62,7 @@ from src.firebase.trade_logger import (
     log_heartbeat as fb_log_heartbeat,
     log_daily_snapshot as fb_log_daily_snapshot,
     cleanup_old_events as fb_cleanup_events,
+    get_cumulative_pnl as fb_get_cumulative_pnl,
 )
 
 
@@ -184,6 +185,7 @@ class TradeXBinanceCrashBot:
         self._next_h4_close_ts: float = 0.0
         self._last_telegram_heartbeat: float = 0.0
         self._dd_warning_sent: bool = False
+        self._cumulative_pnl: float = 0.0  # PnL cumulé (chargé depuis Firebase au démarrage)
 
         # CrashBot config
         self._crash_cfg = CrashConfig(
@@ -210,6 +212,7 @@ class TradeXBinanceCrashBot:
         self._running = True
         self._discover_pairs()
         self._load_state()
+        self._init_cumulative_pnl()
         self._init_kill_switch()
 
         logger.info("═" * 60)
@@ -362,13 +365,55 @@ class TradeXBinanceCrashBot:
             self._trail_steps[symbol] = 0
             self._trail_tp[symbol] = initial_tp
 
+    def _init_cumulative_pnl(self) -> None:
+        """Charge le PnL cumulé depuis Firebase (somme des trades CLOSED)."""
+        try:
+            self._cumulative_pnl = fb_get_cumulative_pnl(EXCHANGE_NAME)
+            logger.info(
+                "📊 PnL cumulé chargé depuis Firebase: $%+.2f",
+                self._cumulative_pnl,
+            )
+        except Exception as e:
+            logger.warning("⚠️ Impossible de charger le PnL cumulé: %s", e)
+            self._cumulative_pnl = 0.0
+
+    def _calculate_allocated_equity(self) -> float:
+        """Calcule l'equity allouée au CrashBot.
+
+        Formule : ALLOCATED_BALANCE + cumulative_realized_pnl + unrealized_pnl
+        - cumulative_realized_pnl : somme des PnL nets de tous les trades CLOSED (Firebase, caché en mémoire)
+        - unrealized_pnl : somme des gains/pertes latentes des positions ouvertes aux prix actuels
+        """
+        allocated = config.BINANCE_CRASHBOT_ALLOCATED_BALANCE
+        if allocated <= 0:
+            # Pas d'allocation → fallback sur l'equity totale Binance
+            return self._calculate_equity()
+
+        # PnL non réalisé des positions ouvertes
+        unrealized_pnl = 0.0
+        for pos in self._positions.values():
+            if pos.status not in (PositionStatus.OPEN, PositionStatus.ZERO_RISK):
+                continue
+            try:
+                ticker = self._data.get_ticker(pos.symbol)
+                if ticker:
+                    price = ticker.last_price
+                    if pos.side == OrderSide.BUY:
+                        unrealized_pnl += (price - pos.entry_price) * pos.size
+                    else:
+                        unrealized_pnl += (pos.entry_price - price) * pos.size
+            except Exception:
+                pass
+
+        equity = allocated + self._cumulative_pnl + unrealized_pnl
+        return max(equity, 0.0)
+
     def _init_kill_switch(self) -> None:
         """Initialise l'equity du début de mois pour le kill-switch."""
         now = datetime.now(timezone.utc)
         self._current_month = now.strftime("%Y-%m")
         try:
-            balances = self._client.get_balances()
-            self._month_start_equity = self._calculate_equity(balances)
+            self._month_start_equity = self._calculate_allocated_equity()
         except Exception:
             self._month_start_equity = 0
         logger.info("Kill-switch: equity début mois = $%.2f", self._month_start_equity)
@@ -521,8 +566,7 @@ class TradeXBinanceCrashBot:
             self._current_month = month_key
             self._kill_switch_active = False
             try:
-                balances = self._client.get_balances()
-                self._month_start_equity = self._calculate_equity(balances)
+                self._month_start_equity = self._calculate_allocated_equity()
             except Exception:
                 pass
             logger.info("📅 Nouveau mois %s | Equity reset = $%.2f | Kill-switch: OFF",
@@ -760,7 +804,7 @@ class TradeXBinanceCrashBot:
 
         # Firebase
         try:
-            equity = self._calculate_equity(balances)
+            equity = self._calculate_allocated_equity()
             portfolio_risk = check_total_risk_exposure(
                 [p for p in self._positions.values()
                  if p.status in (PositionStatus.OPEN, PositionStatus.ZERO_RISK)],
@@ -875,8 +919,7 @@ class TradeXBinanceCrashBot:
         # 4. Kill-switch check
         if config.BINANCE_CRASHBOT_KILL_SWITCH and self._month_start_equity > 0:
             try:
-                balances = self._client.get_balances()
-                equity = self._calculate_equity(balances)
+                equity = self._calculate_allocated_equity()
                 month_return = (equity - self._month_start_equity) / self._month_start_equity
 
                 # DD Warning
@@ -1013,13 +1056,11 @@ class TradeXBinanceCrashBot:
         # Telegram
         self._telegram.notify_sl_hit(position, exit_price)
 
+        # Incrémenter le PnL cumulé en mémoire
+        self._cumulative_pnl += pnl_net
+
         # Firebase
-        equity_after = 0.0
-        try:
-            balances = self._client.get_balances()
-            equity_after = self._calculate_equity(balances)
-        except Exception:
-            pass
+        equity_after = self._calculate_allocated_equity()
 
         if position.firebase_trade_id:
             try:
@@ -1089,18 +1130,15 @@ class TradeXBinanceCrashBot:
             t0 = time.time()
             balances = self._client.get_balances()
             self._record_api_latency(time.time() - t0)
-            equity = self._calculate_equity(balances)
         except Exception:
-            equity = 0
             balances = []
 
-        allocated = config.BINANCE_CRASHBOT_ALLOCATED_BALANCE
-        allocated_equity = min(allocated, equity) if allocated > 0 else equity
+        allocated_equity = self._calculate_allocated_equity()
 
         # Drawdown mensuel
         dd_pct = 0.0
         if self._month_start_equity > 0:
-            dd_pct = (equity - self._month_start_equity) / self._month_start_equity * 100
+            dd_pct = (allocated_equity - self._month_start_equity) / self._month_start_equity * 100
 
         # Exposition courante
         exposure_notional = 0.0
@@ -1138,10 +1176,10 @@ class TradeXBinanceCrashBot:
         self._check_data_freshness()
 
         logger.info(
-            "💓 CRASHBOT H4 | Equity: $%.0f (alloué: $%.0f) | DD: %+.1f%% | "
+            "💓 CRASHBOT H4 | Equity: $%.0f | DD: %+.1f%% | "
             "Expo: %.0f%% | Pos: %d/%d | PnL jour: %+.2f$ (%+.1f%%) | Kill: %s | "
             "Signaux: %d📡 | API: %.0fms | cycle #%d",
-            equity, allocated_equity, dd_pct,
+            allocated_equity, dd_pct,
             exposure_pct, len(open_pos), config.BINANCE_CRASHBOT_MAX_POSITIONS,
             self._daily_pnl, daily_pnl_pct,
             "🔴 ON" if self._kill_switch_active else "🟢 OFF",
@@ -1153,7 +1191,7 @@ class TradeXBinanceCrashBot:
         if now - self._last_telegram_heartbeat >= config.CRASHBOT_HEARTBEAT_TELEGRAM_SECONDS:
             self._last_telegram_heartbeat = now
             self._telegram.notify_crashbot_heartbeat(
-                equity=equity,
+                equity=allocated_equity,
                 allocated_equity=allocated_equity,
                 drawdown_pct=dd_pct,
                 exposure_pct=exposure_pct,
@@ -1171,7 +1209,7 @@ class TradeXBinanceCrashBot:
         try:
             fb_log_heartbeat(
                 open_positions=len(open_pos),
-                total_equity=equity,
+                total_equity=allocated_equity,
                 total_risk_pct=exposure_pct / 100 if exposure_pct > 0 else 0,
                 pairs_count=len(self._trading_pairs),
                 exchange=EXCHANGE_NAME,
@@ -1196,11 +1234,7 @@ class TradeXBinanceCrashBot:
             return
         self._last_snapshot_date = today
 
-        try:
-            balances = self._client.get_balances()
-            equity = self._calculate_equity(balances)
-        except Exception:
-            return
+        equity = self._calculate_allocated_equity()
 
         open_pos = [
             p for p in self._positions.values()

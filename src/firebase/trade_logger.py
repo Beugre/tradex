@@ -445,6 +445,31 @@ def _estimate_fee(notional_usd: float, fill_type: str) -> float:
     return round(notional_usd * 0.0009, 4)  # taker 0.09%
 
 
+def get_cumulative_pnl(exchange: str) -> float:
+    """Somme des PnL nets de tous les trades CLOSED pour un exchange donné.
+
+    Requête Firebase : trades WHERE exchange == X AND status == CLOSED
+    Retourne la somme de `pnl_net_usd` (après fees).
+    """
+    trades = get_documents(
+        "trades",
+        filters=[
+            ("exchange", "==", exchange),
+            ("status", "==", "CLOSED"),
+        ],
+    )
+    total = 0.0
+    for t in trades:
+        pnl = t.get("pnl_net_usd")
+        if pnl is not None:
+            total += float(pnl)
+    logger.info(
+        "🔥 Cumulative PnL [%s] = $%+.2f (%d trades CLOSED)",
+        exchange, total, len(trades),
+    )
+    return total
+
+
 def get_open_trades() -> list[dict[str, Any]]:
     """Retourne les trades actuellement ouverts dans Firebase."""
     return get_documents("trades", filters=[("status", "==", "OPEN")])
