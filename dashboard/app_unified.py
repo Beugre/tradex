@@ -17,6 +17,15 @@ import streamlit as st
 from google.cloud import firestore
 from google.oauth2 import service_account
 
+# Allocator (pure logic — pas d'I/O)
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.core.allocator import (
+    AllocationRegime,
+    compute_allocation,
+    compute_profit_factor,
+)
+
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 _BASE = Path(__file__).resolve().parent.parent
@@ -149,6 +158,57 @@ def _color_pnl(val):
     if pd.isna(val):
         return ""
     return "color: #00c853" if val >= 0 else "color: #ff1744"
+
+
+def _compute_current_allocation() -> dict:
+    """Calcule l'allocation courante à afficher dans le dashboard."""
+    try:
+        db = _get_db()
+        since = datetime.now(timezone.utc) - timedelta(days=90)
+        docs = (
+            db.collection("trades")
+            .where("exchange", "==", "binance")
+            .where("status", "==", "CLOSED")
+            .where("closed_at", ">=", since.isoformat())
+            .stream()
+        )
+        pnl_list = []
+        for doc in docs:
+            d = doc.to_dict()
+            pnl = d.get("pnl_net_usd") or d.get("pnl_usd") or 0
+            if isinstance(pnl, (int, float)):
+                pnl_list.append(float(pnl))
+
+        trail_pf = compute_profit_factor(pnl_list)
+        trail_trades = len(pnl_list)
+
+        # On utilise la somme des equities des snapshots les plus récents comme proxy
+        # du total balance, sinon on utilise les stats
+        total_balance = 0.0
+        for key in ("binance", "crashbot"):
+            snap = all_data[key]["snapshots"]
+            if not snap.empty and "equity" in snap.columns:
+                last_eq = snap.sort_values("date").iloc[-1]["equity"]
+                if pd.notna(last_eq):
+                    total_balance += float(last_eq)
+
+        if total_balance <= 0:
+            total_balance = 2350.0  # fallback
+
+        result = compute_allocation(total_balance, trail_pf, trail_trades)
+        return {
+            "regime": result.regime,
+            "crash_pct": result.crash_pct,
+            "trail_pct": result.trail_pct,
+            "crash_balance": result.crash_balance,
+            "trail_balance": result.trail_balance,
+            "trail_pf": result.trail_pf,
+            "trail_trades": result.trail_trades,
+            "reason": result.reason,
+            "total_balance": total_balance,
+        }
+    except Exception:
+        return {}
 
 
 def _fmt_price(p):
@@ -806,6 +866,68 @@ def render_overview():
                 st.metric("P&L", "—")
                 st.metric("Win Rate", "—")
                 st.metric("Positions", f"{n_open}/{cfg['max_pos']}")
+
+    st.divider()
+
+    # ── Allocation dynamique ───────────────────────────────────────────────
+    alloc = _compute_current_allocation()
+    if alloc:
+        st.subheader("⚖️ Allocation dynamique")
+
+        regime = alloc["regime"]
+        regime_emoji = {
+            AllocationRegime.DEFENSIVE: "🛡️",
+            AllocationRegime.NEUTRAL: "⚖️",
+            AllocationRegime.AGGRESSIVE: "🚀",
+        }
+        regime_color = {
+            AllocationRegime.DEFENSIVE: "#ff9800",
+            AllocationRegime.NEUTRAL: "#2196f3",
+            AllocationRegime.AGGRESSIVE: "#4caf50",
+        }
+
+        a1, a2, a3, a4, a5 = st.columns(5)
+        a1.metric(
+            "Régime",
+            f"{regime_emoji.get(regime, '')} {regime.value.upper()}",
+        )
+        a2.metric("PF Trail Range (90j)", f"{alloc['trail_pf']:.2f}" if alloc['trail_pf'] != float('inf') else "∞")
+        a3.metric("Trades Trail (90j)", f"{alloc['trail_trades']}")
+        a4.metric(
+            "💥 CrashBot",
+            f"${alloc['crash_balance']:,.0f}",
+            f"{alloc['crash_pct']*100:.0f}%",
+        )
+        a5.metric(
+            "🟡 Trail Range",
+            f"${alloc['trail_balance']:,.0f}",
+            f"{alloc['trail_pct']*100:.0f}%",
+        )
+
+        # Gauge visuelle
+        fig_alloc = go.Figure(go.Bar(
+            x=[alloc["crash_pct"] * 100, alloc["trail_pct"] * 100],
+            y=["Allocation", "Allocation"],
+            orientation="h",
+            marker_color=["#7c4dff", "#f0b90b"],
+            text=[
+                f"CrashBot {alloc['crash_pct']*100:.0f}% (${alloc['crash_balance']:,.0f})",
+                f"Trail Range {alloc['trail_pct']*100:.0f}% (${alloc['trail_balance']:,.0f})",
+            ],
+            textposition="inside",
+            textfont=dict(color="white", size=14),
+        ))
+        fig_alloc.update_layout(
+            barmode="stack",
+            height=70,
+            margin=dict(l=0, r=0, t=0, b=0),
+            xaxis=dict(visible=False, range=[0, 100]),
+            yaxis=dict(visible=False),
+            showlegend=False,
+        )
+        st.plotly_chart(fig_alloc, use_container_width=True)
+
+        st.caption(f"ℹ️ {alloc['reason']} — Total: ${alloc['total_balance']:,.0f}")
 
     st.divider()
 

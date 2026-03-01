@@ -1265,12 +1265,16 @@ class TradeXBinanceBot:
             return
 
         try:
+            # Solde réel Binance (USDC + valeur des positions)
+            total_balance = self._calculate_equity()
+            logger.info("💰 Solde total Binance: $%.2f", total_balance)
+
             pnl_list = fb_get_trail_range_pnl_list(days=90)
             trail_pf = compute_profit_factor(pnl_list)
             trail_trades = len(pnl_list)
 
             result = compute_allocation(
-                total_balance=config.TOTAL_BINANCE_BALANCE,
+                total_balance=total_balance,
                 trail_pf=trail_pf,
                 trail_trade_count=trail_trades,
             )
@@ -1282,7 +1286,8 @@ class TradeXBinanceBot:
             logger.info("📊 ALLOCATION DYNAMIQUE — %s", result.regime.value.upper())
             logger.info("   %s", result.reason)
             logger.info(
-                "   Trail Range: %.0f%% → $%.0f | CrashBot: %.0f%% → $%.0f",
+                "   Total: $%.0f | Trail Range: %.0f%% → $%.0f | CrashBot: %.0f%% → $%.0f",
+                total_balance,
                 result.trail_pct * 100,
                 result.trail_balance,
                 result.crash_pct * 100,
