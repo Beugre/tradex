@@ -17,6 +17,15 @@
       ]
     },
     {
+      "collectionGroup": "trades",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "exchange", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "closed_at", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "daily_snapshots",
       "queryScope": "COLLECTION",
       "fields": [
