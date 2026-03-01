@@ -159,6 +159,9 @@ class TradeXBinanceCrashBot:
         self._trail_steps: dict[str, int] = {}     # nombre de steps franchi
         self._peak_prices: dict[str, float] = {}   # plus haut atteint
 
+        # OCO tracking (SL + TP sur l'exchange)
+        self._oco_orders: dict[str, dict] = {}     # symbol → {"order_list_id": int}
+
         # Cooldown par paire (timestamp ms de la dernière fermeture)
         self._last_trade_close_ts: dict[str, int] = {}
 
@@ -323,6 +326,17 @@ class TradeXBinanceCrashBot:
                 self._positions[sym] = pos
             return
 
+        # Récupérer les OCOs actifs sur Binance
+        try:
+            active_oco_lists = self._client.get_active_order_lists()
+            oco_by_symbol: dict[str, dict] = {}
+            for oco in active_oco_lists:
+                sym = oco.get("symbol", "")
+                oco_by_symbol[sym] = oco
+        except Exception as e:
+            logger.warning("Impossible de récupérer les OCOs actifs: %s", e)
+            oco_by_symbol = {}
+
         balance_map = {b.currency: b for b in balances}
         for sym, pos in active.items():
             base_currency = sym.replace("USDC", "")
@@ -344,6 +358,13 @@ class TradeXBinanceCrashBot:
                     _fmt(self._trail_tp.get(sym, 0)),
                     self._trail_steps.get(sym, 0),
                 )
+                # Restaurer l'OCO tracking si actif sur Binance
+                if sym in oco_by_symbol:
+                    oco = oco_by_symbol[sym]
+                    self._oco_orders[sym] = {
+                        "order_list_id": oco.get("orderListId"),
+                    }
+                    logger.info("[%s] OCO actif restauré (listId=%s)", sym, oco.get("orderListId"))
             else:
                 logger.warning("[%s] Position CrashBot locale mais solde insuffisant → retirée", sym)
 
@@ -472,6 +493,7 @@ class TradeXBinanceCrashBot:
     def _tick(self) -> None:
         """Un cycle de polling."""
         self._check_new_h4_candle()
+        self._check_oco_fills()
         self._check_kill_switch_month_reset()
 
         for symbol in self._trading_pairs:
@@ -580,6 +602,156 @@ class TradeXBinanceCrashBot:
             self._manage_trailing(symbol, position)
         else:
             self._seek_crash_entry(symbol)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # OCO — SL + TP sur l'exchange
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _check_oco_fills(self) -> None:
+        """Vérifie si des OCO CrashBot ont été exécutés (TP ou SL atteint)."""
+        filled_symbols: list[str] = []
+
+        for symbol, oco_info in list(self._oco_orders.items()):
+            order_list_id = oco_info.get("order_list_id")
+            if order_list_id is None:
+                continue
+
+            try:
+                oco_status = self._client.get_order_list(order_list_id)
+            except Exception as e:
+                logger.debug("[%s] Impossible de vérifier l'OCO %s: %s", symbol, order_list_id, e)
+                continue
+
+            list_status = oco_status.get("listOrderStatus", "")
+
+            if list_status == "ALL_DONE":
+                position = self._positions.get(symbol)
+                if not position:
+                    filled_symbols.append(symbol)
+                    continue
+
+                # Trouver quel ordre a été fill
+                order_reports = oco_status.get("orderReports", [])
+                if not order_reports:
+                    orders = oco_status.get("orders", [])
+                    for o in orders:
+                        try:
+                            detail = self._client.get_order(symbol, order_id=o.get("orderId"))
+                            order_reports.append(detail)
+                        except Exception:
+                            pass
+
+                filled_order = None
+                for report in order_reports:
+                    if report.get("status") == "FILLED":
+                        filled_order = report
+                        break
+
+                if filled_order:
+                    filled_price = float(filled_order.get("price", 0))
+                    filled_type = filled_order.get("type", "")
+                    filled_qty = float(filled_order.get("executedQty", 0))
+
+                    # Prix moyen réel
+                    cq = float(filled_order.get("cummulativeQuoteQty", 0))
+                    eq = float(filled_order.get("executedQty", 0))
+                    if cq > 0 and eq > 0:
+                        filled_price = cq / eq
+
+                    is_tp = filled_type in ("LIMIT_MAKER", "TAKE_PROFIT", "TAKE_PROFIT_LIMIT")
+                    is_sl = filled_type in ("STOP_LOSS", "STOP_LOSS_LIMIT")
+
+                    trail_steps = self._trail_steps.get(symbol, 0)
+
+                    if is_tp:
+                        reason = f"TP CrashBot atteint (OCO, step {trail_steps})" if trail_steps > 0 else "TP CrashBot atteint (OCO)"
+                        logger.info(
+                            "[%s] 🎯 OCO TP FILLED (step %d) | prix=%.6f",
+                            symbol, trail_steps, filled_price,
+                        )
+                    elif is_sl:
+                        reason = f"TRAIL_SL{trail_steps} (OCO)" if trail_steps > 0 else "SL (OCO)"
+                        log_fn = logger.info if trail_steps > 0 else logger.warning
+                        log_fn(
+                            "[%s] 🛑 OCO SL FILLED (step %d) | prix=%.6f",
+                            symbol, trail_steps, filled_price,
+                        )
+                    else:
+                        reason = f"OCO exécuté ({filled_type})"
+                        filled_price = filled_price or position.entry_price
+
+                    self._finalize_close(
+                        symbol, filled_price, reason,
+                        actual_exit_size=filled_qty if filled_qty > 0 else None,
+                    )
+                else:
+                    logger.warning("[%s] OCO ALL_DONE mais pas de fill trouvé", symbol)
+
+                filled_symbols.append(symbol)
+
+            elif list_status in ("REJECT", "EXPIRED"):
+                logger.warning("[%s] OCO %s → statut %s", symbol, order_list_id, list_status)
+                filled_symbols.append(symbol)
+
+        for sym in filled_symbols:
+            self._oco_orders.pop(sym, None)
+
+    def _place_oco(self, symbol: str, position: Position) -> bool:
+        """Place un OCO SELL (SL + TP) pour protéger une position CrashBot LONG."""
+        current_tp = self._trail_tp.get(symbol)
+        current_sl = self._trail_sl.get(symbol, position.sl_price)
+
+        if not current_tp or current_tp <= 0:
+            logger.warning("[%s] Pas de TP → OCO impossible", symbol)
+            return False
+
+        # Formater les prix
+        tp_price_str = self._client.format_price(symbol, current_tp)
+        sl_stop_str = self._client.format_price(symbol, current_sl)
+
+        # SL limit = stop price - offset (SELL side → vendre un peu en-dessous du stop)
+        offset = config.BINANCE_SL_LIMIT_OFFSET_PCT
+        sl_limit = current_sl * (1 - offset)
+        sl_limit_str = self._client.format_price(symbol, sl_limit)
+
+        # Quantité = taille de la position, ajustée au solde réel disponible
+        base_currency = symbol.replace("USDC", "")
+        balances = self._client.get_balances()
+        base_bal = next((b for b in balances if b.currency == base_currency), None)
+        oco_qty = position.size
+        if base_bal and base_bal.available < oco_qty:
+            logger.info(
+                "[%s] OCO qty ajustée: %.8f → %.8f (solde réel %s)",
+                symbol, oco_qty, base_bal.available, base_currency,
+            )
+            oco_qty = base_bal.available
+        qty_str = self._client.format_quantity(symbol, oco_qty)
+
+        try:
+            result = self._client.place_oco_order(
+                symbol=symbol,
+                side="SELL",
+                quantity=qty_str,
+                tp_price=tp_price_str,
+                sl_stop_price=sl_stop_str,
+                sl_limit_price=sl_limit_str,
+            )
+
+            order_list_id = result.get("orderListId")
+            self._oco_orders[symbol] = {
+                "order_list_id": order_list_id,
+            }
+
+            logger.info(
+                "[%s] 🎯 OCO placé | TP=%s | SL_stop=%s SL_limit=%s | listId=%s",
+                symbol, tp_price_str, sl_stop_str, sl_limit_str, order_list_id,
+            )
+            return True
+
+        except Exception as e:
+            logger.error("[%s] ❌ OCO placement échoué: %s", symbol, e)
+            self._telegram.notify_error(f"CrashBot OCO {symbol} échoué: {e}")
+            return False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENTRÉE EN POSITION
@@ -828,12 +1000,25 @@ class TradeXBinanceCrashBot:
         except Exception as e:
             logger.warning("🔥 Firebase log échoué: %s", e)
 
+        # Placer l'OCO (SL + TP) sur l'exchange
+        if not self.dry_run:
+            self._place_oco(symbol, position)
+        else:
+            logger.info(
+                "[DRY-RUN] OCO SELL %s | TP=%s | SL=%s",
+                symbol, _fmt(actual_tp), _fmt(actual_sl),
+            )
+
     # ═══════════════════════════════════════════════════════════════════════════
     # STEP TRAILING + SL
     # ═══════════════════════════════════════════════════════════════════════════
 
     def _manage_trailing(self, symbol: str, position: Position) -> None:
-        """Gère le step trailing : TP cascade + SL check."""
+        """Gère le step trailing : TP cascade + SL check.
+
+        Avec OCO actif → SL/TP gérés par l'exchange, on ne fait que le step trail.
+        Sans OCO → fallback polling (SL check + tentative de placer l'OCO).
+        """
         ticker = self._data.get_ticker(symbol)
         if ticker is None:
             return
@@ -844,16 +1029,19 @@ class TradeXBinanceCrashBot:
         current_steps = self._trail_steps.get(symbol, 0)
         peak = self._peak_prices.get(symbol, position.entry_price)
 
-        # 1. Vérifier SL touché
-        if price <= current_sl:
-            reason = f"TRAIL_SL{current_steps}" if current_steps > 0 else "SL"
-            pnl_pct = (price - position.entry_price) / position.entry_price * 100
-            logger.warning(
-                "[%s] 🛑 %s | prix=%s ≤ SL=%s | PnL≈%+.1f%%",
-                symbol, reason, _fmt(price), _fmt(current_sl), pnl_pct,
-            )
-            self._close_crash_position(symbol, price, reason)
-            return
+        has_oco = symbol in self._oco_orders
+
+        # 1. SL check en polling — UNIQUEMENT si pas d'OCO actif (fallback)
+        if not has_oco:
+            if price <= current_sl:
+                reason = f"TRAIL_SL{current_steps}" if current_steps > 0 else "SL"
+                pnl_pct = (price - position.entry_price) / position.entry_price * 100
+                logger.warning(
+                    "[%s] 🛑 %s (polling) | prix=%s ≤ SL=%s | PnL≈%+.1f%%",
+                    symbol, reason, _fmt(price), _fmt(current_sl), pnl_pct,
+                )
+                self._close_crash_position(symbol, price, reason)
+                return
 
         # 2. Mettre à jour le peak
         if price > peak:
@@ -890,6 +1078,28 @@ class TradeXBinanceCrashBot:
                 _fmt(old_tp), _fmt(new_tp), gain_pct,
             )
 
+            # Cancel ancien OCO + placer nouveau avec SL/TP mis à jour
+            if not self.dry_run:
+                oco_info = self._oco_orders.get(symbol)
+                if oco_info:
+                    try:
+                        self._client.cancel_order_list(
+                            symbol=symbol,
+                            order_list_id=oco_info.get("order_list_id"),
+                        )
+                        logger.info("[%s] OCO annulé pour trail step %d", symbol, new_steps)
+                    except Exception as e:
+                        logger.warning("[%s] Cancel OCO pour trail échoué: %s", symbol, e)
+                    self._oco_orders.pop(symbol, None)
+
+                # Placer le nouvel OCO avec les niveaux mis à jour
+                self._place_oco(symbol, position)
+            else:
+                logger.info(
+                    "[DRY-RUN] Trail OCO swap | SL=%s → %s | TP=%s → %s",
+                    _fmt(old_sl), _fmt(new_sl), _fmt(old_tp), _fmt(new_tp),
+                )
+
             # Notification Telegram
             self._telegram.notify_crashbot_trail(
                 symbol=symbol,
@@ -915,6 +1125,12 @@ class TradeXBinanceCrashBot:
                     })
                 except Exception as e:
                     logger.debug("Firebase trail update échoué: %s", e)
+
+        # 4. Si pas d'OCO actif et pas de step → tenter de placer l'OCO
+        elif not has_oco and not self.dry_run:
+            # Vérifier que TP est au-dessus du prix et SL en-dessous
+            if current_tp > price > current_sl:
+                self._place_oco(symbol, position)
 
         # 4. Kill-switch check
         if config.BINANCE_CRASHBOT_KILL_SWITCH and self._month_start_equity > 0:
@@ -964,10 +1180,23 @@ class TradeXBinanceCrashBot:
     # ═══════════════════════════════════════════════════════════════════════════
 
     def _close_crash_position(self, symbol: str, exit_price: float, reason: str) -> None:
-        """Ferme une position CrashBot via MARKET SELL."""
+        """Ferme une position CrashBot via MARKET SELL (annule l'OCO si actif)."""
         position = self._positions.get(symbol)
         if not position:
             return
+
+        # Annuler l'OCO actif s'il y en a un
+        oco_info = self._oco_orders.get(symbol)
+        if oco_info and not self.dry_run:
+            try:
+                self._client.cancel_order_list(
+                    symbol=symbol,
+                    order_list_id=oco_info.get("order_list_id"),
+                )
+                logger.info("[%s] OCO annulé avant close market", symbol)
+            except Exception as e:
+                logger.warning("[%s] Cancel OCO échoué: %s", symbol, e)
+            self._oco_orders.pop(symbol, None)
 
         close_qty = position.size
         if not self.dry_run:
@@ -1045,12 +1274,13 @@ class TradeXBinanceCrashBot:
         # Cooldown : enregistrer le timestamp de fermeture
         self._last_trade_close_ts[symbol] = self._last_h4_ts
 
-        # Cleanup trailing state
+        # Cleanup trailing state + OCO
         self._peak_prices.pop(symbol, None)
         self._trail_sl.pop(symbol, None)
         self._trail_tp.pop(symbol, None)
         self._trail_steps.pop(symbol, None)
         self._last_signal.pop(symbol, None)
+        self._oco_orders.pop(symbol, None)
         self._save_state()
 
         # Telegram
