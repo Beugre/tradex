@@ -70,7 +70,9 @@ from src.firebase.trade_logger import (
     clear_close_failure as fb_clear_close_failure,
     cleanup_old_events as fb_cleanup_events,
     get_cumulative_pnl as fb_get_cumulative_pnl,
+    get_trail_range_pnl_list as fb_get_trail_range_pnl_list,
 )
+from src.core.allocator import compute_allocation, compute_profit_factor
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 
@@ -187,6 +189,8 @@ class TradeXBinanceBot:
 
         # Equity allouée
         self._cumulative_pnl: float = 0.0  # PnL cumulé (chargé depuis Firebase au démarrage)
+        self._allocated_balance: float = config.BINANCE_RANGE_ALLOCATED_BALANCE
+        self._last_allocation_date: str = ""
 
         if dry_run:
             logger.info("🔧 Mode DRY-RUN activé — aucun ordre ne sera exécuté")
@@ -231,6 +235,7 @@ class TradeXBinanceBot:
 
         # Initialiser les tendances
         self._init_cumulative_pnl()
+        self._init_allocation()
         self._initialize()
 
         try:
@@ -385,6 +390,7 @@ class TradeXBinanceBot:
         """Un cycle de polling."""
         self._check_new_h4_candle()
         self._check_oco_fills()
+        self._maybe_recompute_allocation()
 
         self._cycle_signals = 0
         self._cycle_executed = 0
@@ -869,8 +875,8 @@ class TradeXBinanceBot:
         if signal["side"] == OrderSide.BUY:
             if available_usdc <= 0:
                 return
-            # Capital alloué (plafond virtuel pour cohabiter avec le bot Breakout)
-            allocated = config.BINANCE_RANGE_ALLOCATED_BALANCE
+            # Capital alloué (plafond virtuel — dynamique si activé)
+            allocated = self._allocated_balance
             fiat_balance = min(allocated, available_usdc) if allocated > 0 else available_usdc
         else:
             # Binance Spot : SELL nécessite de détenir l'actif base
@@ -1241,12 +1247,70 @@ class TradeXBinanceBot:
             logger.warning("⚠️ Impossible de charger le PnL cumulé: %s", e)
             self._cumulative_pnl = 0.0
 
+    # ── Dynamic allocation ─────────────────────────────────────────────────────
+
+    def _init_allocation(self) -> None:
+        """Calcule l'allocation dynamique Crash/Trail au démarrage.
+
+        Si DYNAMIC_ALLOCATION_ENABLED=false → garde le fallback statique.
+        Sinon → requête Firebase pour le PF Trail Range 90j → compute_allocation().
+        """
+        if not config.DYNAMIC_ALLOCATION_ENABLED:
+            logger.info(
+                "📊 Allocation dynamique désactivée — fallback statique $%.0f",
+                self._allocated_balance,
+            )
+            self._last_allocation_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            return
+
+        try:
+            pnl_list = fb_get_trail_range_pnl_list(days=90)
+            trail_pf = compute_profit_factor(pnl_list)
+            trail_trades = len(pnl_list)
+
+            result = compute_allocation(
+                total_balance=config.TOTAL_BINANCE_BALANCE,
+                trail_pf=trail_pf,
+                trail_trade_count=trail_trades,
+            )
+
+            self._allocated_balance = result.trail_balance
+            self._last_allocation_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+            logger.info("═" * 50)
+            logger.info("📊 ALLOCATION DYNAMIQUE — %s", result.regime.value.upper())
+            logger.info("   %s", result.reason)
+            logger.info(
+                "   Trail Range: %.0f%% → $%.0f | CrashBot: %.0f%% → $%.0f",
+                result.trail_pct * 100,
+                result.trail_balance,
+                result.crash_pct * 100,
+                result.crash_balance,
+            )
+            logger.info("═" * 50)
+
+        except Exception as e:
+            logger.warning(
+                "⚠️ Allocation dynamique échouée: %s — fallback $%.0f",
+                e,
+                self._allocated_balance,
+            )
+            self._last_allocation_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    def _maybe_recompute_allocation(self) -> None:
+        """Recalcule l'allocation 1×/jour (changement de date UTC)."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if today == self._last_allocation_date:
+            return
+        logger.info("🔄 Nouveau jour UTC — recalcul allocation dynamique")
+        self._init_allocation()
+
     def _calculate_allocated_equity(self) -> float:
         """Calcule l'equity allouée au bot Range.
 
         Formule : ALLOCATED_BALANCE + cumulative_realized_pnl + unrealized_pnl
         """
-        allocated = config.BINANCE_RANGE_ALLOCATED_BALANCE
+        allocated = self._allocated_balance
         if allocated <= 0:
             return self._calculate_equity()
 

@@ -53,6 +53,14 @@ BINANCE_MAKER_FEE: float = float(os.getenv("BINANCE_MAKER_FEE", "0.001"))
 BINANCE_TAKER_FEE: float = float(os.getenv("BINANCE_TAKER_FEE", "0.001"))
 
 # ── Capital alloué (partage du même compte entre bots) ────────────────────────
+# Capital total déposé sur Binance (utilisé par l'allocator dynamique)
+TOTAL_BINANCE_BALANCE: float = float(
+    os.getenv("TOTAL_BINANCE_BALANCE", "2350")
+)
+# Allocation dynamique (True = l'allocator recalcule quotidiennement basé sur le PF Trail Range)
+DYNAMIC_ALLOCATION_ENABLED: bool = os.getenv(
+    "DYNAMIC_ALLOCATION_ENABLED", "true"
+).lower() in ("true", "1", "yes")
 # 0 = pas de plafond (100% du USDC dispo). Ex: 500 = max $500 de capital pour le sizing
 BINANCE_RANGE_ALLOCATED_BALANCE: float = float(
     os.getenv("BINANCE_RANGE_ALLOCATED_BALANCE", "0")

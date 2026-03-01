@@ -470,6 +470,32 @@ def get_cumulative_pnl(exchange: str) -> float:
     return total
 
 
+def get_trail_range_pnl_list(days: int = 90) -> list[float]:
+    """Retourne la liste des PnL nets du bot Trail Range (Binance) sur N jours.
+
+    Utilisé par l'allocator pour calculer le Profit Factor.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    trades = get_documents(
+        "trades",
+        filters=[
+            ("exchange", "==", "binance"),
+            ("status", "==", "CLOSED"),
+            ("closed_at", ">=", cutoff),
+        ],
+    )
+    pnl_list = []
+    for t in trades:
+        pnl = t.get("pnl_net_usd")
+        if pnl is not None:
+            pnl_list.append(float(pnl))
+    logger.info(
+        "🔥 Trail Range PnL list (%dj): %d trades, sum=$%+.2f",
+        days, len(pnl_list), sum(pnl_list),
+    )
+    return pnl_list
+
+
 def get_open_trades() -> list[dict[str, Any]]:
     """Retourne les trades actuellement ouverts dans Firebase."""
     return get_documents("trades", filters=[("status", "==", "OPEN")])
