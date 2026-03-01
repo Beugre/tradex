@@ -20,11 +20,7 @@ from google.oauth2 import service_account
 # Allocator (pure logic — pas d'I/O)
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src.core.allocator import (
-    AllocationRegime,
-    compute_allocation,
-    compute_profit_factor,
-)
+from src.core.allocator import AllocationRegime
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -160,53 +156,26 @@ def _color_pnl(val):
     return "color: #00c853" if val >= 0 else "color: #ff1744"
 
 
-def _compute_current_allocation() -> dict:
-    """Calcule l'allocation courante à afficher dans le dashboard."""
+def _fetch_current_allocation() -> dict:
+    """Lit l'allocation courante depuis Firebase (doc allocation/current).
+
+    Ce document est écrit par les bots à chaque recalcul d'allocation.
+    """
     try:
         db = _get_db()
-        since = datetime.now(timezone.utc) - timedelta(days=90)
-        docs = (
-            db.collection("trades")
-            .where("exchange", "==", "binance")
-            .where("status", "==", "CLOSED")
-            .where("closed_at", ">=", since.isoformat())
-            .stream()
-        )
-        pnl_list = []
-        for doc in docs:
-            d = doc.to_dict()
-            pnl = d.get("pnl_net_usd") or d.get("pnl_usd") or 0
-            if isinstance(pnl, (int, float)):
-                pnl_list.append(float(pnl))
-
-        trail_pf = compute_profit_factor(pnl_list)
-        trail_trades = len(pnl_list)
-
-        # On utilise la somme des equities des snapshots les plus récents comme proxy
-        # du total balance, sinon on utilise les stats
-        total_balance = 0.0
-        for key in ("binance", "crashbot"):
-            snap = all_data[key]["snapshots"]
-            if not snap.empty and "equity" in snap.columns:
-                last_eq = snap.sort_values("date").iloc[-1]["equity"]
-                if pd.notna(last_eq):
-                    total_balance += float(last_eq)
-
-        if total_balance <= 0:
-            total_balance = 2350.0  # fallback
-
-        result = compute_allocation(total_balance, trail_pf, trail_trades)
-        return {
-            "regime": result.regime,
-            "crash_pct": result.crash_pct,
-            "trail_pct": result.trail_pct,
-            "crash_balance": result.crash_balance,
-            "trail_balance": result.trail_balance,
-            "trail_pf": result.trail_pf,
-            "trail_trades": result.trail_trades,
-            "reason": result.reason,
-            "total_balance": total_balance,
+        doc = db.collection("allocation").document("current").get()
+        if not doc.exists:
+            return {}
+        data = doc.to_dict()
+        # Convertir le regime string en enum pour la cohérence
+        regime_str = data.get("regime", "defensive")
+        regime_map = {
+            "defensive": AllocationRegime.DEFENSIVE,
+            "neutral": AllocationRegime.NEUTRAL,
+            "aggressive": AllocationRegime.AGGRESSIVE,
         }
+        data["regime"] = regime_map.get(regime_str, AllocationRegime.DEFENSIVE)
+        return data
     except Exception:
         return {}
 
@@ -870,7 +839,7 @@ def render_overview():
     st.divider()
 
     # ── Allocation dynamique ───────────────────────────────────────────────
-    alloc = _compute_current_allocation()
+    alloc = _fetch_current_allocation()
     if alloc:
         st.subheader("⚖️ Allocation dynamique")
 

@@ -72,6 +72,7 @@ from src.firebase.trade_logger import (
     cleanup_old_events as fb_cleanup_events,
     get_cumulative_pnl as fb_get_cumulative_pnl,
     get_trail_range_pnl_list as fb_get_trail_range_pnl_list,
+    log_allocation as fb_log_allocation,
 )
 from src.core.allocator import compute_allocation, compute_profit_factor
 
@@ -1281,6 +1282,19 @@ class TradeXBinanceBot:
 
             self._allocated_balance = result.trail_balance
             self._last_allocation_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+            # Persister dans Firebase pour le dashboard
+            fb_log_allocation(
+                regime=result.regime.value,
+                crash_pct=result.crash_pct,
+                trail_pct=result.trail_pct,
+                crash_balance=result.crash_balance,
+                trail_balance=result.trail_balance,
+                total_balance=total_balance,
+                trail_pf=trail_pf,
+                trail_trades=trail_trades,
+                reason=result.reason,
+            )
 
             logger.info("═" * 50)
             logger.info("📊 ALLOCATION DYNAMIQUE — %s", result.regime.value.upper())

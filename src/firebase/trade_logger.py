@@ -508,3 +508,41 @@ def get_trades_since(iso_date: str) -> list[dict[str, Any]]:
         filters=[("opened_at", ">=", iso_date)],
         order_by="opened_at",
     )
+
+
+def log_allocation(
+    regime: str,
+    crash_pct: float,
+    trail_pct: float,
+    crash_balance: float,
+    trail_balance: float,
+    total_balance: float,
+    trail_pf: float,
+    trail_trades: int,
+    reason: str,
+) -> None:
+    """Écrit l'allocation courante dans Firebase (allocation/current).
+
+    Doc unique, écrasé à chaque recalcul.
+    Le dashboard lit ce document pour afficher l'allocation en temps réel.
+    """
+    data = {
+        "regime": regime,
+        "crash_pct": crash_pct,
+        "trail_pct": trail_pct,
+        "crash_balance": crash_balance,
+        "trail_balance": trail_balance,
+        "total_balance": total_balance,
+        "trail_pf": trail_pf,
+        "trail_trades": trail_trades,
+        "reason": reason,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    doc_id = add_document("allocation", data, doc_id="current")
+    if doc_id:
+        logger.info(
+            "🔥 Allocation loggée: %s — Crash $%.0f / Trail $%.0f (total $%.0f)",
+            regime, crash_balance, trail_balance, total_balance,
+        )
+    else:
+        logger.warning("⚠️ Impossible de logger l'allocation dans Firebase")
