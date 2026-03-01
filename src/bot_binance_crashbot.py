@@ -1017,6 +1017,7 @@ class TradeXBinanceCrashBot:
             side=OrderSide.BUY,
             entry_price=fill_price,
             sl_price=actual_sl,
+            tp_price=actual_tp,
             size=quantity,
             venue_order_id=venue_order_id,
             status=PositionStatus.OPEN,

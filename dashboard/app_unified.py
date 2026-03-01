@@ -330,7 +330,7 @@ def _render_positions(open_df: pd.DataFrame, bot_type: str = "range"):
     if not open_df.empty:
         if bot_type == "crashbot":
             display_cols = [
-                "symbol", "side", "entry_filled", "sl_price", "trail_tp",
+                "symbol", "side", "entry_filled", "sl_price", "tp_price",
                 "trail_steps", "peak_price", "trail_gain_pct",
                 "size", "size_usd", "risk_usd",
                 "status", "opened_at",
@@ -350,10 +350,11 @@ def _render_positions(open_df: pd.DataFrame, bot_type: str = "range"):
 
         # Adapter le label SL selon le type de bot
         sl_label = "Trail SL" if bot_type == "crashbot" else ("SL 🔄" if has_trailing else "SL")
+        tp_label = "TP Cible" if bot_type == "crashbot" else "TP"
         rename_map = {
             "symbol": "Paire", "side": "Side", "entry_filled": "Entrée",
             "sl_price": sl_label,
-            "tp_price": "TP", "trail_tp": "TP Cible",
+            "tp_price": tp_label,
             "peak_price": "Peak",
             "trail_gain_pct": "Gain %", "size": "Taille",
             "trailing_steps": "Trail Step", "trail_steps": "Steps",
