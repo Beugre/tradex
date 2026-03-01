@@ -1,5 +1,5 @@
 """
-TradeX Unified Dashboard — Overview + 3 onglets (Revolut · Binance Range · Binance Breakout).
+TradeX Unified Dashboard — Overview + 3 onglets (Revolut · Binance Range · Binance CrashBot).
 Un seul processus Streamlit, port 8502.
 Lit les données depuis Firebase Firestore.
 """
@@ -232,9 +232,9 @@ if auto_refresh:
 # ══════════════════════════════════════════════════════════════════════════════
 
 BOTS = {
-    "revolut": {"label": "Revolut Range", "icon": "⚫", "exchange": None, "color": "#2196f3", "max_pos": 3},
+    "revolut": {"label": "Revolut Range", "icon": "⚫", "exchange": "revolut", "color": "#2196f3", "max_pos": 3},
     "binance": {"label": "Binance Range", "icon": "🟡", "exchange": "binance", "color": "#f0b90b", "max_pos": 3},
-    "breakout": {"label": "Binance Breakout", "icon": "🔥", "exchange": "binance-breakout", "color": "#ff6d00", "max_pos": 3},
+    "crashbot": {"label": "Binance CrashBot", "icon": "💥", "exchange": "binance-crashbot", "color": "#7c4dff", "max_pos": 5},
 }
 
 
@@ -283,7 +283,7 @@ def _render_kpis(stats: dict, n_open: int, max_pos: int):
         col6.metric("📂 Positions", f"{n_open}/{max_pos}")
 
 
-def _render_positions(open_df: pd.DataFrame, is_breakout: bool = False):
+def _render_positions(open_df: pd.DataFrame, bot_type: str = "range"):
     """Affiche les positions ouvertes."""
     # Détecter si certaines positions ont le trailing actif
     has_trailing = (
@@ -292,18 +292,19 @@ def _render_positions(open_df: pd.DataFrame, is_breakout: bool = False):
         and open_df["trailing_active"].any()
     )
 
-    if is_breakout:
-        st.subheader("🟢 Positions ouvertes — Trailing actif")
+    if bot_type == "crashbot":
+        st.subheader("🟢 Positions ouvertes — Step Trailing")
     elif has_trailing:
         st.subheader("🟢 Positions ouvertes — 🔄 Trailing")
     else:
         st.subheader("🟢 Positions ouvertes")
 
     if not open_df.empty:
-        if is_breakout:
+        if bot_type == "crashbot":
             display_cols = [
-                "symbol", "side", "entry_filled", "sl_price", "peak_price",
-                "trail_gain_pct", "size", "size_usd", "risk_usd",
+                "symbol", "side", "entry_filled", "sl_price", "trail_tp",
+                "trail_steps", "peak_price", "trail_gain_pct",
+                "size", "size_usd", "risk_usd",
                 "status", "opened_at",
             ]
         else:
@@ -319,14 +320,15 @@ def _render_positions(open_df: pd.DataFrame, is_breakout: bool = False):
         available_cols = [c for c in display_cols if c in open_df.columns]
         show_df = open_df[available_cols].copy()
 
-        # Adapter le label SL si trailing actif
-        sl_label = "Trail SL" if is_breakout else ("SL 🔄" if has_trailing else "SL")
+        # Adapter le label SL selon le type de bot
+        sl_label = "Trail SL" if bot_type == "crashbot" else ("SL 🔄" if has_trailing else "SL")
         rename_map = {
             "symbol": "Paire", "side": "Side", "entry_filled": "Entrée",
             "sl_price": sl_label,
-            "tp_price": "TP", "peak_price": "Peak",
+            "tp_price": "TP", "trail_tp": "TP Cible",
+            "peak_price": "Peak",
             "trail_gain_pct": "Gain %", "size": "Taille",
-            "trailing_steps": "Trail Step",
+            "trailing_steps": "Trail Step", "trail_steps": "Steps",
             "size_usd": "Notionnel $", "risk_usd": "Risque $",
             "strategy": "Stratégie", "status": "Statut", "opened_at": "Ouvert le",
         }
@@ -533,7 +535,7 @@ def _render_pair_performance(closed: pd.DataFrame):
         )
 
 
-def _render_last_trades(closed: pd.DataFrame, is_breakout: bool = False):
+def _render_last_trades(closed: pd.DataFrame):
     """Affiche les 30 derniers trades."""
     st.subheader("📋 Derniers trades")
 
@@ -543,25 +545,20 @@ def _render_last_trades(closed: pd.DataFrame, is_breakout: bool = False):
 
     show_trades = closed.sort_values("closed_at", ascending=False).head(30).copy()
 
-    if is_breakout:
-        cols = [
-            "symbol", "side", "entry_filled", "exit_price", "peak_price",
-            "pnl_usd", "pnl_pct", "exit_reason",
-            "holding_time_hours", "fees_total", "closed_at",
-        ]
-    else:
-        cols = [
-            "symbol", "side", "strategy", "entry_filled", "exit_price",
-            "pnl_usd", "pnl_pct", "exit_reason", "holding_time_hours",
-            "maker_or_taker", "exit_fill_type", "fees_total", "closed_at",
-        ]
+    # Colonnes de base + colonnes optionnelles présentes
+    cols = [
+        "symbol", "side", "strategy", "entry_filled", "exit_price",
+        "peak_price", "trail_steps",
+        "pnl_usd", "pnl_pct", "exit_reason", "holding_time_hours",
+        "maker_or_taker", "exit_fill_type", "fees_total", "closed_at",
+    ]
 
     display = show_trades[[c for c in cols if c in show_trades.columns]].copy()
 
     rename = {
         "symbol": "Paire", "side": "Side", "strategy": "Strat",
         "entry_filled": "Entrée", "exit_price": "Sortie",
-        "peak_price": "Peak",
+        "peak_price": "Peak", "trail_steps": "Steps",
         "pnl_usd": "P&L ($)", "pnl_pct": "P&L (%)",
         "exit_reason": "Raison", "holding_time_hours": "Durée (h)",
         "maker_or_taker": "Fill entrée", "exit_fill_type": "Fill sortie",
@@ -622,7 +619,7 @@ def _render_pnl_distribution(closed: pd.DataFrame, color: str, group_col: str = 
         st.plotly_chart(fig_box, use_container_width=True)
 
 
-# ── Breakout-specific sections ─────────────────────────────────────────────────
+# ── CrashBot-specific sections ─────────────────────────────────────────────────
 
 def _render_kill_switch(exchange: str):
     kill_events = _fetch_events(exchange, "KILL_SWITCH", hours=720)
@@ -964,18 +961,18 @@ def render_binance_range():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB: Binance Breakout
+#  TAB: Binance CrashBot
 # ══════════════════════════════════════════════════════════════════════════════
 
-def render_binance_breakout():
-    d = all_data["breakout"]
-    cfg = BOTS["breakout"]
+def render_binance_crashbot():
+    d = all_data["crashbot"]
+    cfg = BOTS["crashbot"]
 
-    st.title(f"{cfg['icon']} Binance Breakout")
+    st.title(f"{cfg['icon']} Binance CrashBot")
     _render_kpis(d["stats"], len(d["open"]), cfg["max_pos"])
     st.divider()
 
-    _render_positions(d["open"], is_breakout=True)
+    _render_positions(d["open"], bot_type="crashbot")
     _render_kill_switch(cfg["exchange"])
     _render_alerts(d["open"], cfg["exchange"])
     st.divider()
@@ -992,7 +989,7 @@ def render_binance_breakout():
     _render_trailing_stats(d["closed"])
     st.divider()
 
-    _render_last_trades(d["closed"], is_breakout=True)
+    _render_last_trades(d["closed"])
     _render_pnl_distribution(d["closed"], cfg["color"], "exit_reason")
     st.divider()
 
@@ -1003,11 +1000,11 @@ def render_binance_breakout():
 #  Main — Tabs
 # ══════════════════════════════════════════════════════════════════════════════
 
-tab_overview, tab_revolut, tab_binance, tab_breakout = st.tabs([
+tab_overview, tab_revolut, tab_binance, tab_crashbot = st.tabs([
     "🏠 Overview",
     "⚫ Revolut Range",
     "🟡 Binance Range",
-    "🔥 Binance Breakout",
+    "💥 Binance CrashBot",
 ])
 
 with tab_overview:
@@ -1019,8 +1016,8 @@ with tab_revolut:
 with tab_binance:
     render_binance_range()
 
-with tab_breakout:
-    render_binance_breakout()
+with tab_crashbot:
+    render_binance_crashbot()
 
 # ── Footer ─────────────────────────────────────────────────────────────────────
 

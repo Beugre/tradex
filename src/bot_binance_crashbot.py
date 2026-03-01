@@ -265,17 +265,40 @@ class TradeXBinanceCrashBot:
     # ═══════════════════════════════════════════════════════════════════════════
 
     def _discover_pairs(self) -> None:
-        """Résout les paires CrashBot."""
+        """Résout les paires CrashBot.
+
+        Priorité :
+        1. BINANCE_CRASHBOT_PAIRS si défini dans .env
+        2. Auto-discovery de toutes les paires USDC si AUTO_DISCOVER=true
+        3. Fallback sur DEFAULT_CRASHBOT_PAIRS
+        """
         if config.BINANCE_CRASHBOT_PAIRS:
             self._trading_pairs = config.BINANCE_CRASHBOT_PAIRS
-        else:
+            logger.info("Paires CrashBot (config): %d → %s", len(self._trading_pairs), ", ".join(self._trading_pairs))
+            return
+
+        if config.BINANCE_CRASHBOT_AUTO_DISCOVER_PAIRS:
             try:
-                all_usdc = set(self._client.get_all_usdc_pairs())
-                self._trading_pairs = [p for p in DEFAULT_CRASHBOT_PAIRS if p in all_usdc]
+                all_usdc = self._client.get_all_usdc_pairs()
+                self._trading_pairs = all_usdc
+                logger.info(
+                    "Paires CrashBot (auto-discovery): %d paires USDC → %s%s",
+                    len(all_usdc),
+                    ", ".join(all_usdc[:20]),
+                    "..." if len(all_usdc) > 20 else "",
+                )
+                return
             except Exception as e:
-                logger.error("Erreur discovery: %s — fallback 20 paires", e)
-                self._trading_pairs = DEFAULT_CRASHBOT_PAIRS
-        logger.info("Paires CrashBot: %d → %s", len(self._trading_pairs), ", ".join(self._trading_pairs))
+                logger.error("Auto-discovery échouée: %s — fallback 20 paires", e)
+
+        # Fallback : filtrer les paires par défaut
+        try:
+            all_usdc = set(self._client.get_all_usdc_pairs())
+            self._trading_pairs = [p for p in DEFAULT_CRASHBOT_PAIRS if p in all_usdc]
+        except Exception as e:
+            logger.error("Erreur discovery: %s — fallback 20 paires", e)
+            self._trading_pairs = DEFAULT_CRASHBOT_PAIRS
+        logger.info("Paires CrashBot (fallback): %d → %s", len(self._trading_pairs), ", ".join(self._trading_pairs))
 
     def _load_state(self) -> None:
         """Charge les positions depuis le JSON + réconcilie avec Binance."""

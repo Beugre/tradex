@@ -129,6 +129,10 @@ BINANCE_CRASHBOT_PAIRS: list[str] = [
     os.getenv("BINANCE_CRASHBOT_PAIRS", "").split(",")
     if p.strip()
 ]
+# Si vide et auto-discover=true, le bot scannera TOUTES les paires USDC
+BINANCE_CRASHBOT_AUTO_DISCOVER_PAIRS: bool = os.getenv(
+    "BINANCE_CRASHBOT_AUTO_DISCOVER_PAIRS", "true"
+).lower() in ("true", "1", "yes")
 # Crash detection params
 BINANCE_CRASHBOT_DROP_THRESHOLD: float = float(
     os.getenv("BINANCE_CRASHBOT_DROP_THRESHOLD", "0.20")
