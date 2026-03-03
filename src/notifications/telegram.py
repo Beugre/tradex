@@ -561,12 +561,14 @@ class TelegramNotifier:
         pnl_latent_pct: float,
         trailing_high: float,
         current_price: float,
+        target_price: float,
         breakeven_active: bool,
         cycle_count: int,
     ) -> None:
         """Heartbeat périodique Infinity Bot."""
         be_tag = "🔒 BE" if breakeven_active else ""
         pnl_emoji = "🟢" if pnl_latent_usd >= 0 else "🔴"
+        drop_pct = (1 - current_price / trailing_high) * 100 if trailing_high > 0 else 0
         lines = [
             f"💓 *INFINITY BTC* ♾️",
             f"  Equity: `${equity:,.0f}` (alloué: `${allocated_equity:,.0f}`)",
@@ -579,7 +581,8 @@ class TelegramNotifier:
                 f"  {pnl_emoji} Latent: `{pnl_latent_usd:+.2f}$` (`{pnl_latent_pct:+.1f}%`)",
             ])
         lines.extend([
-            f"  Trail High: `{_fp(trailing_high)}` | Prix: `{_fp(current_price)}`",
+            f"  Trail High: `{_fp(trailing_high)}` | Prix: `{_fp(current_price)}` (`{drop_pct:-.1f}%`)",
+            f"  🎯 Cible: `{_fp(target_price)}`",
             f"[Dashboard]({DASHBOARD_URL})",
         ])
         self._send("\n".join(lines))
