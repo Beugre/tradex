@@ -1305,7 +1305,7 @@ class InfinityBot:
         except Exception:
             pass
 
-        target_entry = trailing_high * (1 - INF_ENTRY_DROP_PCT)
+        target_entry = trailing_high * (1 - INF_CONFIG.entry_drop_pct)
         logger.info(
             "💓 INFINITY Alive | tick=%d | cycle=%d | phase=%s | equity=$%.2f "
             "| alloc=$%.2f | trail_high=%.2f | cible=%.2f | price=%.2f",
@@ -1322,7 +1322,7 @@ class InfinityBot:
 
         # Telegram heartbeat
         try:
-            target_price = trailing_high * (1 - INF_ENTRY_DROP_PCT)
+            target_price = trailing_high * (1 - INF_CONFIG.entry_drop_pct)
             self._telegram.notify_infinity_heartbeat(
                 equity=total_equity,
                 allocated_equity=allocated,
