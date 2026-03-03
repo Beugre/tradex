@@ -199,6 +199,9 @@ class TradeXBinanceBot:
         self._allocated_balance: float = config.BINANCE_RANGE_ALLOCATED_BALANCE
         self._last_allocation_date: str = ""
 
+        # Compteur de transitions vers NEUTRAL (depuis le démarrage)
+        self._neutral_transitions: int = 0
+
         if dry_run:
             logger.info("🔧 Mode DRY-RUN activé — aucun ordre ne sera exécuté")
 
@@ -570,7 +573,8 @@ class TradeXBinanceBot:
                 "[%s] ⚠️ INVALIDATION | %s → %s | prix=%s",
                 symbol, old_direction.value, trend.direction.value, _fmt(ticker.last_price),
             )
-            self._telegram.notify_trend_change(trend, old_direction)
+            if trend.direction == TrendDirection.NEUTRAL:
+                self._neutral_transitions += 1
             try:
                 fb_log_trend_change(symbol, old_direction, trend.direction, exchange=EXCHANGE_NAME)
             except Exception:
@@ -701,7 +705,8 @@ class TradeXBinanceBot:
                     "[%s] ⚠️ INVALIDATION (trail) | %s → %s | prix=%s",
                     symbol, old_direction.value, trend.direction.value, _fmt(price),
                 )
-                self._telegram.notify_trend_change(trend, old_direction)
+                if trend.direction == TrendDirection.NEUTRAL:
+                    self._neutral_transitions += 1
                 if trend.direction in (TrendDirection.BULLISH, TrendDirection.BEARISH):
                     logger.warning("[%s] TRAIL FORCED EXIT | tendance %s", symbol, trend.direction.value)
                     self._close_position_market(symbol, price, "Tendance confirmée (trail forcé)")
@@ -1494,6 +1499,8 @@ class TradeXBinanceBot:
 
         if new_trend.direction != old_direction:
             logger.warning("[%s] 🔄 %s → %s", symbol, old_direction.value, new_trend.direction.value)
+            if new_trend.direction == TrendDirection.NEUTRAL:
+                self._neutral_transitions += 1
             try:
                 fb_log_trend_change(symbol, old_direction, new_trend.direction, exchange=EXCHANGE_NAME)
             except Exception:
@@ -1533,10 +1540,42 @@ class TradeXBinanceBot:
 
         allocated_equity = self._calculate_allocated_equity()
 
+        # Calculer le P&L latent de chaque position
+        pos_details: list[dict] = []
+        for pos in open_pos:
+            try:
+                ticker = self._data.get_ticker(pos.symbol)
+                if ticker:
+                    price = ticker.last_price
+                    if pos.side == OrderSide.BUY:
+                        pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
+                    else:
+                        pnl_pct = (pos.entry_price - price) / pos.entry_price * 100
+                    pos_details.append({
+                        "symbol": pos.symbol.replace("USDC", ""),
+                        "pnl_pct": pnl_pct,
+                        "side": pos.side.value,
+                        "status": pos.status.value,
+                    })
+            except Exception:
+                pos_details.append({
+                    "symbol": pos.symbol.replace("USDC", ""),
+                    "pnl_pct": 0.0,
+                    "side": pos.side.value,
+                    "status": pos.status.value,
+                })
+
+        # Compter les NEUTRAL actifs
+        neutral_count = sum(
+            1 for t in self._trends.values()
+            if t.direction == TrendDirection.NEUTRAL
+        )
+
         logger.info(
-            "💓 BINANCE RANGE | %d/%d positions | equity=$%.2f | cycle #%d",
+            "💓 BINANCE RANGE | %d/%d positions | equity=$%.2f | cycle #%d | neutrals=%d/%d (transitions=%d)",
             len(open_pos), config.BINANCE_MAX_SIMULTANEOUS_POSITIONS,
             allocated_equity, self._cycle_count,
+            neutral_count, len(self._trends), self._neutral_transitions,
         )
 
         try:
@@ -1549,6 +1588,20 @@ class TradeXBinanceBot:
             )
         except Exception:
             pass
+
+        # Telegram heartbeat
+        try:
+            self._telegram.notify_range_heartbeat(
+                equity=allocated_equity,
+                open_positions=pos_details,
+                max_positions=config.BINANCE_MAX_SIMULTANEOUS_POSITIONS,
+                neutral_count=neutral_count,
+                total_pairs=len(self._trends),
+                neutral_transitions=self._neutral_transitions,
+                cycle_count=self._cycle_count,
+            )
+        except Exception:
+            logger.warning("Telegram range heartbeat failed", exc_info=True)
 
     def _firebase_daily_cleanup(self) -> None:
         from datetime import datetime, timezone

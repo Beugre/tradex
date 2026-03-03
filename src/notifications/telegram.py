@@ -135,6 +135,41 @@ class TelegramNotifier:
         )
         self._send(message)
 
+    def notify_range_heartbeat(
+        self,
+        equity: float,
+        open_positions: list[dict],
+        max_positions: int,
+        neutral_count: int,
+        total_pairs: int,
+        neutral_transitions: int,
+        cycle_count: int,
+    ) -> None:
+        """Heartbeat Range avec positions en cours et compteur NEUTRAL."""
+        lines = [
+            f"💓 *RANGE Heartbeat* — cycle #{cycle_count}",
+            f"💰 Equity: `${equity:,.2f}`",
+            f"📊 Positions: {len(open_positions)}/{max_positions}",
+        ]
+
+        if open_positions:
+            lines.append("")
+            for p in open_positions:
+                emoji = "🟢" if p["pnl_pct"] >= 0 else "🔴"
+                zr = " 🔒" if p["status"] == "zero_risk" else ""
+                lines.append(
+                    f"  {emoji} {p['symbol']} {p['side'].upper()} `{p['pnl_pct']:+.2f}%`{zr}"
+                )
+
+        lines.append("")
+        lines.append(
+            f"⚪ Neutrals: {neutral_count}/{total_pairs} "
+            f"(transitions → neutral: {neutral_transitions})"
+        )
+        lines.append(f"[Dashboard]({DASHBOARD_URL})")
+
+        self._send("\n".join(lines))
+
     def notify_zero_risk(
         self,
         position: Position,
