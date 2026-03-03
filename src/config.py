@@ -284,5 +284,5 @@ FIREBASE_ENABLED: bool = os.getenv(
     "FIREBASE_ENABLED", "true"
 ).lower() in ("true", "1", "yes")
 FIREBASE_EVENTS_RETENTION_DAYS: int = int(
-    os.getenv("FIREBASE_EVENTS_RETENTION_DAYS", "30")
+    os.getenv("FIREBASE_EVENTS_RETENTION_DAYS", "2")
 )

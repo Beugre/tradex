@@ -69,6 +69,8 @@ from src.firebase.trade_logger import (
     log_trade_closed,
     log_heartbeat as fb_log_heartbeat,
     log_event as fb_log_event,
+    log_daily_snapshot as fb_log_daily_snapshot,
+    cleanup_old_events as fb_cleanup_events,
 )
 
 # ── Logging ────────────────────────────────────────────────────────────────────
@@ -293,6 +295,10 @@ class InfinityBot:
         self._last_heartbeat: float = 0.0
         self._tick_count: int = 0
 
+        # Daily cleanup / snapshot
+        self._last_cleanup_date: str = ""
+        self._last_snapshot_date: str = ""
+
         # Close failure tracking
         self._close_failures: dict[str, dict] = {}
 
@@ -435,6 +441,7 @@ class InfinityBot:
             logger.error("[%s] Erreur tick: %s", INF_SYMBOL, e, exc_info=True)
 
         self._maybe_heartbeat()
+        self._maybe_daily_tasks()
 
     def _check_new_candle(self) -> bool:
         """Vérifie s'il y a une nouvelle bougie H4. Retourne True si oui."""
@@ -1356,6 +1363,46 @@ class InfinityBot:
             pass
 
     # ── Helpers ────────────────────────────────────────────────────────────────
+
+    def _maybe_daily_tasks(self) -> None:
+        """Cleanup des events Firebase + daily snapshot — 1×/jour UTC."""
+        from datetime import datetime as dt, timezone as tz
+        today = dt.now(tz.utc).strftime("%Y-%m-%d")
+
+        if today != self._last_cleanup_date:
+            self._last_cleanup_date = today
+            try:
+                fb_cleanup_events()
+                logger.info("🧹 Cleanup events Firebase (> %dj)", config.FIREBASE_EVENTS_RETENTION_DAYS)
+            except Exception:
+                pass
+
+        if today != self._last_snapshot_date:
+            self._last_snapshot_date = today
+            try:
+                equity = self._get_allocated_balance()
+                positions = []
+                cycle = self._cycle
+                if cycle.phase != "WAITING":
+                    positions.append({
+                        "symbol": INF_SYMBOL,
+                        "phase": cycle.phase,
+                        "pmp": cycle.pmp,
+                        "size": cycle.size_remaining,
+                        "invested": cycle.total_cost,
+                        "buys": len(cycle.buys),
+                        "sells": len(cycle.sells),
+                    })
+                fb_log_daily_snapshot(
+                    equity=equity,
+                    positions=positions,
+                    daily_pnl=0.0,
+                    trades_today=0,
+                    exchange="revolut-infinity",
+                )
+                logger.info("📸 Daily snapshot Firebase loggé")
+            except Exception:
+                pass
 
     def _save_state(self) -> None:
         self._store.save(
