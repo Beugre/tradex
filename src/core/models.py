@@ -54,6 +54,8 @@ class StrategyType(Enum):
     RANGE = "RANGE"            # Mean reversion (range)
     BREAKOUT = "BREAKOUT"      # Breakout Volatility Expansion
     CRASHBOT = "CRASHBOT"      # Dip Buy (crash recovery)
+    MOMENTUM = "MOMENTUM"      # Intraday Momentum Continuation
+    INFINITY = "INFINITY"      # DCA inversé + vente paliers (Infinity Bot)
 
 
 # ── Structures de données ──────────────────────────────────────────────────────
@@ -126,11 +128,10 @@ class RangeState:
 
     @property
     def range_width_pct(self) -> float:
-        """Largeur du range en pourcentage."""
-        mid = self.range_mid
-        if mid == 0:
+        """Largeur du range en pourcentage (basé sur range_low)."""
+        if self.range_low == 0:
             return 0.0
-        return (self.range_high - self.range_low) / mid
+        return (self.range_high - self.range_low) / self.range_low
 
     def to_dict(self) -> dict:
         """Sérialise le range en dictionnaire JSON-compatible."""

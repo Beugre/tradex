@@ -29,6 +29,7 @@ _STRATEGY_LABEL = {
     StrategyType.RANGE: "🔄 RANGE",
     StrategyType.BREAKOUT: "🔥 BREAKOUT",
     StrategyType.CRASHBOT: "💥 CRASHBOT",
+    StrategyType.INFINITY: "♾️ INFINITY",
 }
 
 logger = logging.getLogger(__name__)
@@ -455,6 +456,133 @@ class TelegramNotifier:
         """Notification d'alerte anormale (API slow, data stale, slippage, DD)."""
         message = f"⚠️ *WARNING: {title}*\n  {detail}"
         self._send(message)
+
+    # ── Infinity Bot ───────────────────────────────────────────────────────
+
+    def notify_infinity_buy(
+        self,
+        symbol: str,
+        level: int,
+        price: float,
+        size: float,
+        cost_usd: float,
+        pmp: float,
+        total_invested: float,
+        equity: float,
+    ) -> None:
+        """Notification d'achat DCA Infinity Bot."""
+        base = symbol.split("-")[0] if "-" in symbol else symbol
+        pct_equity = cost_usd / equity * 100 if equity > 0 else 0
+        message = (
+            f"📌 *Infinity Buy L{level + 1} – {symbol}* ♾️\n"
+            f"  Prix: `{_fp(price)}` | Size: `{size:.8f} {base}` (`${cost_usd:.2f}`)\n"
+            f"  PMP: `{_fp(pmp)}` | Investi: `${total_invested:.2f}` ({pct_equity:.0f}% equity)\n"
+            f"[Dashboard]({DASHBOARD_URL})"
+        )
+        self._send(message)
+
+    def notify_infinity_sell(
+        self,
+        symbol: str,
+        level: int,
+        price: float,
+        size: float,
+        proceeds_usd: float,
+        pmp: float,
+        pnl_pct: float,
+        remaining_size: float,
+    ) -> None:
+        """Notification de vente palier Infinity Bot."""
+        base = symbol.split("-")[0] if "-" in symbol else symbol
+        emoji = "🟢" if pnl_pct >= 0 else "🔴"
+        tp_label = f"TP{level + 1}"
+        message = (
+            f"{emoji} *Infinity {tp_label} – {symbol}* ♾️\n"
+            f"  Prix: `{_fp(price)}` | Size: `{size:.8f} {base}` (`${proceeds_usd:.2f}`)\n"
+            f"  PMP: `{_fp(pmp)}` | Gain: `{pnl_pct:+.2f}%`\n"
+            f"  Restant: `{remaining_size:.8f} {base}`\n"
+            f"[Dashboard]({DASHBOARD_URL})"
+        )
+        self._send(message)
+
+    def notify_infinity_stop(
+        self,
+        symbol: str,
+        price: float,
+        pmp: float,
+        total_cost: float,
+        proceeds: float,
+        pnl_usd: float,
+        pnl_pct: float,
+    ) -> None:
+        """Notification de stop-loss Infinity Bot."""
+        message = (
+            f"🛑 *Infinity STOP – {symbol}* ♾️\n"
+            f"  Prix: `{_fp(price)}` | PMP: `{_fp(pmp)}`\n"
+            f"  Investi: `${total_cost:.2f}` → Récupéré: `${proceeds:.2f}`\n"
+            f"  P&L: `{pnl_usd:+.2f} USD` (`{pnl_pct:+.1f}%`)\n"
+            f"[Dashboard]({DASHBOARD_URL})"
+        )
+        self._send(message)
+
+    def notify_infinity_cycle_complete(
+        self,
+        symbol: str,
+        pmp: float,
+        total_cost: float,
+        total_proceeds: float,
+        pnl_usd: float,
+        pnl_pct: float,
+        n_buys: int,
+        n_sells: int,
+    ) -> None:
+        """Notification de fin de cycle Infinity Bot."""
+        emoji = "💰" if pnl_usd >= 0 else "💸"
+        message = (
+            f"{emoji} *Infinity Cycle terminé – {symbol}* ♾️\n"
+            f"  PMP: `{_fp(pmp)}` | Buys: {n_buys} | Sells: {n_sells}\n"
+            f"  Investi: `${total_cost:.2f}` → Récupéré: `${total_proceeds:.2f}`\n"
+            f"  P&L: `{pnl_usd:+.2f} USD` (`{pnl_pct:+.1f}%`)\n"
+            f"[Dashboard]({DASHBOARD_URL})"
+        )
+        self._send(message)
+
+    def notify_infinity_heartbeat(
+        self,
+        equity: float,
+        allocated_equity: float,
+        phase: str,
+        pmp: float,
+        total_invested: float,
+        size_btc: float,
+        buys_filled: int,
+        sells_filled: int,
+        pnl_latent_usd: float,
+        pnl_latent_pct: float,
+        trailing_high: float,
+        current_price: float,
+        breakeven_active: bool,
+        cycle_count: int,
+    ) -> None:
+        """Heartbeat périodique Infinity Bot."""
+        be_tag = "🔒 BE" if breakeven_active else ""
+        pnl_emoji = "🟢" if pnl_latent_usd >= 0 else "🔴"
+        lines = [
+            f"💓 *INFINITY BTC* ♾️",
+            f"  Equity: `${equity:,.0f}` (alloué: `${allocated_equity:,.0f}`)",
+            f"  Phase: `{phase}` | Cycle: `{cycle_count}` {be_tag}",
+        ]
+        if phase != "WAITING":
+            lines.extend([
+                f"  PMP: `{_fp(pmp)}` | Investi: `${total_invested:,.2f}`",
+                f"  BTC: `{size_btc:.8f}` | Buys: `{buys_filled}/5` | Sells: `{sells_filled}/5`",
+                f"  {pnl_emoji} Latent: `{pnl_latent_usd:+.2f}$` (`{pnl_latent_pct:+.1f}%`)",
+            ])
+        lines.extend([
+            f"  Trail High: `{_fp(trailing_high)}` | Prix: `{_fp(current_price)}`",
+            f"[Dashboard]({DASHBOARD_URL})",
+        ])
+        self._send("\n".join(lines))
 
     def send_raw(self, text: str) -> None:
         """Envoie un message brut (public)."""

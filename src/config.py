@@ -241,6 +241,24 @@ BINANCE_RANGE_TRAIL_SWAP_PCT: float = float(
 # annule et place un limit agressif (taker 0.09%)
 MAKER_WAIT_SECONDS: int = int(os.getenv("MAKER_WAIT_SECONDS", "30"))
 
+# ── Infinity Bot (bot_infinity.py) ─────────────────────────────────────────────
+INF_TRADING_PAIR: str = os.getenv("INF_TRADING_PAIR", "BTC-USD")
+INF_POLLING_SECONDS: int = int(os.getenv("INF_POLLING_SECONDS", "30"))
+INF_HEARTBEAT_SECONDS: int = int(os.getenv("INF_HEARTBEAT_SECONDS", "600"))
+INF_MAKER_WAIT_SECONDS: int = int(os.getenv("INF_MAKER_WAIT_SECONDS", "60"))
+INF_CAPITAL_PCT: float = float(os.getenv("INF_CAPITAL_PCT", "0.65"))  # 65% du capital Revolut X
+
+# Paramètres de stratégie
+INF_ENTRY_DROP_PCT: float = float(os.getenv("INF_ENTRY_DROP_PCT", "0.05"))
+INF_TRAILING_HIGH_PERIOD: int = int(os.getenv("INF_TRAILING_HIGH_PERIOD", "72"))
+INF_STOP_LOSS_PCT: float = float(os.getenv("INF_STOP_LOSS_PCT", "0.15"))
+INF_MAX_INVESTED_PCT: float = float(os.getenv("INF_MAX_INVESTED_PCT", "0.70"))
+INF_BUY_LEVELS: str = os.getenv("INF_BUY_LEVELS", "-0.05,-0.10,-0.15,-0.20,-0.25")
+INF_BUY_PCTS: str = os.getenv("INF_BUY_PCTS", "0.25,0.20,0.15,0.10,0.00")
+INF_SELL_LEVELS: str = os.getenv("INF_SELL_LEVELS", "0.008,0.015,0.022,0.030,0.040")
+INF_RSI_ENTRY_MAX: float = float(os.getenv("INF_RSI_ENTRY_MAX", "50.0"))
+INF_USE_BREAKEVEN: bool = os.getenv("INF_USE_BREAKEVEN", "true").lower() in ("true", "1", "yes")
+
 # ── Stratégies actives ─────────────────────────────────────────────────────────
 ENABLE_TREND: bool = os.getenv("ENABLE_TREND", "false").lower() in ("true", "1", "yes")
 ENABLE_RANGE: bool = os.getenv("ENABLE_RANGE", "true").lower() in ("true", "1", "yes")

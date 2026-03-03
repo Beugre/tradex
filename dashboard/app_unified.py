@@ -1,5 +1,5 @@
 """
-TradeX Unified Dashboard — Overview + 2 onglets (Binance Range · Binance CrashBot).
+TradeX Unified Dashboard — Overview + 3 onglets (Binance Range · Binance CrashBot · Revolut Momentum).
 Un seul processus Streamlit, port 8502.
 Lit les données depuis Firebase Firestore.
 """
@@ -13,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import requests
 import streamlit as st
 from google.cloud import firestore
 from google.oauth2 import service_account
@@ -197,6 +198,122 @@ def _fmt_price(p):
     return f"{p:.{d}f}"
 
 
+@st.cache_data(ttl=15)
+def _fetch_binance_prices() -> dict[str, float]:
+    """Récupère tous les prix actuels depuis l'API publique Binance."""
+    try:
+        resp = requests.get(
+            "https://api.binance.com/api/v3/ticker/price",
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return {t["symbol"]: float(t["price"]) for t in resp.json()}
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=15)
+def _fetch_revolut_prices() -> dict[str, float]:
+    """Récupère les prix actuels depuis l'API publique Revolut X (tickers)."""
+    try:
+        resp = requests.get(
+            "https://revx.revolut.com/api/1.0/tickers",
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return {t["symbol"]: float(t["last"]) for t in resp.json() if "last" in t}
+    except Exception:
+        return {}
+
+
+def _enrich_with_prices(df: pd.DataFrame, exchange: str = "binance") -> pd.DataFrame:
+    """Ajoute current_price et pnl_latent (%) aux positions ouvertes."""
+    if df.empty or "symbol" not in df.columns:
+        return df
+    df = df.copy()
+    if exchange == "revolut":
+        prices = _fetch_revolut_prices()
+    else:
+        prices = _fetch_binance_prices()
+    df["current_price"] = df["symbol"].map(prices)
+
+    def _calc_pnl(row):
+        cp = row.get("current_price")
+        entry = row.get("entry_filled")
+        side = row.get("side", "buy")
+        if pd.isna(cp) or pd.isna(entry) or not entry:
+            return None
+        if str(side).lower() in ("sell", "short"):
+            return (entry - cp) / entry * 100
+        return (cp - entry) / entry * 100
+
+    df["pnl_latent"] = df.apply(_calc_pnl, axis=1)
+
+    def _calc_pnl_usd(row):
+        cp = row.get("current_price")
+        entry = row.get("entry_filled")
+        size = row.get("size")
+        side = row.get("side", "buy")
+        if pd.isna(cp) or pd.isna(entry) or not entry or pd.isna(size) or not size:
+            return None
+        if str(side).lower() in ("sell", "short"):
+            return (entry - cp) * size
+        return (cp - entry) * size
+
+    df["pnl_latent_usd"] = df.apply(_calc_pnl_usd, axis=1)
+    return df
+
+
+def _fmt_price_with_dist(price, current_price) -> str:
+    """Formate un prix + distance % par rapport au prix actuel.
+
+    Ex: '95,000.0000 (-1.52%)'
+    """
+    if pd.isna(price) or price is None:
+        return "—"
+    formatted = _fmt_price(price)
+    if pd.isna(current_price) or current_price is None or current_price == 0:
+        return formatted
+    dist = (price - current_price) / current_price * 100
+    return f"{formatted} ({dist:+.1f}%)"
+
+
+def _format_positions_display(df: pd.DataFrame) -> pd.DataFrame:
+    """Formate les colonnes Entrée, SL, TP avec prix + distance % du prix actuel."""
+    if df.empty:
+        return df
+    df = df.copy()
+
+    for col in ("entry_filled", "sl_price", "tp_price"):
+        if col in df.columns and "current_price" in df.columns:
+            df[col] = df.apply(
+                lambda r: _fmt_price_with_dist(r.get(col), r.get("current_price")),
+                axis=1,
+            )
+
+    if "current_price" in df.columns:
+        df["current_price"] = df["current_price"].apply(
+            lambda x: _fmt_price(x) if pd.notna(x) else "—"
+        )
+
+    if "pnl_latent" in df.columns:
+        def _fmt_pnl(row):
+            pct = row.get("pnl_latent")
+            usd = row.get("pnl_latent_usd")
+            if pd.isna(pct):
+                return "—"
+            if pd.notna(usd):
+                return f"${usd:+.2f} ({pct:+.2f}%)"
+            return f"{pct:+.2f}%"
+        df["pnl_latent"] = df.apply(_fmt_pnl, axis=1)
+
+    # Supprimer la colonne intermédiaire
+    if "pnl_latent_usd" in df.columns:
+        df = df.drop(columns=["pnl_latent_usd"])
+
+    return df
+
+
 def _compute_stats(closed: pd.DataFrame) -> dict:
     """Calcule les KPIs à partir d'un DataFrame de trades fermés."""
     if closed.empty or "pnl_usd" not in closed.columns:
@@ -240,7 +357,7 @@ def _compute_stats(closed: pd.DataFrame) -> dict:
 
 st.sidebar.image("https://img.icons8.com/color/96/combo-chart.png", width=60)
 st.sidebar.title("TradeX")
-st.sidebar.caption("Dashboard unifié — 2 bots")
+st.sidebar.caption("Dashboard unifié — 4 bots")
 
 days_filter = st.sidebar.slider("Période (jours)", 1, 90, 30)
 
@@ -263,12 +380,14 @@ if auto_refresh:
 BOTS = {
     "binance": {"label": "Binance Range", "icon": "🟡", "exchange": "binance", "color": "#f0b90b", "max_pos": 3},
     "crashbot": {"label": "Binance CrashBot", "icon": "💥", "exchange": "binance-crashbot", "color": "#7c4dff", "max_pos": 5},
+    "momentum": {"label": "Revolut Momentum", "icon": "🚀", "exchange": "revolut", "color": "#00c853", "max_pos": 3},
+    "infinity": {"label": "Revolut Infinity", "icon": "♾️", "exchange": "revolut-infinity", "color": "#ff6d00", "max_pos": 1},
 }
 
 
 @st.cache_data(ttl=55)
 def _load_all(days: int):
-    """Charge les données des 2 bots en un seul appel caché."""
+    """Charge les données des 3 bots en un seul appel caché."""
     data = {}
     for key, cfg in BOTS.items():
         ex = cfg["exchange"]
@@ -311,7 +430,7 @@ def _render_kpis(stats: dict, n_open: int, max_pos: int):
         col6.metric("📂 Positions", f"{n_open}/{max_pos}")
 
 
-def _render_positions(open_df: pd.DataFrame, bot_type: str = "range"):
+def _render_positions(open_df: pd.DataFrame, bot_type: str = "range", exchange: str = "binance"):
     """Affiche les positions ouvertes."""
     # Détecter si certaines positions ont le trailing actif
     has_trailing = (
@@ -328,25 +447,34 @@ def _render_positions(open_df: pd.DataFrame, bot_type: str = "range"):
         st.subheader("🟢 Positions ouvertes")
 
     if not open_df.empty:
+        # Enrichir avec les prix actuels
+        open_df = _enrich_with_prices(open_df, exchange=exchange)
+
         if bot_type == "crashbot":
             display_cols = [
-                "symbol", "side", "entry_filled", "sl_price", "tp_price",
+                "symbol", "side", "entry_filled", "sl_price",
+                "current_price", "tp_price",
                 "trail_steps", "peak_price", "trail_gain_pct",
                 "size", "size_usd", "risk_usd",
-                "status", "opened_at",
+                "pnl_latent", "pnl_latent_usd", "status", "opened_at",
             ]
         else:
             display_cols = [
-                "symbol", "side", "entry_filled", "sl_price", "tp_price",
+                "symbol", "side", "entry_filled", "sl_price",
+                "current_price", "tp_price",
                 "size", "size_usd", "risk_usd", "strategy",
+                "pnl_latent", "pnl_latent_usd",
             ]
             # Ajouter les colonnes trailing si elles existent
             if has_trailing:
-                display_cols.insert(5, "trailing_steps")
+                display_cols.insert(6, "trailing_steps")
             display_cols += ["status", "opened_at"]
 
         available_cols = [c for c in display_cols if c in open_df.columns]
         show_df = open_df[available_cols].copy()
+
+        # Formater prix avec distance % du prix actuel
+        show_df = _format_positions_display(show_df)
 
         # Adapter le label SL selon le type de bot
         sl_label = "Trail SL" if bot_type == "crashbot" else ("SL 🔄" if has_trailing else "SL")
@@ -354,11 +482,13 @@ def _render_positions(open_df: pd.DataFrame, bot_type: str = "range"):
         rename_map = {
             "symbol": "Paire", "side": "Side", "entry_filled": "Entrée",
             "sl_price": sl_label,
+            "current_price": "💲 Prix actuel",
             "tp_price": tp_label,
             "peak_price": "Peak",
             "trail_gain_pct": "Gain %", "size": "Taille",
             "trailing_steps": "Trail Step", "trail_steps": "Steps",
             "size_usd": "Notionnel $", "risk_usd": "Risque $",
+            "pnl_latent": "P&L latent",
             "strategy": "Stratégie", "status": "Statut", "opened_at": "Ouvert le",
         }
         show_df = show_df.rename(columns={k: v for k, v in rename_map.items() if k in show_df.columns})
@@ -799,7 +929,7 @@ def _render_advanced_stats(closed: pd.DataFrame):
 
 def render_overview():
     st.title("🏠 Overview")
-    st.caption("Vue consolidée des 2 bots de trading")
+    st.caption("Vue consolidée des 3 bots de trading")
 
     # ── Allocation (source de vérité pour l'equity par bot) ──────────────
     alloc = _fetch_current_allocation()
@@ -809,9 +939,10 @@ def render_overview():
     if alloc:
         alloc_equity["binance"] = alloc.get("trail_balance")
         alloc_equity["crashbot"] = alloc.get("crash_balance")
+        alloc_equity["momentum"] = None  # Momentum est sur Revolut, pas dans l'allocation Binance
 
     # ── Summary cards ──────────────────────────────────────────────────────
-    cols = st.columns(2)
+    cols = st.columns(len(BOTS))
     total_equity = 0.0
     total_pnl = 0.0
     total_trades = 0
@@ -997,21 +1128,29 @@ def render_overview():
         if not o.empty:
             o = o.copy()
             o["bot"] = cfg["label"]
+            # Enrichir avec les prix de la bonne source
+            ex = "revolut" if cfg["exchange"] == "revolut" else "binance"
+            o = _enrich_with_prices(o, exchange=ex)
             all_open.append(o)
 
     if all_open:
         combined_open = pd.concat(all_open, ignore_index=True)
         display_cols = ["bot", "symbol", "side", "entry_filled", "sl_price",
-                        "tp_price", "size_usd", "risk_usd", "status"]
+                        "current_price", "tp_price", "size_usd", "risk_usd",
+                        "pnl_latent", "pnl_latent_usd", "status"]
         available = [c for c in display_cols if c in combined_open.columns]
-        show = combined_open[available].rename(columns={
+        show = combined_open[available].copy()
+        show = _format_positions_display(show)
+        show = show.rename(columns={
             "bot": "Bot", "symbol": "Paire", "side": "Side",
-            "entry_filled": "Entrée", "sl_price": "SL", "tp_price": "TP",
-            "size_usd": "Notionnel $", "risk_usd": "Risque $", "status": "Statut",
+            "entry_filled": "Entrée", "sl_price": "SL",
+            "current_price": "💲 Prix actuel", "tp_price": "TP",
+            "size_usd": "Notionnel $", "risk_usd": "Risque $",
+            "pnl_latent": "P&L latent", "status": "Statut",
         })
         st.dataframe(show, use_container_width=True, hide_index=True)
     else:
-        st.info("Aucune position ouverte sur les 2 bots")
+        st.info("Aucune position ouverte sur les 3 bots")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1079,13 +1218,85 @@ def render_binance_crashbot():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  TAB: Revolut Momentum
+# ══════════════════════════════════════════════════════════════════════════════
+
+def render_revolut_momentum():
+    d = all_data["momentum"]
+    cfg = BOTS["momentum"]
+
+    st.title(f"{cfg['icon']} Revolut Momentum")
+    _render_kpis(d["stats"], len(d["open"]), cfg["max_pos"])
+    st.divider()
+
+    _render_positions(d["open"], bot_type="momentum", exchange="revolut")
+    _render_alerts(d["open"], cfg["exchange"])
+    st.divider()
+
+    _render_equity_curve(d["snapshots"], d["closed"], cfg["color"])
+    _render_cumulative_pnl(d["closed"], cfg["color"])
+    st.divider()
+
+    _render_daily_pnl(d["closed"])
+    _render_pair_performance(d["closed"])
+    st.divider()
+
+    _render_exit_reasons(d["closed"])
+    st.divider()
+
+    _render_last_trades(d["closed"])
+    _render_pnl_distribution(d["closed"], cfg["color"], "exit_reason")
+    st.divider()
+
+    _render_advanced_stats(d["closed"])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB: Revolut Infinity
+# ══════════════════════════════════════════════════════════════════════════════
+
+def render_revolut_infinity():
+    d = all_data["infinity"]
+    cfg = BOTS["infinity"]
+
+    st.title(f"{cfg['icon']} Revolut Infinity")
+    st.caption("DCA inversé sur BTC — H4, maker-only, 65% du capital Revolut X")
+
+    _render_kpis(d["stats"], len(d["open"]), cfg["max_pos"])
+    st.divider()
+
+    # ── Cycle actif (positions ouvertes) ──
+    _render_positions(d["open"], bot_type="infinity", exchange="revolut")
+    _render_alerts(d["open"], cfg["exchange"])
+    st.divider()
+
+    _render_equity_curve(d["snapshots"], d["closed"], cfg["color"])
+    _render_cumulative_pnl(d["closed"], cfg["color"])
+    st.divider()
+
+    _render_daily_pnl(d["closed"])
+    st.divider()
+
+    _render_exit_reasons(d["closed"])
+    st.divider()
+
+    _render_last_trades(d["closed"])
+    _render_pnl_distribution(d["closed"], cfg["color"], "exit_reason")
+    st.divider()
+
+    _render_advanced_stats(d["closed"])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  Main — Tabs
 # ══════════════════════════════════════════════════════════════════════════════
 
-tab_overview, tab_binance, tab_crashbot = st.tabs([
+tab_overview, tab_binance, tab_crashbot, tab_momentum, tab_infinity = st.tabs([
     "🏠 Overview",
     "🟡 Binance Range",
     "💥 Binance CrashBot",
+    "🚀 Revolut Momentum",
+    "♾️ Revolut Infinity",
 ])
 
 with tab_overview:
@@ -1096,6 +1307,12 @@ with tab_binance:
 
 with tab_crashbot:
     render_binance_crashbot()
+
+with tab_momentum:
+    render_revolut_momentum()
+
+with tab_infinity:
+    render_revolut_infinity()
 
 # ── Footer ─────────────────────────────────────────────────────────────────────
 

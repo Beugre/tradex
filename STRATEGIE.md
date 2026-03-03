@@ -3,322 +3,439 @@
 ## Table des matières
 
 1. [L'idée générale](#lidée-générale)
-2. [Les trois stratégies](#les-trois-stratégies)
-3. [Stratégie 1 — Trend Following (Dow Theory)](#stratégie-1--trend-following-dow-theory)
-   - [Détecter les sommets et les creux](#détecter-les-sommets-et-les-creux)
-   - [Identifier la tendance](#identifier-la-tendance)
-   - [Décider quand entrer](#décider-quand-entrer-trend)
-   - [Protéger ses gains (zero-risk + trailing)](#protéger-ses-gains-zero-risk--trailing)
-   - [Sortir du trade](#sortir-du-trade-trend)
-4. [Stratégie 2 — Mean Reversion Range](#stratégie-2--mean-reversion-range)
+2. [Les quatre bots](#les-quatre-bots)
+3. [Bot 1 — Trail Range (Binance)](#bot-1--trail-range-binance)
    - [Détecter le range](#détecter-le-range)
    - [Décider quand entrer](#décider-quand-entrer-range)
-   - [Take Profit et Stop Loss](#take-profit-et-stop-loss-range)
-   - [Cooldown après breakout](#cooldown-après-breakout)
-5. [Stratégie 3 — Breakout Volatility Expansion](#stratégie-3--breakout-volatility-expansion)
-   - [L'idée](#lidée-breakout)
-   - [Les 4 filtres du signal](#les-4-filtres-du-signal)
-   - [Entrée et Stop Loss](#entrée-et-stop-loss-breakout)
-   - [Trailing Stop adaptatif (3 paliers)](#trailing-stop-adaptatif-3-paliers)
+   - [OCO : TP + SL en un seul ordre](#oco--tp--sl-en-un-seul-ordre)
+   - [Trail@TP : le trailing OCO](#trailtp--le-trailing-oco)
+   - [Sortie forcée si tendance confirmée](#sortie-forcée-si-tendance-confirmée)
+4. [Bot 2 — CrashBot (Binance)](#bot-2--crashbot-binance)
+   - [L'idée](#lidée-crashbot)
+   - [Détecter un crash](#détecter-un-crash)
+   - [Entrée et Stop Loss](#entrée-et-stop-loss-crashbot)
+   - [Step Trailing : le TP qui monte par paliers](#step-trailing--le-tp-qui-monte-par-paliers)
    - [Kill-Switch mensuel](#kill-switch-mensuel)
-6. [Gestion du risque (Money Management)](#gestion-du-risque-money-management)
-7. [Comment les stratégies cohabitent](#comment-les-stratégies-cohabitent)
-8. [La boucle du bot (comment ça tourne)](#la-boucle-du-bot-comment-ça-tourne)
-9. [Les fichiers et qui fait quoi](#les-fichiers-et-qui-fait-quoi)
-10. [Exemple concret — Trade TREND](#exemple-concret--trade-trend)
+5. [Bot 3 — Momentum Continuation (Revolut X)](#bot-3--momentum-continuation-revolut-x)
+   - [L'idée](#lidée-momentum)
+   - [Phase 1 : Filtre macro M15](#phase-1--filtre-macro-m15)
+   - [Phase 2 : Détecter l'impulsion M5](#phase-2--détecter-limpulsion-m5)
+   - [Phase 3 : Attendre le pullback](#phase-3--attendre-le-pullback)
+   - [Phase 4 : Entrée sur reprise](#phase-4--entrée-sur-reprise)
+   - [Exécution maker-only](#exécution-maker-only)
+6. [Bot 4 — Infinity Bot (Revolut X)](#bot-4--infinity-bot-revolut-x)
+   - [L'idée](#lidée-infinity)
+   - [Trailing High](#trailing-high--le-prix-de-référence-dynamique)
+   - [Paliers d'achat](#paliers-dachat-dca-inversé)
+   - [Paliers de vente](#paliers-de-vente-distribution-progressive)
+   - [Sécurités](#sécurités)
+7. [Allocation dynamique du capital](#allocation-dynamique-du-capital)
+   - [Comment ça marche](#comment-ça-marche)
+   - [Pourquoi cette logique](#pourquoi-cette-logique)
+8. [Gestion du risque (Money Management)](#gestion-du-risque-money-management)
+9. [La boucle de chaque bot](#la-boucle-de-chaque-bot)
+10. [Les fichiers et qui fait quoi](#les-fichiers-et-qui-fait-quoi)
 11. [Exemple concret — Trade RANGE](#exemple-concret--trade-range)
-12. [Exemple concret — Trade BREAKOUT](#exemple-concret--trade-breakout)
-13. [Ce que le bot ne fait PAS](#ce-que-le-bot-ne-fait-pas)
-14. [Les paramètres importants](#les-paramètres-importants-fichier-env)
-15. [Infrastructure & Déploiement](#infrastructure--déploiement)
+12. [Exemple concret — Trade CRASH](#exemple-concret--trade-crash)
+13. [Exemple concret — Trade MOMENTUM](#exemple-concret--trade-momentum)
+14. [Ce que les bots ne font PAS](#ce-que-les-bots-ne-font-pas)
+15. [Les paramètres importants](#les-paramètres-importants-fichier-env)
+16. [Infrastructure & Déploiement](#infrastructure--déploiement)
 
 ---
 
 ## L'idée générale
 
-TradeX est un robot qui surveille le prix de cryptos **24 heures sur 24** et qui achète ou vend automatiquement quand certaines conditions sont réunies.
+TradeX est un **écosystème de 4 bots** qui surveillent le marché crypto **24h/24** et tradent automatiquement quand les conditions sont réunies.
 
-Le bot fonctionne sur **deux exchanges** avec **trois stratégies complémentaires** :
+Les bots fonctionnent sur **2 exchanges** avec **4 stratégies complémentaires** :
 
-> **📊 Stratégie TREND** (Revolut X) : "Quand ça monte ou descend de manière confirmée, je suis la tendance."
-> **🔄 Stratégie RANGE** (Revolut X + Binance) : "Quand ça n'a pas de direction claire, je joue les rebonds entre le plafond et le plancher."
-> **🔥 Stratégie BREAKOUT** (Binance) : "Quand la volatilité explose et que le prix casse un niveau clé, je surfe la vague — LONG seulement."
+> **🔄 Trail Range** (Binance) : "Quand le prix oscille dans un couloir, je joue les rebonds entre le plafond et le plancher."
+> **💥 CrashBot** (Binance) : "Quand une crypto s'effondre brutalement, j'achète le dip et je laisse remonter."
+> **🚀 Momentum** (Revolut X) : "Quand une bougie M5 explose avec du volume, j'attends le pullback puis j'entre dans la direction."
+> **♾️ Infinity** (Revolut X) : "Quand BTC baisse de 5%+, j'accumule par paliers DCA puis je revends progressivement."
 
-Le bot ne devine rien. Il ne prédit pas l'avenir. Il **constate** l'état du marché et agit en conséquence.
-
----
-
-## Les trois stratégies
-
-| Stratégie | Exchange | Paires | Logique | Side |
-|-----------|----------|--------|---------|------|
-| 📊 **TREND** | Revolut X | 5 (BTC, SOL, XRP, LINK, SUI) | Suivi de tendance Dow Theory | Long & Short |
-| 🔄 **RANGE** | Revolut X + Binance | 5 (Revolut) + 285 (Binance USDC) | Rebonds dans le range | Long & Short |
-| 🔥 **BREAKOUT** | Binance | 20 (top cryptos USDC) | Casser la résistance + volatilité | **Long Only** |
+Aucun bot ne prédit l'avenir. Chacun **constate** un pattern spécifique et agit en conséquence.
 
 ---
 
-## Stratégie 1 — Trend Following (Dow Theory)
+## Les quatre bots
 
-C'est la stratégie principale. Elle est basée sur la Dow Theory, une méthode inventée il y a plus de 100 ans par Charles Dow (le créateur du Dow Jones).
-
-### Détecter les sommets et les creux
-
-📄 **Fichier : `swing_detector.py`**
-
-Le bot regarde les **bougies H4** (des bougies de 4 heures) et cherche les "pics" et les "creux" du prix.
-
-Pour trouver un sommet (swing high), il cherche une bougie dont le prix le plus haut est **supérieur** à celui des 3 bougies avant ET des 3 bougies après :
-
-```
-         ⛰️ ← sommet (les 3 bougies à gauche et à droite sont plus basses)
-        / \
-       /   \
-      /     \
-     /       \
-    /         \
-```
-
-Même logique inversée pour les creux (swing low).
-
-### Identifier la tendance
-
-📄 **Fichier : `trend_engine.py`**
-
-Le bot compare les sommets et creux entre eux :
-
-### 📈 Tendance haussière (BULLISH)
-
-Le prix fait des **escaliers qui montent** :
-- Chaque sommet est **plus haut** que le précédent → **HH** (Higher High)
-- Chaque creux est **plus haut** que le précédent → **HL** (Higher Low)
-
-```
-        HH ⭐
-       /  \
-      /    \        HH ⭐
-     /      \      /  \
-    /    HL ⭐\   /    \
-   /         \ \ /      \
-  /           \/         \
- /         HL ⭐          \
-```
-
-### 📉 Tendance baissière (BEARISH)
-
-Le prix fait des **escaliers qui descendent** :
-- Chaque sommet est **plus bas** que le précédent → **LH** (Lower High)
-- Chaque creux est **plus bas** que le précédent → **LL** (Lower Low)
-
-### ⏸️ Neutre (NEUTRAL)
-
-Si les sommets et creux ne font pas de "beaux escaliers" → le bot dit "je ne comprends pas" → mode NEUTRAL. La **Stratégie TREND** s'arrête, et la **Stratégie RANGE** prend le relais.
-
-### Invalidation
-
-Le bot surveille en temps réel si la tendance est cassée :
-- En **BULLISH** : si le prix descend sous le dernier HL → NEUTRAL
-- En **BEARISH** : si le prix monte au-dessus du dernier LH → NEUTRAL
-
-### Décider quand entrer (TREND)
-
-📄 **Fichier : `strategy_trend.py`**
-
-Le bot attend une **confirmation** avant d'entrer :
-
-| Tendance | Signal | Condition |
-|----------|--------|-----------|
-| BULLISH | BUY | Prix dépasse le dernier HH + 0.2% de buffer |
-| BEARISH | SELL | Prix passe sous le dernier LL - 0.2% de buffer |
-
-**⚠️ Contrainte spot** : Revolut X ne permet pas le short selling. Les signaux SELL sont ignorés si on ne possède pas l'actif.
-
-### Protéger ses gains (zero-risk + trailing)
-
-📄 **Fichier : `risk_manager.py`**
-
-**Zero-risk** : Si le prix bouge de **+2%** en faveur → le SL est déplacé au-dessus du prix d'entrée pour verrouiller **+0.5%** de profit minimum. Tu ne peux plus perdre.
-
-**Trailing stop** : Après le zero-risk, le SL **suit le prix** à une distance de 2%. Il ne peut que monter (achat) ou descendre (vente). Il ne recule jamais.
-
-```
-Exemple achat BTC :
-  Entrée : 70 000$
-  +2% → 71 400$ → Zero-risk activé, SL = 70 350$ (entrée + 0.5%)
-  Peak 73 000$ → Trailing SL = 71 540$ (peak × 0.98)
-  Peak 74 500$ → Trailing SL = 73 010$
-  Prix redescend → SL reste à 73 010$ → touché → on sort avec un gros gain 🎉
-```
-
-### Sortir du trade (TREND)
-
-Le bot sort quand le **Stop Loss** est touché. Il n'y a **pas de Take Profit fixe** — l'idée est de laisser courir les gains tant que la tendance tient.
+| Bot | Exchange | Paires | Logique | Side | Capital |
+|-----|----------|--------|---------|------|--------|
+| 🔄 **Trail Range** | Binance (USDC) | ~284 (auto-discovery) | Rebonds dans le range + trailing OCO | Long & Short | 10–40% Binance (dynamique) |
+| 💥 **CrashBot** | Binance (USDC) | ~284 (auto-discovery) | Dip-buy + step-trail | **Long Only** | 60–90% Binance (dynamique) |
+| 🚀 **Momentum** | Revolut X (USD) | 7 (ETH, SOL, BNB, XRP, LINK, ADA, LTC) | Impulsion M5 → pullback → entrée | **Long Only** | 35% Revolut X |
+| ♾️ **Infinity** | Revolut X (USD) | BTC-USD uniquement | DCA inversé + vente paliers | **Long Only** | 65% Revolut X |
 
 ---
 
-## Stratégie 2 — Mean Reversion Range
+## Bot 1 — Trail Range (Binance)
 
-C'est la stratégie secondaire. Elle s'active **uniquement quand la tendance est NEUTRAL**, c'est-à-dire quand le prix oscille sans direction claire entre un plafond et un plancher.
+C'est le bot **mean-reversion**. Il trade quand le prix oscille sans direction claire entre un plafond et un plancher.
 
 ### Détecter le range
 
 📄 **Fichier : `strategy_mean_rev.py`**
 
-Quand la tendance passe en NEUTRAL, le bot regarde les derniers niveaux clés (dernier sommet et dernier creux) pour définir un "range" — un couloir de prix :
+Le bot analyse les bougies H4 pour trouver les swings (sommets et creux). Quand la tendance est **NEUTRAL** (pas d'escaliers clairs ni à la hausse ni à la baisse), il définit un range :
 
 ```
 ──────── Range High (plafond) = dernier sommet ────────
-                                                        
-    Prix oscille ici ↕️       ← zone de range            
-                                                        
+
+    Prix oscille ici ↕️       ← zone de range
+
 ──────── Range Low (plancher) = dernier creux ──────────
 ```
 
-Le range doit avoir une **largeur minimum de 2%**. Si le plafond et le plancher sont trop proches, le bot ne trade pas (les gains potentiels seraient trop petits).
+Le range doit avoir une **largeur minimum de 2%**. Si le corridor est trop étroit, le bot ne trade pas.
+
+### Détecter la tendance
+
+📄 **Fichiers : `swing_detector.py` + `trend_engine.py`**
+
+Le bot utilise la **Dow Theory** pour classifier la tendance :
+
+- **BULLISH** : sommets de plus en plus hauts (HH) + creux de plus en plus hauts (HL) → escaliers montants
+- **BEARISH** : sommets de plus en plus bas (LH) + creux de plus en plus bas (LL) → escaliers descendants
+- **NEUTRAL** : pas de pattern clair → **c'est là que le bot RANGE entre en jeu**
 
 ### Décider quand entrer (RANGE)
 
-Le bot attend que le prix s'approche d'une borne du range :
+Le bot attend que le prix touche une borne du range :
 
 | Signal | Condition | Logique |
 |--------|-----------|---------|
 | **BUY** | Prix ≤ Range Low × (1 + 0.2%) | "Le prix touche le plancher, il va remonter" |
 | **SELL** | Prix ≥ Range High × (1 - 0.2%) | "Le prix touche le plafond, il va redescendre" |
 
-C'est l'inverse du Trend Following : au lieu de suivre le mouvement, on **parie sur le rebond**.
+C'est de la **mean-reversion** : on parie que le prix revient au centre du range.
 
-### Take Profit et Stop Loss (RANGE)
+### OCO : TP + SL en un seul ordre
 
-Contrairement au Trend Following, les trades RANGE ont un **Take Profit fixe** :
+📄 **Fichier : `bot_binance.py`**
+
+Binance supporte les **ordres OCO** (One-Cancels-Other) : un Take Profit ET un Stop Loss sont posés simultanément. Quand l'un est touché, l'autre est automatiquement annulé.
 
 | | Valeur | Logique |
 |---|--------|---------|
 | **TP** | Milieu du range | "Le prix revient au centre" |
-| **SL** | Breakout au-delà de la borne opposée + 0.3% | "Le range est cassé, on coupe" |
+| **SL** | Breakout au-delà de la borne + marge | "Le range est cassé, on coupe" |
+
+### Trail@TP : le trailing OCO
+
+Quand le prix s'approche du TP (à moins de `SWAP_PCT`), au lieu de prendre le gain, le bot **swap l'OCO** :
+
+1. Annuler l'OCO actuel
+2. Nouveau SL = ancien TP × (1 - 2%) → le gain est verrouillé
+3. Nouveau TP = ancien TP × (1 + 1%) → on vise plus haut
+4. Poser un nouvel OCO avec ces niveaux
+
+Ce mécanisme peut se répéter plusieurs fois (step 1, step 2, step 3...). Chaque step verrouille un palier de profit supplémentaire.
 
 ```
-Exemple SOL-USD en range 78$ – 85$ :
+Exemple BUY SOL-USDC dans un range 78$ – 85$ :
 
-Signal BUY au plancher :
-  Entrée : 78.16$ (78 × 1.002)
-  TP : 81.50$ (milieu du range) → on vise le centre
-  SL : 77.77$ (78 × 0.997) → si le prix casse le plancher, on coupe
+  Entrée : 78.16$ | TP initial : 81.50$ (milieu) | SL : 77.77$
 
-Signal SELL au plafond :
-  Entrée : 84.83$ (85 × 0.998)
-  TP : 81.50$ (milieu du range)
-  SL : 85.26$ (85 × 1.003)
+  Prix monte à ~81.40$ → Trail swap step 1 !
+    Nouveau SL = 79.87$ (81.50 × 0.98) → profit verrouillé
+    Nouveau TP = 82.32$ (81.50 × 1.01)
+
+  Prix monte à ~82.20$ → Trail swap step 2 !
+    Nouveau SL = 80.67$ (82.32 × 0.98)
+    Nouveau TP = 83.14$ (82.32 × 1.01)
+
+  Prix redescend → SL touché à 80.67$
+  Gain : (80.67 - 78.16) × size = profit 🎉
 ```
+
+### Sortie forcée si tendance confirmée
+
+Si pendant un trade RANGE, la tendance passe de NEUTRAL à BULLISH ou BEARISH → le bot **ferme immédiatement** la position. Le range n'est plus valide.
 
 ### Cooldown après breakout
 
-Si le prix **casse le range** (breakout) et que le SL est touché, le bot active un **cooldown de 3 bougies H4** (= 12 heures). Pendant ce temps, pas de nouveau trade RANGE sur cette paire.
-
-Pourquoi ? Parce qu'un breakout signifie souvent qu'une tendance démarre. Il faut laisser le temps au marché de se stabiliser.
-
-### Sortie forcée
-
-Si la tendance passe de NEUTRAL à BULLISH ou BEARISH **pendant qu'un trade RANGE est ouvert**, le bot **ferme immédiatement** la position RANGE. La Stratégie TREND reprend la main.
+Si le SL est touché (le prix casse le range), le bot active un **cooldown de 3 bougies H4** (= 12h). Pas de nouveau trade sur cette paire pendant ce temps.
 
 ---
 
-## Stratégie 3 — Breakout Volatility Expansion
+## Bot 2 — CrashBot (Binance)
 
-C'est la stratégie complémentaire aux deux précédentes. Elle tourne sur **Binance** en tant que **bot séparé** et ne gagne que quand le marché fait un mouvement directionnel puissant — exactement quand les trades RANGE perdent.
+### L'idée (CrashBot)
 
-### L'idée (Breakout)
+> Quand une crypto perd **20% ou plus en 48 heures**, c'est souvent une surréaction. Le bot achète le dip et laisse le prix remonter avec un trailing par paliers.
 
-> Quand la volatilité explose et que le prix casse un niveau clé avec du volume, c'est souvent le début d'un gros mouvement. On entre et on laisse courir avec un trailing stop adaptatif.
+**⚠️ LONG ONLY** : le bot n'achète que les baisses. Pas de short.
 
-**⚠️ LONG ONLY** : le backtest a montré que les shorts détruisent la performance. Le bot n'entre qu'en achat.
+### Détecter un crash
 
-### Les 4 filtres du signal
+📄 **Fichier : `crashbot_detector.py`**
 
-📄 **Fichier : `breakout_detector.py`**
-
-Un signal Breakout est généré seulement quand **4 conditions sont réunies simultanément** sur une bougie H4 :
-
-| # | Filtre | Indicateur | Condition | Pourquoi |
-|---|--------|------------|-----------|----------|
-| 1 | **Cassure de prix** | Canal Donchian (20 périodes) | Close > Donchian High | Le prix dépasse le plus haut des 20 dernières bougies |
-| 2 | **Volatilité en expansion** | Bandes de Bollinger (20,2) | BB Width > 1.0× moyenne | Les bandes s'écartent = la volatilité augmente |
-| 3 | **Tendance confirmée** | ADX (14 périodes) | ADX > 25 | Le mouvement a de la force directionnelle |
-| 4 | **Volume supérieur** | Volume vs moyenne 20 périodes | Volume > 1.2× moyenne | Le breakout est accompagné de volume |
+Le bot compare le prix actuel à celui d'il y a **12 bougies H4** (48 heures) :
 
 ```
-Exemple : SOL-USDC, bougie H4 du 15 mars
-
-  Close = 142$ > Donchian High (139$) ✅ Cassure
-  BB Width = 0.08 > 0.06 (1.3× moyenne) ✅ Expansion
-  ADX = 32 > 25 ✅ Tendance forte
-  Volume = 12M > 8M (1.5× moyenne) ✅ Volume
-
-  → 🔥 SIGNAL BREAKOUT LONG à 142$
+Prix il y a 48h : 100$
+Prix maintenant : 78$
+Drop = -22% → ≥ 20% de seuil → 💥 SIGNAL CRASH !
 ```
 
-### Entrée et Stop Loss (Breakout)
+| Paramètre | Valeur | Description |
+|-----------|--------|-------------|
+| `drop_threshold` | 20% | Baisse minimum pour déclencher |
+| `lookback_bars` | 12 | 12 × 4h = 48 heures de recul |
+
+### Entrée et Stop Loss (CrashBot)
 
 | | Formule | Logique |
 |---|---------|---------|
-| **Entrée** | Market order au prix actuel | On entre immédiatement quand le signal est détecté |
-| **SL initial** | Close - 1.5 × ATR | Protection basée sur la volatilité (ATR = Average True Range) |
+| **Entrée** | Market order au prix actuel | On achète immédiatement le dip |
+| **TP initial** | Entrée × (1 + 8%) | Objectif : +8% de rebond |
+| **SL** | Entrée - 1.5 × ATR | Protection basée sur la volatilité |
 
-**Guard de sécurité** : le bot vérifie que le prix actuel est bien **au-dessus du SL** et à au moins **0.3% de distance**. Si le marché a trop bougé entre le signal et l'exécution → le trade est annulé.
+Si l'ATR n'est pas disponible, le SL est fixé à -2% sous l'entrée.
 
-### Trailing Stop adaptatif (3 paliers)
+### Step Trailing : le TP qui monte par paliers
 
-C'est le cœur de la stratégie et la raison de sa performance. Contrairement aux stratégies TREND et RANGE qui ont des TP/SL fixes, le Breakout utilise un **trailing stop qui évolue par paliers** :
+C'est le cœur de la stratégie CrashBot. Quand le prix approche du TP, au lieu de vendre :
 
-```
-Palier 0 — En dessous de +2% de gain
-  → SL reste au SL initial (1.5×ATR sous l'entrée)
-
-Palier 1 — À partir de +2% de gain depuis l'entrée
-  → SL remonte à Entrée + 0.2% (quasi breakeven)
-  → Tu ne peux quasi plus perdre
-
-Palier 2 — À partir de +5% de gain depuis l'entrée
-  → SL remonte à Entrée + 2% (profit verrouillé)
-  → + Trailing ATR serré : Peak - 1.5×ATR
-  → Le SL suit le prix de plus en plus près
-```
-
-**Le SL ne peut que monter, jamais descendre.** À chaque nouveau peak de prix, le SL est recalculé.
+1. Le **SL remonte au niveau du TP actuel** → profit verrouillé
+2. Le **TP monte d'un step** (+0.5%)
+3. Le processus se répète tant que le prix continue de monter
 
 ```
-Exemple BTC-USDC :
-  Entrée : 68 000$
-  SL initial : 66 500$ (68000 - 1.5×1000)
+Entrée : 78$ | TP₀ = 84.24$ (+8%) | SL = 73$ (1.5×ATR)
 
-  Peak 69 400$ (+2.1%) → Palier 1 → SL = 68 136$ (entrée + 0.2%)
-  Peak 71 500$ (+5.1%) → Palier 2 → SL = max(69 360$, 71500-1500) = 70 000$
-  Peak 73 000$          → SL = max(69 360$, 73000-1500) = 71 500$
-  Prix redescend à 71 400$ → SL 71 500$ touché → Sortie
+  Prix monte à 84.20$ → TP₀ quasi touché !
+    SL₁ = 84.24$ (verrouillé au TP₀) → plus de perte possible
+    TP₁ = 84.63$ (+0.5%)
 
-  Gain : (71 400 - 68 000) × 0.0073 = 24.82$ 🎉
+  Prix continue à 84.60$ →
+    SL₂ = 84.63$
+    TP₂ = 85.02$
+
+  Prix redescend → SL₂ touché à 84.63$
+  Gain : (84.63 - 78) × size = gros profit 🎉
 ```
+
+Le trailing peut monter **indéfiniment** tant que le prix suit. Le SL ne descend jamais.
 
 ### Kill-Switch mensuel
 
-Le bot intègre un **coupe-circuit automatique** : si la performance du mois en cours atteint **-10%**, toutes les positions sont fermées et aucune nouvelle position n'est ouverte jusqu'au mois suivant.
+Si la performance du mois atteint **-10%**, toutes les positions sont fermées et le bot se met en pause jusqu'au mois suivant.
 
 ```
 Equity début mois : 2 000$
-Equity actuelle : 1 780$ → perf mois = -11% < -10%
-→ 🚨 KILL-SWITCH ! Fermeture de tout. Pause jusqu'au 1er du mois prochain.
+Equity actuelle : 1 780$ → perf = -11% < -10%
+→ 🚨 KILL-SWITCH ! Pause jusqu'au 1er du mois prochain.
 ```
 
-### Résultats du backtest (12 mois, 20 paires)
+---
 
-| Métrique | Valeur |
-|----------|--------|
-| **Rendement total** | **+85.6%** |
-| Profit Factor | 1.63 |
-| Win Rate | 66.9% |
-| Nombre de trades | 160 |
-| Drawdown max | -30% |
-| Sharpe Ratio | 1.44 |
-| Exit via Trailing SL | 129/160 (80.6%) |
+## Bot 3 — Momentum Continuation (Revolut X)
+
+### L'idée (Momentum)
+
+> Quand une bougie M5 explose avec beaucoup de volume (impulsion), le prix fait souvent un petit repli (pullback) avant de continuer dans la même direction. Le bot entre sur le pullback.
+
+C'est un signal en **4 phases** :
+
+### Phase 1 : Filtre macro M15
+
+📄 **Fichier : `momentum_engine.py`**
+
+Le bot vérifie d'abord que le marché est **actif** sur M15 :
+- ATR(14) > moyenne mobile de l'ATR → la volatilité est au-dessus de la normale
+- Volume > moyenne mobile du volume → le marché est liquide
+
+Si le marché est "mort" (faible volatilité, faible volume), le bot ne cherche pas de signal.
+
+### Phase 2 : Détecter l'impulsion M5
+
+Le bot cherche une bougie M5 exceptionnelle qui réunit **4 critères** :
+
+| # | Critère | Condition | Pourquoi |
+|---|---------|-----------|----------|
+| 1 | **Body important** | Body ≥ 0.4% du prix | Bougie avec du contenu, pas juste une mèche |
+| 2 | **Volume explosif** | Volume ≥ 2× MA20 | Beaucoup plus d'échanges que la normale |
+| 3 | **Close dans le top** | Close dans le top 20% de la bougie | Le prix a clôturé dans la direction du move |
+| 4 | **Tendance directionnelle** | ADX(14) > 15 | Le mouvement a de la force, pas du bruit |
+
+```
+Exemple ETH-USD, bougie M5 :
+  Open: 2 100$ → Close: 2 112$ (body +0.57%) ✅
+  Volume: 15M (moy 20: 6M → 2.5×) ✅
+  Close dans top 20% de la bougie ✅
+  ADX = 22 > 15 ✅
+  → 🚀 IMPULSION HAUSSIÈRE détectée !
+```
+
+### Phase 3 : Attendre le pullback
+
+Après l'impulsion, le bot attend un **retracement sain** :
+
+| Critère | Condition | Pourquoi |
+|---------|-----------|----------|
+| Retracement | 25–55% du move d'impulsion | Ni trop peu (pas de pullback), ni trop (reversal) |
+| RSI(14) | Entre 40 et 65 | Pas suracheté, pas survendu |
+| Prix touche EMA20 | ± tolérance | Le prix revient sur la moyenne rapide |
+
+Le bot attend **max 35 bougies M5** (~3h) après l'impulsion. Si aucun pullback valide → signal annulé.
+
+```
+Impulsion haussière de 2 100$ à 2 112$ (move = 12$)
+
+  Pullback à 2 108$ → retracement = 4/12 = 33% ✅
+  RSI = 52 (entre 40-65) ✅
+  Prix proche de EMA20 ✅
+  → Pullback validé !
+```
+
+### Phase 4 : Entrée sur reprise
+
+Le bot attend une **bougie de reprise** dans la direction de l'impulsion :
+- Volume > MA10
+- La bougie confirme la direction (close > open pour un long)
+
+| | Valeur | Logique |
+|---|--------|---------|
+| **Entrée** | Ordre limit maker | 0% de frais sur Revolut X |
+| **SL** | Sous le creux du pullback + marge | Si le pullback n'a pas tenu |
+| **Risque** | 4% du capital | MC_RISK_PERCENT |
+
+### Exécution maker-only
+
+📄 **Fichier : `revolut_client.py`**
+
+Revolut X facture **0% en maker** et 0.09% en taker. Le bot place donc un **ordre limit** (maker) pour ne pas payer de frais.
+
+Si l'ordre n'est pas rempli dans les 60 secondes (`MC_MAKER_WAIT_SECONDS`), le bot peut fallback en taker (0.09%).
+
+---
+
+## Bot 4 — Infinity Bot (Revolut X)
+
+C'est le bot **DCA inversé** sur BTC uniquement. Il achète les baisses par paliers et revend progressivement quand le prix remonte.
+
+### L'idée {#lidée-infinity}
+
+> "Quand BTC baisse de 5% par rapport à son plus haut récent, j'achète. S'il continue de baisser, j'achète encore à -10%, -15%, -20%, -25%. Puis je revends par paliers quand il remonte."
+
+C'est l'opposé d'un grid bot : au lieu d'acheter et vendre sur des niveaux fixes, le prix de référence suit dynamiquement le marché (trailing high sur 12 jours).
+
+### Trailing High — le prix de référence dynamique
+
+📄 **Fichier : `infinity_engine.py`**
+
+Le bot calcule en permanence le **plus haut des 72 dernières bougies H4** (≈ 12 jours). C'est le "trailing high" :
+
+```
+│    ╱★ Trailing High (plus haut sur 12 jours)
+│   ╱  ╲
+│  ╱    ╲
+│ ╱      ╲──── Prix actuel
+│╱         ╲
+│            ╲── Drop ≥ 5% → Premier achat !
+```
+
+Quand le prix **chute de ≥ 5%** par rapport à ce trailing high → le bot déclenche le premier achat.
+
+### Paliers d'achat (DCA inversé)
+
+Le bot a 5 niveaux d'achat, chacun plus profond que le précédent :
+
+| Palier | Drop depuis le référence | % du capital | RSI gate |
+|--------|--------------------------|-------------|----------|
+| L1 | -5% | 25% | RSI < 50 → full, 30-50 → demi |
+| L2 | -10% | 20% | idem |
+| L3 | -15% | 15% | idem |
+| L4 | -20% | 10% | idem |
+| L5 | -25% | Reste disponible | idem |
+
+**Sizing décroissant** : on investit plus au début (quand le prix est encore proche du haut) et moins quand on est profond dans le dip. Cela évite de surcharger dans les crashs imprévus.
+
+### Paliers de vente (distribution progressive)
+
+Quand le prix remonte au-dessus du **PMP (Prix Moyen Pondéré)**, le bot vend 20% à chaque palier :
+
+| Palier | Distance du PMP | Action |
+|--------|-----------------|--------|
+| TP1 | +0.8% | Vend 20% + active le breakeven stop |
+| TP2 | +1.5% | Vend 20% |
+| TP3 | +2.2% | Vend 20% |
+| TP4 | +3.0% | Vend 20% |
+| TP5 | +4.0% | Vend tout le reste |
+
+### Sécurités
+
+- **Breakeven stop** : Après TP1, si le prix retombe au PMP → vente totale (pas de perte)
+- **Stop-loss** : Si le prix baisse de **-15%** sous le PMP → vente market (taker 0.09%)
+- **Override sell** : Si le prix monte de +20% au-dessus du PMP → vente totale immédiate
+- **Max investi** : 70% du capital alloué maximum par cycle
+- **Pas de RSI gate sur les ventes** (clé de performance — +107% vs +50% avec)
+
+### Capital et allocation {#allocation-revolut}
+
+Le capital Revolut X est partagé entre **Infinity** et **Momentum** :
+
+| Bot | % du capital Revolut X |
+|-----|------------------------|
+| ♾️ Infinity | **65%** |
+| 🚀 Momentum | **35%** |
+
+### Résultats backtest (6 ans, 2020-2026)
+
+```
+Rendement : +107.56%
+Sharpe    : 3.85
+PF        : 3.10
+Max DD    : -15.78%
+Win Rate  : 90% (18/20 trades gagnants)
+Stops     : seulement 2 en 6 ans
+```
+
+---
+
+## Allocation dynamique du capital
+
+📄 **Fichier : `allocator.py`**
+
+### Comment ça marche
+
+Les bots **Trail Range** et **CrashBot** partagent le même capital sur Binance. La répartition est recalculée **1×/jour** automatiquement.
+
+Le **Profit Factor (PF)** du Trail Range sur 90 jours détermine qui reçoit combien :
+
+```
+PF = somme des gains / |somme des pertes|
+
+PF > 1 → le bot gagne plus qu'il ne perd
+PF < 1 → le bot perd plus qu'il ne gagne
+```
+
+| PF Trail Range (90j) | Trail Range | CrashBot | Régime |
+|----------------------|-------------|----------|--------|
+| PF < 0.9 OU < 20 trades | **10%** | **90%** | 🛡️ DÉFENSIF |
+| 0.9 ≤ PF ≤ 1.1 | **20%** | **80%** | ⚖️ NEUTRE |
+| PF > 1.1 | **40%** | **60%** | 🚀 AGRESSIF |
+
+```
+Exemple : Capital Binance = 3 226 USDC, PF Trail = 0.47
+
+  PF 0.47 < 0.9 → Régime DÉFENSIF
+  Trail Range : 10% = 323 USDC
+  CrashBot    : 90% = 2 904 USDC
+```
+
+### Pourquoi cette logique
+
+- **CrashBot domine par défaut** car sa stratégie (dip-buy) est plus robuste en marché latéral
+- Quand le Trail Range **prouve** qu'il gagne (PF > 1.1), on lui donne plus de capital
+- Quand il perd, on réduit son exposition et CrashBot prend le relais
+
+### Les bots Revolut X (Momentum + Infinity)
+
+Les bots Momentum et Infinity partagent le capital Revolut X avec une allocation fixe : **65% Infinity** / **35% Momentum**. Ils sont **indépendants** de l'allocation Binance — les deux exchanges sont complètement séparés.
 
 ---
 
@@ -326,165 +443,96 @@ Equity actuelle : 1 780$ → perf mois = -11% < -10%
 
 📄 **Fichier : `risk_manager.py`**
 
-### Risque par stratégie
+### Formule commune
 
-Les trois stratégies n'ont **pas le même budget risque** :
+```python
+risk_amount = capital × risk_percent     # ex: 3000 × 0.05 = 150 USDC
+sl_distance = |entry - sl_price|         # ex: |78 - 73| = 5 USDC
+position_size = risk_amount / sl_distance # ex: 150 / 5 = 30 unités
 
-| Stratégie | Exchange | Risque par trade | Max positions | Logique |
-|-----------|----------|-----------------|---------------|---------|
-| 📊 TREND | Revolut X | **3%** du capital | 3 | Stratégie principale, plus fiable |
-| 🔄 RANGE | Revolut X / Binance | **2%** du capital | 3 | Stratégie secondaire, plus risquée |
-| 🔥 BREAKOUT | Binance | **2%** du capital | 3 | Complémentaire, long only |
-
-### Capital séparé (Binance)
-
-Sur Binance, les bots RANGE et BREAKOUT partagent le même compte mais ont un **capital alloué virtuel** :
-
-```
-Compte Binance : 2 000 USDC total
-
-BINANCE_RANGE_ALLOCATED_BALANCE = 1200    → bot RANGE utilise max 1200 USDC
-BINANCE_BREAKOUT_ALLOCATED_BALANCE = 800  → bot BREAKOUT utilise max 800 USDC
-
-Sécurité : chaque bot utilise min(alloué, USDC disponible réel)
+# Plafond : position_size × entry ≤ capital × max_position_pct
 ```
 
-### Plafond de risque global
+### Risque par bot
 
-Le bot impose un **risque total maximum de 6%** du capital, toutes positions confondues. Si le risque cumulé atteint 6%, plus aucune position ne peut être ouverte, quelle que soit la stratégie.
+| Bot | Exchange | Risque/trade | Max positions | Max % capital/position |
+|-----|----------|-------------|---------------|------------------------|
+| 🔄 Trail Range | Binance | 5% | 3 | 30% |
+| 💥 CrashBot | Binance | 2% | 3 | 30% |
+| 🚀 Momentum | Revolut X | 4% | 3 | 90% |
+| ♾️ Infinity | Revolut X | 15% (SL) | 1 cycle | 70% (max investi) |
 
-### Règles communes
+### Calcul d'equity
 
-| Règle | Revolut (TREND/RANGE) | Binance (RANGE) | Binance (BREAKOUT) |
-|-------|----------------------|-----------------|-------------------|
-| Risque par trade | 3% / 2% | 2% | 2% |
-| Allocation max par position | 20% | 30% | 30% |
-| Positions simultanées max | 3 | 3 | 3 |
-| Plafond risque total | 6% | 6% | 6% |
-
-### Calcul de la taille (exemple TREND)
-
-```
-Capital = 1050 USD
-Risque TREND = 3% → 31.50 USD
-Budget max par position = 1050 × 20% = 210 USD
-
-Achat SOL à 90$, SL à 82$
-Distance SL = 8$
-Taille idéale = 31.50 / 8 = 3.94 SOL (coût 354$) > 210$ → cappé !
-Taille plafonnée = 210 / 90 = 2.33 SOL
-Risque réel = 2.33 × 8 = 18.67 USD (1.78% du capital)
-```
-
-### Calcul de la taille (exemple RANGE)
-
-```
-Capital = 1050 USD
-Risque RANGE = 2% → 21 USD
-Budget max par position = 210 USD
-
-Achat SOL à 78.16$, SL à 77.77$
-Distance SL = 0.39$
-Taille idéale = 21 / 0.39 = 53.85 SOL (coût 4 208$) > 210$ → cappé !
-Taille plafonnée = 210 / 78.16 = 2.69 SOL
-Risque réel = 2.69 × 0.39 = 1.05 USD (0.1% du capital)
-```
+Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des positions ouvertes. L'allocateur recalcule sur l'equity totale Binance, puis répartit entre Trail Range et CrashBot.
 
 ---
 
-## Comment les stratégies cohabitent
+## La boucle de chaque bot
 
-### Architecture multi-bot
-
-```
-┌───────────────────────────────────────────────────────────┐
-│                  REVOLUT X (5 paires USD)                  │
-│                                                           │
-│  📊 TREND + 🔄 RANGE → même bot, exclusivité par paire  │
-│  Max 3 positions simultanées                              │
-└───────────────────────────────────────────────────────────┘
-
-┌───────────────────────────────────────────────────────────┐
-│                  BINANCE (285 paires USDC)                 │
-│                                                           │
-│  🔄 RANGE (bot 1)     │  🔥 BREAKOUT (bot 2)             │
-│  285 paires USDC      │  20 paires USDC                   │
-│  Capital alloué séparé │  Capital alloué séparé            │
-│  Max 3 positions       │  Max 3 positions, Long Only      │
-│  Ordres OCO natifs     │  Trailing dynamique (polling)     │
-└───────────────────────────────────────────────────────────┘
-```
-
-### Les garde-fous
-
-1. **Exclusivité TREND/RANGE** : sur Revolut X, TREND et RANGE ne sont jamais actifs simultanément sur la même paire
-2. **Bots indépendants** : sur Binance, les bots RANGE et BREAKOUT tournent séparément avec capital alloué distinct
-3. **Sortie forcée** : si la tendance se confirme pendant un trade RANGE, le bot ferme le RANGE immédiatement
-4. **Kill-Switch** : le bot BREAKOUT se coupe si le mois perd plus de 10%
-5. **Complémentarité** : RANGE gagne quand le marché hésite, BREAKOUT gagne quand le marché explose → couverture mutuelle
-
----
-
-## La boucle du bot (comment ça tourne)
-
-📄 **Fichier : `bot.py`**
-
-### ⚡ Toutes les 30 secondes (boucle rapide)
-
-1. Demander le prix actuel de chaque paire
-2. **Si position TREND ouverte** : vérifier SL, zero-risk, trailing stop
-3. **Si position RANGE ouverte** : vérifier TP (milieu du range) et SL (breakout)
-4. **Si pas de position** :
-   - Tendance BULLISH/BEARISH → chercher signal TREND
-   - Tendance NEUTRAL → chercher signal RANGE
-5. Vérifier si la tendance est invalidée
-6. Si tendance confirmée pendant un trade RANGE → sortie forcée
-
-### 🕐 Toutes les 4 heures (analyse lente)
-
-1. Récupérer les nouvelles bougies H4
-2. Recalculer sommets, creux, tendance
-3. Si NEUTRAL → construire/mettre à jour le range
-4. Si tendance confirmée → supprimer le range
-5. Mettre à jour les seuils
-
-### Schéma simplifié
+### 🔄 Trail Range (`bot_binance.py`)
 
 ```
-┌─────────────────────────────────────────────┐
-│           DÉMARRAGE DU BOT                  │
-│  → Charger les 100 dernières bougies H4     │
-│  → Trouver les sommets/creux                │
-│  → Classifier la tendance                   │
-│  → Calculer les seuils + ranges             │
-└──────────────┬──────────────────────────────┘
-               │
-               ▼
-┌──────────────────────────────────────────────┐
-│      BOUCLE TOUTES LES 30 SEC               │
-│                                              │
-│  🔄 Pour chaque paire :                     │
-│     │                                        │
-│     ├─ Lire le prix actuel                   │
-│     │                                        │
-│     ├─ Position ouverte ?                    │
-│     │   ├─ 📊 TREND :                       │
-│     │   │   ├─ SL touché ? → Couper 🛑      │
-│     │   │   ├─ Zero-risk ? → Ajuster SL 🔒  │
-│     │   │   └─ Trailing ? → Suivre 📈       │
-│     │   │                                    │
-│     │   └─ 🔄 RANGE :                       │
-│     │       ├─ TP touché ? → Prendre gain 🎯│
-│     │       ├─ SL touché ? → Couper 🛑      │
-│     │       └─ Tendance confirmée ? → Exit ⚠️│
-│     │                                        │
-│     └─ Pas de position ?                     │
-│         ├─ BULLISH/BEARISH → Signal TREND ?  │
-│         └─ NEUTRAL → Signal RANGE ?          │
-│                                              │
-│  💤 Dormir 30 secondes                       │
-│  🔁 Recommencer                              │
-└──────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│ TOUTES LES 30 SECONDES                                  │
+│                                                          │
+│  Pour chaque paire (~284) :                              │
+│    ├─ OCO actif ? → Vérifier si TP ou SL fill            │
+│    │   ├─ TP fill → clôturer position, log Firebase      │
+│    │   └─ SL fill → clôturer + cooldown 12h              │
+│    ├─ Position sans OCO ? → Tenter de poser l'OCO        │
+│    ├─ Près du TP ? → Trail swap OCO (step suivant)       │
+│    └─ Pas de position ? → Chercher signal RANGE          │
+│                                                          │
+│ TOUTES LES 4 HEURES (nouvelle bougie H4)                 │
+│    ├─ Recalculer swings + tendance                       │
+│    ├─ NEUTRAL → construire/mettre à jour le range        │
+│    └─ BULLISH/BEARISH → fermer trade RANGE si besoin     │
+│                                                          │
+│ 1×/JOUR                                                  │
+│    └─ Recalculer l'allocation dynamique                  │
+└──────────────────────────────────────────────────────────┘
+```
+
+### 💥 CrashBot (`bot_binance_crashbot.py`)
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ TOUTES LES 30 SECONDES                                  │
+│                                                          │
+│  Pour chaque paire (~284) :                              │
+│    ├─ Position ouverte ? → Gérer step trailing           │
+│    │   ├─ Prix ≥ trigger TP → SL monte, TP monte         │
+│    │   └─ SL touché → clôturer                           │
+│    └─ Pas de position ? → Chercher crash                 │
+│        ├─ Drop ≥ 20% en 48h ? → 💥 SIGNAL               │
+│        └─ Market BUY + OCO (TP/SL)                       │
+│                                                          │
+│ 1×/JOUR                                                  │
+│    └─ Recalculer l'allocation dynamique                  │
+│                                                          │
+│ KILL-SWITCH : perf mois < -10% → stop tout              │
+└──────────────────────────────────────────────────────────┘
+```
+
+### 🚀 Momentum (`bot_momentum.py`)
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ TOUTES LES 30 SECONDES                                  │
+│                                                          │
+│  Pour chaque paire (7) :                                 │
+│    ├─ Récupérer bougies M5 + M15                         │
+│    ├─ Filtre macro M15 actif ? → Continuer               │
+│    ├─ Impulsion M5 détectée ? → Attendre pullback        │
+│    ├─ Pullback valide ? → Attendre reprise               │
+│    ├─ Reprise confirmée ? → 🚀 SIGNAL MOMENTUM          │
+│    │   └─ Placer ordre limit maker (0% frais)            │
+│    └─ Position ouverte ? → Gérer SL/trailing             │
+│                                                          │
+│ TOUTES LES 10 MINUTES                                    │
+│    └─ Heartbeat Firebase + calcul equity                 │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -493,227 +541,218 @@ Risque réel = 2.69 × 0.39 = 1.05 USD (0.1% du capital)
 
 | Fichier | Rôle en une phrase |
 |---------|-------------------|
-| `config.py` | Charge les paramètres depuis le fichier `.env` (clés API, % de risque, etc.) |
-| `models.py` | Définit les "objets" : bougie, swing, tendance, ordre, position, range, stratégie |
+| `config.py` | Charge les paramètres depuis `.env` (clés API, % de risque, etc.) |
+| `models.py` | Définit les "objets" : bougie, swing, tendance, ordre, position, range |
 | `swing_detector.py` | Trouve les sommets et les creux dans les bougies |
 | `trend_engine.py` | Classifie la tendance : BULLISH, BEARISH ou NEUTRAL |
-| `strategy_trend.py` | 📊 Stratégie Trend Following : décide quand entrer/sortir en tendance |
-| `strategy_mean_rev.py` | 🔄 Stratégie Mean Reversion : gère les trades dans le range |
-| `breakout_detector.py` | 🔥 Détecte les signaux Breakout (BB + Donchian + ADX + Volume) |
-| `risk_manager.py` | Calcule combien on mise (risque adapté par stratégie) et gère zero-risk/trailing |
-| `bot.py` | Boucle principale Revolut X (TREND + RANGE sur 5 paires) |
-| `bot_binance.py` | Boucle principale Binance RANGE (285 paires USDC, ordres OCO) |
-| `bot_binance_breakout.py` | 🔥 Boucle principale Binance BREAKOUT (20 paires, trailing adaptatif) |
-| `revolut_client.py` | Communique avec l'API Revolut X |
-| `binance_client.py` | Communique avec l'API Binance |
+| `strategy_mean_rev.py` | 🔄 Stratégie Mean Reversion : signaux BUY/SELL dans le range |
+| `strategy_trend.py` | Stratégie Trend Following : signaux BUY/SELL en tendance |
+| `crashbot_detector.py` | 💥 Détecte les crashes (drop ≥ 20%) + step trailing |
+| `momentum_engine.py` | 🚀 Détecte les impulsions M5, pullbacks et reprises |
+| `allocator.py` | Répartit le capital Binance entre Trail Range et CrashBot |
+| `risk_manager.py` | Calcul de taille de position, zero-risk, trailing, equity |
+| `position_store.py` | Sérialisation/désérialisation des positions en JSON |
+| `bot_binance.py` | 🔄 Boucle principale Trail Range (Binance, ~284 paires, OCO) |
+| `bot_binance_crashbot.py` | 💥 Boucle principale CrashBot (Binance, dip-buy, step-trail) |
+| `bot_momentum.py` | 🚀 Boucle principale Momentum (Revolut X, 7 paires, maker-only) |
+| `bot.py` | (legacy) Ancien bot Dow Theory Revolut X |
+| `binance_client.py` | Communique avec l'API Binance (OCO, market, balances) |
+| `revolut_client.py` | Communique avec l'API Revolut X (Ed25519, limit orders) |
+| `data_provider.py` | Récupère les bougies OHLCV |
 | `telegram.py` | Envoie les alertes sur ton téléphone via Telegram |
-| `trade_logger.py` | Log chaque trade dans Firebase Firestore |
+| `trade_logger.py` | Log chaque trade, heartbeat et allocation dans Firebase |
+| `client.py` (firebase) | Connexion Firestore, CRUD générique |
 
-### Dashboards de monitoring
+### Dashboard
 
-| Dashboard | Port | Exchange | Fichier |
-|-----------|------|----------|---------|
-| 🟡 Binance RANGE | 8503 | `binance` | `dashboard/app_binance.py` |
-| 🔥 Binance BREAKOUT | 8504 | `binance-breakout` | `dashboard/app_binance_breakout.py` |
-
-### Séparation importante
-
-Tout le dossier `src/core/` (5 fichiers) contient la **logique pure** — les maths, les règles, les décisions. Ce code ne fait **aucun appel réseau**. Il est testable sans connexion internet.
-
-Le dossier `src/exchange/` et `src/notifications/` gèrent les **communications** avec l'extérieur (API Revolut X, Telegram).
-
----
-
-## Exemple concret — Trade TREND
-
-Imaginons ce scénario sur SOL-USD :
-
-### 1️⃣ Le bot détecte une tendance BULLISH
-
-```
-Analyse des 100 dernières bougies H4...
-Tendance = BULLISH (HH + HL = escaliers qui montent)
-Seuil d'entrée : 90$ (dernier HH)
-Stop Loss : 82$ (dernier HL)
-```
-
-### 2️⃣ Le prix dépasse le seuil → Signal TREND BUY
-
-```
-Prix = 90.18$ (dépasse 90$ + 0.2%)
-→ 📊🎯 Signal TREND BUY !
-→ Risque 3% : 31.50 USD → Taille = 2.33 SOL (cappé à 210$)
-```
-
-### 3️⃣ Zero-risk + Trailing
-
-```
-Prix = 92$ (+2%) → 🔒 Zero-risk, SL = 90.63$
-Prix = 95$ → 📈 Trailing SL = 93.10$
-Prix = 98$ → 📈 Trailing SL = 96.04$
-Prix = 96$ → 🛑 SL touché → Sortie à ~96$
-```
-
-**Gain : (96 - 90.18) × 2.33 = 13.56 USD** 🎉
+| Dashboard | Port | Description |
+|-----------|------|-------------|
+| 📊 Dashboard unifié | 8502 | 4 onglets : Overview, Trail Range, CrashBot, Momentum |
 
 ---
 
 ## Exemple concret — Trade RANGE
 
-Imaginons SOL-USD passe en NEUTRAL :
+Imaginons SOL-USDC en range 78$ – 85$ :
 
 ### 1️⃣ Le bot détecte un range
 
 ```
-Tendance invalidée → NEUTRAL
-Dernier sommet : 85$, Dernier creux : 78$
+Tendance = NEUTRAL (pas d'escaliers clairs)
+Dernier sommet : 85$ | Dernier creux : 78$
 → 🔄 Range détecté : 78$ – 85$ (largeur 8.97% > 2% minimum ✅)
 → Milieu du range : 81.50$
 ```
 
-### 2️⃣ Le prix touche le bas du range → Signal RANGE BUY
+### 2️⃣ Le prix touche le bas → Signal BUY
 
 ```
 Prix = 78.16$ (≤ 78 × 1.002)
-→ 🔄🎯 Signal RANGE BUY !
-→ Entrée : 78.16$ | TP : 81.50$ (milieu) | SL : 77.77$ (breakout bas)
-→ Risque 2% : 21 USD → Taille = 2.69 SOL (cappé à 210$)
+→ 🔄 Signal RANGE BUY !
+  Entrée : 78.16$ | TP : 81.50$ (milieu) | SL : 77.77$
+  Risque 5% → Taille calculée par risk_manager
+→ Ordre MARKET BUY exécuté
+→ OCO posé : TP=81.50$ + SL=77.77$
 ```
 
-### 3️⃣ Scénario A — Le prix revient au milieu (TP touché)
+### 3️⃣ Le prix remonte → Trail@TP
 
 ```
-Prix monte à 81.50$ → 🔄🎯 TP atteint !
-→ Le bot vend au milieu du range
-→ Gain : (81.50 - 78.16) × 2.69 = 8.98 USD 🎉
-```
+Prix monte à 81.40$ → Proche du TP !
+→ 🔄 Trail swap step 1 :
+    SL → 79.87$ (verrouillé) | TP → 82.32$
 
-### 3️⃣ Scénario B — Le prix casse le range (SL touché)
+Prix monte à 82.20$ → Trail swap step 2 :
+    SL → 80.67$ | TP → 83.14$
 
-```
-Prix descend à 77.70$ → 🔄🛑 SL touché (breakout bas)
-→ Le bot vend pour couper les pertes
-→ Perte : (78.16 - 77.70) × 2.69 = 1.24 USD
-→ ⏳ Cooldown 12h activé — pas de nouveau trade RANGE ici
-```
-
-### 3️⃣ Scénario C — La tendance se confirme (sortie forcée)
-
-```
-Pendant le trade RANGE, la prochaine analyse H4 dit : BULLISH !
-→ ⚠️ Tendance confirmée → sortie forcée de la position RANGE
-→ La Stratégie TREND reprend la main sur SOL-USD
+Prix redescend → SL touché à 80.67$
+→ Gain : (80.67 - 78.16) × size 🎉
 ```
 
 ---
 
-## Exemple concret — Trade BREAKOUT
+## Exemple concret — Trade CRASH
 
-Imaginons ETH-USDC avec un breakout haussier :
+Imaginons AVAX-USDC qui crash :
 
-### 1️⃣ Le bot détecte un signal Breakout
-
-```
-Bougie H4 clôturée à 2 080$ :
-  Close (2 080$) > Donchian High 20p (2 050$)  ✅ Cassure
-  BB Width = 0.09 > 0.07 (1.3× moy)             ✅ Expansion
-  ADX = 31 > 25                                   ✅ Tendance
-  Volume = 15M > 10M (1.5× moy)                   ✅ Volume
-
-→ 🔥 SIGNAL BREAKOUT LONG !
-```
-
-### 2️⃣ Le bot vérifie et entre
+### 1️⃣ Le bot détecte un crash
 
 ```
-Prix actuel ticker : 2 082$
-SL signal : 2 080 - 1.5×40 = 2 020$
-Guard : 2 082 > 2 020 et distance 3.0% > 0.3% ✅
-
-→ MARKET BUY ETH @ 2 082$
-→ SL initial = 2 020$ | Risque 2% = 16$ | Size = 0.17 ETH
+Prix il y a 48h : 28.50$
+Prix maintenant : 22.20$
+Drop = -22.1% → ≥ 20% → 💥 SIGNAL CRASH !
 ```
 
-### 3️⃣ Trailing adaptatif
+### 2️⃣ Le bot achète le dip
 
 ```
-Peak 2 124$ (+2.0%) → 🔒 Palier 1 → SL = 2 086$ (entrée + 0.2%)
-Peak 2 190$ (+5.2%) → 🔒 Palier 2 → SL = max(2 124$, 2190-60) = 2 130$
-Peak 2 250$          → SL = max(2 124$, 2250-60) = 2 190$
-Prix redescend       → SL touché à 2 190$
+→ MARKET BUY AVAX @ 22.20$
+  TP₀ = 23.98$ (+8%)
+  SL = 20.50$ (22.20 - 1.5 × 1.13 ATR)
+  Risque 2% du capital alloué
+```
 
-Gain : (2 190 - 2 082) × 0.17 = 18.36$ 🎉
+### 3️⃣ Step trailing
+
+```
+Prix monte à 23.95$ → Proche du TP₀ !
+  SL₁ = 23.98$ (verrouillé au TP₀) → plus de perte possible
+  TP₁ = 24.09$ (+0.5%)
+
+Prix monte à 24.07$ →
+  SL₂ = 24.09$
+  TP₂ = 24.20$
+
+Prix monte à 24.18$ →
+  SL₃ = 24.20$
+  TP₃ = 24.31$
+
+Prix redescend → SL₃ touché à 24.20$
+→ Gain : (24.20 - 22.20) × size = gros profit 🎉
 ```
 
 ---
 
-## Ce que le bot ne fait PAS
+## Exemple concret — Trade MOMENTUM
+
+Imaginons ETH-USD sur Revolut X :
+
+### 1️⃣ Filtre macro M15 OK
+
+```
+ATR(14) M15 = 18.5 > MA(ATR) 14.2 ✅ Volatilité active
+Volume M15 = 12.3M > MA(Vol) 8.1M ✅ Marché liquide
+→ Filtre macro passé
+```
+
+### 2️⃣ Impulsion M5 détectée
+
+```
+Bougie M5 : Open 2 100$ → Close 2 112.40$ (+0.59%)
+  Body ≥ 0.4% ✅ | Volume 2.8× MA20 ✅ | Close top 20% ✅ | ADX 24 > 15 ✅
+→ 🚀 IMPULSION HAUSSIÈRE | Move = +12.40$
+```
+
+### 3️⃣ Pullback validé
+
+```
+5 bougies plus tard : prix redescend à 2 108.30$
+  Retracement = 4.10 / 12.40 = 33% (entre 25-55%) ✅
+  RSI(14) = 51 (entre 40-65) ✅
+  Prix proche de EMA20 ✅
+→ Pullback valide
+```
+
+### 4️⃣ Entrée sur reprise
+
+```
+Bougie de reprise : Close 2 110.50$ > Open 2 108.30$, volume > MA10
+→ 🚀 SIGNAL MOMENTUM BUY !
+  Ordre limit maker @ 2 110.50$ (0% frais)
+  SL = 2 106.20$ (sous le creux du pullback)
+  Risque 4% de 500$ = 20$
+  Taille = 20 / (2110.50 - 2106.20) = 4.65 ETH... cappé à 90% = 0.213 ETH
+```
+
+---
+
+## Ce que les bots ne font PAS
 
 | ❌ Ne fait pas | ✅ Fait à la place |
 |---------------|-------------------|
-| Prédire l'avenir | Suivre la tendance OU jouer les rebonds selon le contexte |
-| Miser tout le capital | Risquer 3% (trend) ou 2% (range) max par trade, plafond 6% |
-| Shorter sans avoir l'actif | N'entre en SELL que si on possède l'actif (exchange spot) |
-| Trader en permanence | TREND ou RANGE selon le contexte, neutre si rien n'est clair |
-| Mélanger les stratégies | Une seule stratégie par paire à tout moment |
+| Prédire l'avenir | Constater des patterns (range, crash, impulsion) et réagir |
+| Miser tout le capital | Risk 2–5% par trade, allocation dynamique |
+| Shorter en spot | CrashBot et Momentum = long only. Trail Range = long & short |
+| Trader en permanence | Chaque bot attend SES conditions spécifiques |
+| Ignorer les pertes | Kill-switch mensuel, SL sur chaque trade, trailing lock |
 
 ---
 
 ## Les paramètres importants (fichier `.env`)
 
-### Paramètres Trend Following 📊
+### Trail Range 🔄
 
 | Paramètre | Valeur | Ce que ça fait |
 |-----------|--------|----------------|
-| `RISK_PERCENT_TREND` | 3% | Risque par trade TREND |
-| `ENTRY_BUFFER_PERCENT` | 0.2% | Marge de confirmation d'entrée |
-| `SL_BUFFER_PERCENT` | 0.3% | Marge pour éviter les fausses sorties |
-| `ZERO_RISK_TRIGGER_PERCENT` | 2% | Mouvement requis pour activer le zero-risk |
-| `ZERO_RISK_LOCK_PERCENT` | 0.5% | Profit minimum verrouillé |
-| `TRAILING_STOP_PERCENT` | 2% | Distance du trailing stop |
-
-### Paramètres Mean Reversion Range 🔄
-
-| Paramètre | Valeur | Ce que ça fait |
-|-----------|--------|----------------|
-| `RISK_PERCENT_RANGE` | 2% | Risque par trade RANGE |
-| `RANGE_ENTRY_BUFFER_PERCENT` | 0.2% | Marge d'entrée sur les bornes du range |
-| `RANGE_SL_BUFFER_PERCENT` | 0.3% | Marge du SL au-delà de la borne |
+| `RISK_PERCENT` | 5% | Risque par trade Range |
 | `RANGE_WIDTH_MIN` | 2% | Largeur minimum du range pour trader |
-| `RANGE_COOLDOWN_BARS` | 3 | Bougies H4 de pause après un breakout (= 12h) |
+| `RANGE_COOLDOWN_BARS` | 3 | Bougies H4 de pause après un breakout (=12h) |
+| `BINANCE_RANGE_TRAIL_SWAP_PCT` | variable | Distance au TP pour déclencher le swap OCO |
+| `BINANCE_RANGE_TRAIL_STEP_PCT` | ~1% | Extension du TP par step |
+| `BINANCE_RANGE_TRAIL_SL_LOCK_PCT` | ~2% | Protection du profit verrouillé |
 
-### Paramètres Breakout Volatility Expansion 🔥
-
-| Paramètre | Valeur | Ce que ça fait |
-|-----------|--------|----------------|
-| `BINANCE_BREAKOUT_RISK_PERCENT` | 2% | Risque par trade Breakout |
-| `BINANCE_BREAKOUT_MAX_POSITIONS` | 3 | Nombre max de trades Breakout ouverts |
-| `BINANCE_BREAKOUT_BB_PERIOD` | 20 | Période des Bandes de Bollinger |
-| `BINANCE_BREAKOUT_BB_STD` | 2.0 | Écart-type des BB |
-| `BINANCE_BREAKOUT_BB_EXPANSION` | 1.0 | Multiplicateur d'expansion BB Width |
-| `BINANCE_BREAKOUT_DONCHIAN_PERIOD` | 20 | Période du canal Donchian |
-| `BINANCE_BREAKOUT_ADX_THRESHOLD` | 25 | Seuil ADX minimum |
-| `BINANCE_BREAKOUT_VOL_MULT` | 1.2 | Multiplicateur volume vs moyenne |
-| `BINANCE_BREAKOUT_SL_ATR_MULT` | 1.5 | Multiplicateur ATR pour le SL initial |
-| `BINANCE_BREAKOUT_ADAPTIVE_TRAIL` | true | Active le trailing par paliers |
-| `BINANCE_BREAKOUT_TRAIL_STEP1_PCT` | 2% | Gain requis pour Palier 1 |
-| `BINANCE_BREAKOUT_TRAIL_STEP2_PCT` | 5% | Gain requis pour Palier 2 |
-| `BINANCE_BREAKOUT_TRAIL_LOCK1_PCT` | 0.2% | Profit verrouillé Palier 1 |
-| `BINANCE_BREAKOUT_TRAIL_LOCK2_PCT` | 2% | Profit verrouillé Palier 2 |
-| `BINANCE_BREAKOUT_KILL_SWITCH` | true | Active le kill-switch mensuel |
-| `BINANCE_BREAKOUT_KILL_PCT` | -10% | Seuil du kill-switch |
-
-### Paramètres globaux
+### CrashBot 💥
 
 | Paramètre | Valeur | Ce que ça fait |
 |-----------|--------|----------------|
-| `MAX_TOTAL_RISK_PERCENT` | 6% | Plafond de risque total (toutes positions) |
-| `MAX_POSITION_PERCENT` | 20-30% | Part max du capital par position |
-| `MAX_SIMULTANEOUS_POSITIONS` | 3 | Nombre max de trades ouverts par bot |
-| `SWING_LOOKBACK` | 3 | Bougies de confirmation pour les sommets/creux |
-| `POLLING_INTERVAL_SECONDS` | 30s | Fréquence de vérification du prix |
-| `TRADING_PAIRS` | BTC, SOL, XRP, LINK, SUI | Cryptos Revolut X (5 paires USD) |
-| `BINANCE_BREAKOUT_PAIRS` | 20 paires USDC | Cryptos Breakout (BTC, ETH, SOL, etc.) |
+| `drop_threshold` | 20% | Baisse minimum pour déclencher un signal |
+| `lookback_bars` | 12 | Fenêtre = 12 × 4h = 48 heures |
+| `tp_pct` | 8% | Take profit initial |
+| `atr_sl_mult` | 1.5 | Multiplicateur ATR pour le SL |
+| `trail_step_pct` | 0.5% | Extension du TP par step |
+| `BINANCE_CRASHBOT_KILL_PCT` | -10% | Seuil du kill-switch mensuel |
+
+### Momentum 🚀
+
+| Paramètre | Valeur | Ce que ça fait |
+|-----------|--------|----------------|
+| `MC_RISK_PERCENT` | 4% | Risque par trade |
+| `MC_MAX_POSITIONS` | 3 | Nombre max de trades ouverts |
+| `MC_MAX_POSITION_PCT` | 90% | Part max du capital par position |
+| `MC_POLLING_SECONDS` | 30s | Fréquence de vérification |
+| `MC_MAKER_WAIT_SECONDS` | 60s | Temps d'attente pour un fill maker |
+| `impulse_body_min_pct` | 0.4% | Body minimum de l'impulsion |
+| `impulse_vol_mult` | 2× | Volume minimum (vs MA20) |
+| `pullback_retrace_min/max` | 25–55% | Fenêtre de retracement valide |
+| `adx_min` | 15 | ADX minimum pour confirmer la direction |
+
+### Allocation dynamique
+
+| Paramètre | Valeur | Ce que ça fait |
+|-----------|--------|----------------|
+| `PF_LOW` | 0.9 | Seuil bas du PF (en-dessous → Défensif) |
+| `PF_HIGH` | 1.1 | Seuil haut du PF (au-dessus → Agressif) |
+| `MIN_TRADES` | 20 | Nombre minimum de trades pour évaluer le PF |
 
 ---
 
@@ -734,25 +773,25 @@ Gain : (2 190 - 2 082) × 0.17 = 18.36$ 🎉
 
 | Service | Description | Port |
 |---------|-------------|------|
-| `tradex` | Bot Revolut X (TREND + RANGE, 5 paires) | — |
-| `tradex-binance` | Bot Binance RANGE (285 paires USDC) | — |
-| `tradex-binance-breakout` | Bot Binance BREAKOUT (20 paires, Long Only) | — |
-| `tradex-binance-dashboard` | Dashboard Streamlit RANGE | 8503 |
-| `tradex-binance-breakout-dashboard` | Dashboard Streamlit BREAKOUT | 8504 |
+| `tradex-binance` | Bot Trail Range (284 paires USDC, OCO) | — |
+| `tradex-binance-crashbot` | Bot CrashBot (284 paires USDC, dip-buy) | — |
+| `tradex-momentum` | Bot Momentum (7 paires USD, Revolut X) | — |
+| `tradex-dashboard-unified` | Dashboard Streamlit unifié | 8502 |
 
 ### Commandes utiles
 
 ```bash
 # Logs en direct
-ssh BOT-VPS 'sudo journalctl -u tradex-binance-breakout -f'
+ssh BOT-VPS 'sudo journalctl -u tradex-binance -f'
+ssh BOT-VPS 'sudo journalctl -u tradex-binance-crashbot -f'
+ssh BOT-VPS 'sudo journalctl -u tradex-momentum -f'
 
-# État des services
-ssh BOT-VPS 'for svc in tradex tradex-binance tradex-binance-breakout; do echo -n "$svc: "; sudo systemctl is-active $svc; done'
+# État de tous les services
+ssh BOT-VPS 'for svc in tradex-binance tradex-binance-crashbot tradex-momentum tradex-dashboard-unified; do echo -n "$svc: "; sudo systemctl is-active $svc; done'
 
-# Déployer
-bash deploy/deploy-binance-breakout.sh
+# Redémarrer un bot
+ssh BOT-VPS 'sudo systemctl restart tradex-binance'
 
-# Dashboards
-# RANGE    : http://213.199.41.168:8503
-# BREAKOUT : http://213.199.41.168:8504
+# Dashboard
+# http://213.199.41.168:8502
 ```
