@@ -62,7 +62,11 @@ from src.firebase.trade_logger import (
     log_heartbeat as fb_log_heartbeat,
     log_daily_snapshot as fb_log_daily_snapshot,
     cleanup_old_events as fb_cleanup_events,
+    get_trail_range_pnl_list as fb_get_trail_range_pnl_list,
+    get_breakout_pnl_list as fb_get_breakout_pnl_list,
+    log_allocation as fb_log_allocation,
 )
+from src.core.allocator import compute_allocation, compute_profit_factor
 
 
 # ── Logging ────────────────────────────────────────────────────────────────────
@@ -166,6 +170,10 @@ class TradeXBinanceBreakoutBot:
         self._last_cleanup_date: str = ""
         self._last_snapshot_date: str = ""
 
+        # Allocation dynamique
+        self._allocated_balance: float = config.BINANCE_BREAKOUT_ALLOCATED_BALANCE
+        self._last_allocation_date: str = ""
+
         # ── Métriques & monitoring ──
         self._daily_pnl: float = 0.0
         self._daily_trades: int = 0
@@ -203,6 +211,7 @@ class TradeXBinanceBreakoutBot:
         self._discover_pairs()
         self._load_state()
         self._init_kill_switch()
+        self._init_allocation()
 
         logger.info("═" * 60)
         logger.info("🚀 TradeX BINANCE BREAKOUT démarré — Long Only")
@@ -219,7 +228,7 @@ class TradeXBinanceBreakoutBot:
             config.BINANCE_BREAKOUT_RISK_PERCENT * 100,
             config.BINANCE_BREAKOUT_MAX_POSITIONS,
         )
-        allocated = config.BINANCE_BREAKOUT_ALLOCATED_BALANCE
+        allocated = self._allocated_balance
         logger.info(
             "   Capital    : %s | SL: %.1f×ATR | Trail: adaptive=%s",
             f"${allocated:.0f} alloué" if allocated > 0 else "100% du USDC dispo",
@@ -361,11 +370,101 @@ class TradeXBinanceBreakoutBot:
         logger.info("── Init terminée | %d positions ouvertes ──", open_count)
 
     # ═══════════════════════════════════════════════════════════════════════════
+    # ALLOCATION DYNAMIQUE
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _init_allocation(self) -> None:
+        """Calcule l'allocation Donchian Breakout via l'allocator dynamique.
+
+        Si DYNAMIC_ALLOCATION_ENABLED=false → garde le fallback statique.
+        Sinon → compute_allocation() et prend donchian_balance.
+        """
+        if not config.DYNAMIC_ALLOCATION_ENABLED:
+            logger.info(
+                "📊 Allocation dynamique désactivée — fallback statique $%.0f",
+                self._allocated_balance,
+            )
+            self._last_allocation_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            return
+
+        try:
+            total_balance = self._calculate_equity()
+            logger.info("💰 Solde total Binance: $%.2f", total_balance)
+
+            pnl_list = fb_get_trail_range_pnl_list(days=90)
+            trail_pf = compute_profit_factor(pnl_list)
+            trail_trades = len(pnl_list)
+
+            donchian_pnl = fb_get_breakout_pnl_list(days=90)
+            donchian_pf = compute_profit_factor(donchian_pnl)
+            donchian_trades = len(donchian_pnl)
+
+            result = compute_allocation(
+                total_balance=total_balance,
+                trail_pf=trail_pf,
+                trail_trade_count=trail_trades,
+                donchian_pf=donchian_pf,
+                donchian_trade_count=donchian_trades,
+            )
+
+            self._allocated_balance = result.donchian_balance
+            self._last_allocation_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+            # Persister dans Firebase pour le dashboard
+            fb_log_allocation(
+                regime=result.regime.value,
+                crash_pct=result.crash_pct,
+                trail_pct=result.trail_pct,
+                crash_balance=result.crash_balance,
+                trail_balance=result.trail_balance,
+                total_balance=total_balance,
+                trail_pf=trail_pf,
+                trail_trades=trail_trades,
+                reason=result.reason,
+                donchian_pct=result.donchian_pct,
+                donchian_balance=result.donchian_balance,
+                donchian_pf=donchian_pf,
+                donchian_trades=donchian_trades,
+            )
+
+            logger.info("═" * 50)
+            logger.info("📊 ALLOCATION DYNAMIQUE — %s", result.regime.value.upper())
+            logger.info("   %s", result.reason)
+            logger.info(
+                "   Total: $%.0f | Donchian: %.0f%% → $%.0f | Trail: %.0f%% → $%.0f | Crash: %.0f%% → $%.0f",
+                total_balance,
+                result.donchian_pct * 100,
+                result.donchian_balance,
+                result.trail_pct * 100,
+                result.trail_balance,
+                result.crash_pct * 100,
+                result.crash_balance,
+            )
+            logger.info("═" * 50)
+
+        except Exception as e:
+            logger.warning(
+                "⚠️ Allocation dynamique échouée: %s — fallback $%.0f",
+                e,
+                self._allocated_balance,
+            )
+            self._last_allocation_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    def _maybe_recompute_allocation(self) -> None:
+        """Recalcule l'allocation 1×/jour (changement de date UTC)."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if today == self._last_allocation_date:
+            return
+        logger.info("🔄 Nouveau jour UTC — recalcul allocation Donchian")
+        self._init_allocation()
+
+    # ═══════════════════════════════════════════════════════════════════════════
     # TICK (boucle rapide — toutes les 30s)
     # ═══════════════════════════════════════════════════════════════════════════
 
     def _tick(self) -> None:
         """Un cycle de polling."""
+        self._maybe_recompute_allocation()
         self._check_new_h4_candle()
         self._check_kill_switch_month_reset()
 
@@ -551,8 +650,8 @@ class TradeXBinanceBreakoutBot:
         if available_usdc <= 0:
             return
 
-        # Capital alloué (plafond virtuel)
-        allocated = config.BINANCE_BREAKOUT_ALLOCATED_BALANCE
+        # Capital alloué (plafond virtuel — dynamique via allocator)
+        allocated = self._allocated_balance
         fiat_balance = min(allocated, available_usdc) if allocated > 0 else available_usdc
 
         # Risk check global
@@ -1074,8 +1173,8 @@ class TradeXBinanceBreakoutBot:
             equity = 0
             balances = []
 
-        # Equity allouée pour ce bot
-        allocated = config.BINANCE_BREAKOUT_ALLOCATED_BALANCE
+        # Equity allouée pour ce bot (dynamique via allocator)
+        allocated = self._allocated_balance
         allocated_equity = min(allocated, equity) if allocated > 0 else equity
 
         # Drawdown mensuel

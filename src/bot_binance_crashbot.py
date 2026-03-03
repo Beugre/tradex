@@ -457,7 +457,7 @@ class TradeXBinanceCrashBot:
             logger.info("📊 ALLOCATION DYNAMIQUE — %s", result.regime.value.upper())
             logger.info("   %s", result.reason)
             logger.info(
-                "   Total: $%.0f | CrashBot: %.0f%% → $%.0f | Trail Range: %.0f%% → $%.0f",
+                "   Total: $%.0f | Crash: %.0f%% → $%.0f | Trail: %.0f%% → $%.0f",
                 total_balance,
                 result.crash_pct * 100,
                 result.crash_balance,

@@ -183,6 +183,11 @@ class TradeXBinanceBot:
         # Signal persistence
         self._signal_persistence: dict[str, dict] = {}
 
+        # ── Entrée sur open H4 uniquement (pas mid-candle) ──
+        # Les signaux sont détectés au close de la bougie H4 clôturée,
+        # puis exécutés au premier tick de la bougie suivante.
+        self._pending_range_entries: dict[str, dict] = {}
+
         # Close failures
         self._close_failures: dict[str, dict] = {}
 
@@ -527,6 +532,8 @@ class TradeXBinanceBot:
                         self._update_trend(symbol)
                     except Exception as e:
                         logger.error("[%s] Erreur mise à jour tendance: %s", symbol, e)
+                # Générer les signaux d'entrée au close de la bougie clôturée
+                self._generate_pending_range_signals()
                 self._firebase_daily_cleanup()
         except Exception as e:
             logger.debug("Erreur check H4: %s", e)
@@ -635,9 +642,9 @@ class TradeXBinanceBot:
                 self._manage_range_position_manual(symbol, position, ticker)
             return
 
-        # Pas de position → chercher un signal RANGE
+        # Pas de position → exécuter un signal RANGE pending (généré au close H4)
         if trend.direction == TrendDirection.NEUTRAL:
-            self._seek_range_entry(symbol, trend, ticker)
+            self._execute_pending_range_entry(symbol, ticker)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # GESTION POSITION (fallback manuel si OCO pas placé)
@@ -811,40 +818,117 @@ class TradeXBinanceBot:
     # ENTRÉE EN POSITION
     # ═══════════════════════════════════════════════════════════════════════════
 
-    def _seek_range_entry(self, symbol: str, trend: TrendState, ticker) -> None:
-        """Cherche un signal d'entrée Range sur Binance."""
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ENTRÉE SUR OPEN H4 — Signaux générés au close, exécutés au tick suivant
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _generate_pending_range_signals(self) -> None:
+        """Appelé à chaque nouvelle bougie H4. Vérifie le close de la bougie
+        venant de clôturer pour chaque paire en NEUTRAL. Si le close était
+        dans la buy zone → stocke le signal en _pending_range_entries.
+
+        Le signal sera exécuté au prochain _process_symbol (= premier tick
+        de la nouvelle bougie = pseudo-open).
+        """
+        # Reset tous les pending (un signal ne vit que pour 1 bougie)
+        self._pending_range_entries.clear()
+
+        for symbol in self._trading_pairs:
+            try:
+                trend = self._trends.get(symbol)
+                if trend is None or trend.direction != TrendDirection.NEUTRAL:
+                    continue
+
+                pos = self._positions.get(symbol)
+                if pos and pos.status in (PositionStatus.OPEN, PositionStatus.ZERO_RISK):
+                    continue
+
+                rs = self._ranges.get(symbol)
+                if rs is None:
+                    continue
+
+                if not rs.is_valid:
+                    continue
+
+                if is_in_cooldown(rs):
+                    continue
+
+                # Récupérer les bougies H4 pour obtenir le close de la dernière clôturée
+                candles = self._data.get_h4_candles(symbol, limit=5)
+                if len(candles) < 2:
+                    continue
+
+                # La dernière bougie (candles[-1]) est la bougie EN COURS (pas encore clôturée)
+                # La bougie clôturée est candles[-2]
+                closed_candle = candles[-2]
+                last_close = closed_candle.close
+
+                # Vérifier si le close est dans la buy zone
+                buy_zone = rs.range_low * (1 + config.RANGE_ENTRY_BUFFER_PERCENT)
+                if last_close <= buy_zone:
+                    sl_price = rs.range_low * (1 - config.RANGE_ENTRY_BUFFER_PERCENT)
+                    tp_price = rs.range_mid
+
+                    # Anti-breakout : si le close est déjà sous le SL → pas de signal
+                    if sl_price >= last_close:
+                        logger.debug(
+                            "[%s] 🔄⚠️ Pending BUY rejeté (breakout) : close %.4f sous SL %.4f",
+                            symbol, last_close, sl_price,
+                        )
+                        continue
+
+                    signal = {
+                        "side": OrderSide.BUY,
+                        "entry_price": last_close,  # prix indicatif, l'entrée sera au market
+                        "sl_price": sl_price,
+                        "tp_price": tp_price,
+                    }
+                    self._pending_range_entries[symbol] = signal
+
+                    logger.info(
+                        "[%s] 🔄📋 PENDING RANGE BUY | close=%s in buy_zone=%s | SL=%s | TP=%s",
+                        symbol, _fmt(last_close), _fmt(buy_zone),
+                        _fmt(sl_price), _fmt(tp_price),
+                    )
+            except Exception as e:
+                logger.debug("[%s] Erreur pending signal: %s", symbol, e)
+
+        n = len(self._pending_range_entries)
+        if n > 0:
+            logger.info("📋 %d signaux RANGE pending pour la prochaine bougie", n)
+
+    def _execute_pending_range_entry(self, symbol: str, ticker) -> None:
+        """Exécute un signal RANGE pending au premier tick de la nouvelle bougie.
+
+        Le signal a été généré au close de la bougie précédente. L'entrée
+        se fait au prix courant du ticker (= pseudo-open de la bougie).
+        """
+        signal = self._pending_range_entries.pop(symbol, None)
+        if signal is None:
+            return
+
         pos = self._positions.get(symbol)
         if pos and pos.status in (PositionStatus.OPEN, PositionStatus.ZERO_RISK):
             return
 
-        rs = self._ranges.get(symbol)
-        if rs is None:
-            self._update_range(symbol, trend)
-            rs = self._ranges.get(symbol)
-            if rs is None:
-                return
-
-        signal = check_range_entry_signal(rs, ticker, config.RANGE_ENTRY_BUFFER_PERCENT)
-        if not signal:
-            return
-
-        # Binance Spot : pas de vente à découvert — on ne prend que les BUY
-        if signal["side"] == OrderSide.SELL:
-            return
-
-        signal_key = f"RANGE_{signal['side'].value.upper()}"
-        prev_info = self._signal_persistence.get(symbol, {})
-        if prev_info.get("key") == signal_key:
-            prev_info["count"] += 1
-        else:
-            self._signal_persistence[symbol] = {"key": signal_key, "count": 1}
+        # Vérifier que le prix courant est encore valide (pas gappé sous le SL)
+        price = ticker.last_price
+        if signal["sl_price"] >= price:
             logger.info(
-                "[%s] 🔄 RANGE %s | Entry=%s | SL=%s | TP=%s",
-                symbol, signal["side"].value.upper(),
-                _fmt(signal["entry_price"]), _fmt(signal["sl_price"]), _fmt(signal["tp_price"]),
+                "[%s] 🔄⚠️ Pending BUY annulé : prix %s gappé sous SL %s",
+                symbol, _fmt(price), _fmt(signal["sl_price"]),
             )
+            return
 
-        self._open_position(symbol, signal, ticker.last_price)
+        # Mettre à jour le prix d'entrée avec le prix live (pas le close de la bougie passée)
+        signal["entry_price"] = price
+
+        logger.info(
+            "[%s] 🔄✅ EXECUTING PENDING RANGE BUY | prix=%s | SL=%s | TP=%s",
+            symbol, _fmt(price), _fmt(signal["sl_price"]), _fmt(signal["tp_price"]),
+        )
+
+        self._open_position(symbol, signal, price)
 
     def _open_position(
         self,
@@ -1300,7 +1384,7 @@ class TradeXBinanceBot:
             logger.info("📊 ALLOCATION DYNAMIQUE — %s", result.regime.value.upper())
             logger.info("   %s", result.reason)
             logger.info(
-                "   Total: $%.0f | Trail Range: %.0f%% → $%.0f | CrashBot: %.0f%% → $%.0f",
+                "   Total: $%.0f | Trail: %.0f%% → $%.0f | Crash: %.0f%% → $%.0f",
                 total_balance,
                 result.trail_pct * 100,
                 result.trail_balance,

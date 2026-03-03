@@ -92,6 +92,11 @@ class BacktestConfig:
     range_entry_buffer_pct: float = 0.002
     range_sl_buffer_pct: float = 0.003
     range_cooldown_bars: int = 3
+    range_min_sl_pct: float = 0.0     # SL minimum en % du prix (0 = pas de filtre, 0.005 = 0.5%)
+    range_sl_on_close: bool = False   # False = SL intrabar (c.low), True = SL sur close uniquement
+    # ATR-based SL (0 = utiliser le SL fixe classique, >0 = SL = entry - mult × ATR)
+    range_atr_sl_mult: float = 0.0
+    range_atr_period: int = 14
     # Global
     max_total_risk_pct: float = 0.06
     fee_pct: float = 0.00075        # 0.075 % par côté
@@ -353,14 +358,21 @@ class BacktestEngine:
                     update_trailing_stop(pos, c.close, self.cfg.trailing_stop_pct)
 
             elif pos.strategy == StrategyType.RANGE:
-                sl_eff = pos.sl_price * (1 - self.cfg.range_sl_buffer_pct)
-                hit_sl = (pos.side == OrderSide.BUY and c.low <= sl_eff)
+                # Mode SL : intrabar (c.low) ou close-only (c.close)
+                if self.cfg.range_sl_on_close:
+                    # SL close : on ne sort que si le CLOSE de la bougie est sous le SL
+                    hit_sl = (pos.side == OrderSide.BUY and c.close <= pos.sl_price)
+                else:
+                    # SL intrabar : on sort si le LOW touche le SL (simule OCO tick-by-tick)
+                    hit_sl = (pos.side == OrderSide.BUY and c.low <= pos.sl_price)
+
                 hit_tp = (pos.tp_price and pos.side == OrderSide.BUY
                           and c.high >= pos.tp_price)
 
                 # ── FIX #1 : SL+TP même bougie → SL gagne (worst-case) ──
                 if hit_sl:
-                    to_close.append((pos, pos.sl_price, "RANGE_SL"))
+                    exit_px = pos.sl_price if not self.cfg.range_sl_on_close else c.close
+                    to_close.append((pos, exit_px, "RANGE_SL"))
                     self.cooldown_until[pos.symbol] = (
                         ts + self.cfg.range_cooldown_bars * 4 * 3600 * 1000
                     )
@@ -499,7 +511,7 @@ class BacktestEngine:
             if not self.cfg.use_d1_pullback:
                 self._gen_trend_signal_breakout(sym, trend)
 
-            self._gen_range_signal(sym, trend)
+            self._gen_range_signal(sym, trend, ts)
 
     # Ancien mode : breakout H4 (compatibilité)
     def _gen_trend_signal_breakout(self, sym: str, trend: TrendState) -> None:
@@ -604,7 +616,7 @@ class BacktestEngine:
                 return
         self._pend_trend[sym] = None
 
-    def _gen_range_signal(self, sym: str, trend: TrendState) -> None:
+    def _gen_range_signal(self, sym: str, trend: TrendState, ts: int = 0) -> None:
         if trend.direction != TrendDirection.NEUTRAL:
             self.ranges[sym] = None
             self._pend_range[sym] = None
@@ -617,13 +629,49 @@ class BacktestEngine:
 
         self.ranges[sym] = rs
         buy_zone = rs.range_low * (1 + self.cfg.range_entry_buffer_pct)
-        sl_price = rs.range_low * (1 - self.cfg.range_entry_buffer_pct)
+
+        # SL : ATR-based ou fixe (comme le live)
+        if self.cfg.range_atr_sl_mult > 0:
+            atr_val = self._compute_atr(sym, ts, self.cfg.range_atr_period)
+            if atr_val and atr_val > 0:
+                sl_price = buy_zone - self.cfg.range_atr_sl_mult * atr_val
+            else:
+                sl_price = rs.range_low * (1 - self.cfg.range_entry_buffer_pct)
+        else:
+            sl_price = rs.range_low * (1 - self.cfg.range_entry_buffer_pct)
+
+        # Filtre : SL trop serré → skip (bruit de marché)
+        if self.cfg.range_min_sl_pct > 0:
+            sl_dist_pct = abs(buy_zone - sl_price) / buy_zone
+            if sl_dist_pct < self.cfg.range_min_sl_pct:
+                self._pend_range[sym] = None
+                return
+
         self._pend_range[sym] = {
             "side": OrderSide.BUY,
             "buy_zone": buy_zone,
             "sl_price": sl_price,
             "tp_price": rs.range_mid,
         }
+
+    # ── ATR computation ────────────────────────────────────────────────────
+
+    def _compute_atr(self, symbol: str, up_to_ts: int, period: int = 14) -> Optional[float]:
+        """Calcule l'ATR sur les dernières `period` bougies visibles (anti-lookahead)."""
+        clist = self.candles.get(symbol, [])
+        visible = [c for c in clist if c.timestamp <= up_to_ts]
+        if len(visible) < period + 1:
+            return None
+
+        recent = visible[-(period + 1):]
+        trs = []
+        for i in range(1, len(recent)):
+            hi = recent[i].high
+            lo = recent[i].low
+            prev_c = recent[i - 1].close
+            tr = max(hi - lo, abs(hi - prev_c), abs(lo - prev_c))
+            trs.append(tr)
+        return sum(trs) / len(trs) if trs else None
 
     # ── Ouverture / Fermeture ──────────────────────────────────────────────
 
