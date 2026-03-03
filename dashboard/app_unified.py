@@ -403,6 +403,19 @@ def _load_all(days: int):
     return data
 
 
+@st.cache_data(ttl=55)
+def _fetch_infinity_cycle() -> dict | None:
+    """Lit le cycle Infinity courant depuis Firebase (infinity_cycles/current)."""
+    try:
+        db = _get_db()
+        doc = db.collection("infinity_cycles").document("current").get()
+        if doc.exists:
+            return doc.to_dict()
+    except Exception:
+        pass
+    return None
+
+
 all_data = _load_all(days_filter)
 
 
@@ -1252,6 +1265,272 @@ def render_revolut_momentum():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  Infinity V-Curve Visualization
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _render_infinity_vcurve(cycle: dict | None):
+    """Affiche la courbe en V du cycle DCA Infinity avec paliers d'achat/vente."""
+
+    if not cycle or cycle.get("phase") == "WAITING":
+        st.info("♾️ **Cycle en attente** — Le bot attend un drop de "
+                f"{cycle.get('entry_drop_pct', 0.05) * 100:.0f}% depuis le trailing high "
+                f"pour démarrer un nouveau cycle." if cycle else
+                "♾️ **Aucun cycle actif** — En attente de données Firebase.")
+
+        # Même en WAITING, on peut afficher les niveaux théoriques
+        if cycle and cycle.get("trailing_high", 0) > 0:
+            _render_vcurve_theoretical(cycle)
+        return
+
+    st.subheader("📊 Cycle actif — Courbe en V")
+
+    ref_price = cycle.get("reference_price", 0)
+    pmp = cycle.get("pmp", 0)
+    buy_levels = cycle.get("buy_levels", [-0.05, -0.10, -0.15, -0.20, -0.25])
+    buy_pcts = cycle.get("buy_pcts", [0.25, 0.20, 0.15, 0.10, 0.00])
+    sell_levels = cycle.get("sell_levels", [0.008, 0.015, 0.022, 0.030, 0.040])
+    buys = cycle.get("buys", [])
+    sells = cycle.get("sells", [])
+    current_price = cycle.get("current_price", 0)
+    stop_loss_pct = cycle.get("stop_loss_pct", 0.15)
+
+    if ref_price <= 0:
+        return
+
+    # ── Construire les points de la courbe V ──
+    fig = go.Figure()
+
+    # ━━ Branche gauche : paliers d'achat (descente) ━━
+    buy_x = []
+    buy_y = []
+    buy_texts = []
+    bought_levels = {b["level"] for b in buys}
+
+    for i, drop in enumerate(buy_levels):
+        price_at_level = ref_price * (1 + drop)
+        pct_label = f"{buy_pcts[i] * 100:.0f}%" if i < len(buy_pcts) else "?"
+        buy_x.append(f"L{i + 1} ({drop * 100:+.0f}%)")
+        buy_y.append(price_at_level)
+        buy_texts.append(f"Buy L{i + 1}\n${price_at_level:,.0f}\n{pct_label} du capital")
+
+    # Ligne des niveaux d'achat (gris pointillé)
+    fig.add_trace(go.Scatter(
+        x=buy_x, y=buy_y,
+        mode="lines+markers",
+        line=dict(color="rgba(150,150,150,0.4)", width=2, dash="dot"),
+        marker=dict(size=12, color="rgba(150,150,150,0.3)", symbol="circle"),
+        text=buy_texts,
+        hoverinfo="text",
+        name="Paliers d'achat (cibles)",
+        showlegend=True,
+    ))
+
+    # Points d'achat exécutés (rouges/oranges)
+    for b in buys:
+        lvl = b.get("level", 0)
+        x_label = f"L{lvl + 1} ({buy_levels[lvl] * 100:+.0f}%)" if lvl < len(buy_levels) else f"L{lvl + 1}"
+        fig.add_trace(go.Scatter(
+            x=[x_label], y=[b["price"]],
+            mode="markers+text",
+            marker=dict(size=18, color="#ff1744", symbol="circle",
+                        line=dict(color="white", width=2)),
+            text=[f"${b['price']:,.0f}"],
+            textposition="bottom center",
+            textfont=dict(size=11, color="#ff1744"),
+            hovertext=f"🔴 ACHAT L{lvl + 1}<br>${b['price']:,.0f}<br>"
+                       f"Size: {b.get('size', 0):.6f} BTC<br>"
+                       f"Coût: ${b.get('cost', 0):,.2f}",
+            hoverinfo="text",
+            name=f"🔴 Achat L{lvl + 1}",
+            showlegend=True,
+        ))
+
+    # ━━ Point central : PMP ━━
+    if pmp > 0:
+        fig.add_trace(go.Scatter(
+            x=["PMP"], y=[pmp],
+            mode="markers+text",
+            marker=dict(size=22, color="#ff6d00", symbol="diamond",
+                        line=dict(color="white", width=2)),
+            text=[f"PMP\n${pmp:,.0f}"],
+            textposition="top center",
+            textfont=dict(size=12, color="#ff6d00", family="Arial Black"),
+            hovertext=f"💎 PMP (Prix Moyen Pondéré)<br>${pmp:,.2f}<br>"
+                       f"Total investi: ${cycle.get('total_cost', 0):,.2f}<br>"
+                       f"BTC restant: {cycle.get('size_remaining', 0):.6f}",
+            hoverinfo="text",
+            name="💎 PMP",
+            showlegend=True,
+        ))
+
+    # ━━ Branche droite : paliers de vente (remontée) ━━
+    sell_x = []
+    sell_y = []
+    sell_texts = []
+    sold_levels = set(cycle.get("sell_levels_hit", []))
+
+    if pmp > 0:
+        for i, gain in enumerate(sell_levels):
+            price_at_level = pmp * (1 + gain)
+            sell_x.append(f"TP{i + 1} (+{gain * 100:.1f}%)")
+            sell_y.append(price_at_level)
+            sell_texts.append(f"Sell TP{i + 1}\n${price_at_level:,.0f}\n+{gain * 100:.1f}%")
+
+        # Ligne des niveaux de vente (gris pointillé)
+        fig.add_trace(go.Scatter(
+            x=sell_x, y=sell_y,
+            mode="lines+markers",
+            line=dict(color="rgba(150,150,150,0.4)", width=2, dash="dot"),
+            marker=dict(size=12, color="rgba(150,150,150,0.3)", symbol="circle"),
+            text=sell_texts,
+            hoverinfo="text",
+            name="Paliers de vente (cibles)",
+            showlegend=True,
+        ))
+
+    # Points de vente exécutés (verts)
+    for s in sells:
+        lvl = s.get("level", 0)
+        x_label = f"TP{lvl + 1} (+{sell_levels[lvl] * 100:.1f}%)" if lvl < len(sell_levels) else f"TP{lvl + 1}"
+        fig.add_trace(go.Scatter(
+            x=[x_label], y=[s["price"]],
+            mode="markers+text",
+            marker=dict(size=18, color="#00e676", symbol="circle",
+                        line=dict(color="white", width=2)),
+            text=[f"${s['price']:,.0f}"],
+            textposition="top center",
+            textfont=dict(size=11, color="#00e676"),
+            hovertext=f"🟢 VENTE TP{lvl + 1}<br>${s['price']:,.0f}<br>"
+                       f"Size: {s.get('size', 0):.6f} BTC<br>"
+                       f"Revenus: ${s.get('proceeds', 0):,.2f}",
+            hoverinfo="text",
+            name=f"🟢 Vente TP{lvl + 1}",
+            showlegend=True,
+        ))
+
+    # ━━ Prix actuel (ligne horizontale) ━━
+    if current_price > 0:
+        all_x = buy_x + (["PMP"] if pmp > 0 else []) + sell_x
+        fig.add_hline(
+            y=current_price,
+            line_dash="dash", line_color="#2196f3", line_width=1.5,
+            annotation_text=f"Prix actuel: ${current_price:,.0f}",
+            annotation_position="top right",
+            annotation_font_color="#2196f3",
+        )
+
+    # ━━ Stop-loss (ligne rouge) ━━
+    if pmp > 0:
+        sl_price = pmp * (1 - stop_loss_pct)
+        fig.add_hline(
+            y=sl_price,
+            line_dash="dot", line_color="#ff1744", line_width=1,
+            annotation_text=f"SL: ${sl_price:,.0f} (-{stop_loss_pct * 100:.0f}%)",
+            annotation_position="bottom right",
+            annotation_font_color="#ff1744",
+        )
+
+    # ━━ Breakeven (ligne orange) ━━
+    if cycle.get("breakeven_active") and pmp > 0:
+        fig.add_hline(
+            y=pmp,
+            line_dash="dash", line_color="#ff6d00", line_width=1,
+            annotation_text="🔒 Breakeven actif",
+            annotation_position="top left",
+            annotation_font_color="#ff6d00",
+        )
+
+    # ━━ Trailing high (ligne haute) ━━
+    trailing_high = cycle.get("trailing_high", 0)
+    if trailing_high > 0:
+        fig.add_hline(
+            y=trailing_high,
+            line_dash="dot", line_color="rgba(255,255,255,0.3)", line_width=1,
+            annotation_text=f"Trail High: ${trailing_high:,.0f}",
+            annotation_position="top right",
+            annotation_font_color="rgba(255,255,255,0.5)",
+        )
+
+    # ━━ Layout ━━
+    fig.update_layout(
+        title=dict(
+            text=f"♾️ Cycle #{cycle.get('cycle_count', 0)} — {cycle.get('phase', '?')}",
+            font=dict(size=18),
+        ),
+        xaxis=dict(
+            title="Paliers",
+            showgrid=False,
+            categoryorder="array",
+            categoryarray=buy_x + (["PMP"] if pmp > 0 else []) + sell_x,
+        ),
+        yaxis=dict(
+            title="Prix BTC ($)",
+            showgrid=True,
+            gridcolor="rgba(255,255,255,0.1)",
+            tickformat="$,.0f",
+        ),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        height=500,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom", y=1.02,
+            xanchor="right", x=1,
+            font=dict(size=10),
+        ),
+        margin=dict(l=60, r=20, t=80, b=60),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # ── Métriques du cycle ──
+    if pmp > 0:
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Buys", f"{len(buys)}/5")
+        c2.metric("Sells", f"{len(sells)}/5")
+        c3.metric("PMP", f"${pmp:,.0f}")
+        invested = cycle.get("total_cost", 0)
+        c4.metric("Investi", f"${invested:,.2f}")
+        if current_price > 0 and invested > 0:
+            latent = (current_price - pmp) / pmp * 100
+            c5.metric("P&L latent", f"{latent:+.1f}%")
+        else:
+            c5.metric("P&L latent", "—")
+
+
+def _render_vcurve_theoretical(cycle: dict):
+    """Affiche les niveaux théoriques quand le cycle est en attente."""
+    trailing_high = cycle.get("trailing_high", 0)
+    entry_drop = cycle.get("entry_drop_pct", 0.05)
+    buy_levels = cycle.get("buy_levels", [-0.05, -0.10, -0.15, -0.20, -0.25])
+    sell_levels = cycle.get("sell_levels", [0.008, 0.015, 0.022, 0.030, 0.040])
+    current_price = cycle.get("current_price", 0)
+    target = cycle.get("target_entry", trailing_high * (1 - entry_drop))
+
+    st.subheader("📐 Niveaux théoriques (prochain cycle)")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Trail High", f"${trailing_high:,.0f}")
+    col2.metric("🎯 Cible entrée", f"${target:,.0f}", f"-{entry_drop * 100:.0f}%")
+    if current_price > 0:
+        gap = (current_price - target) / current_price * 100
+        col3.metric("Prix actuel", f"${current_price:,.0f}", f"{gap:+.1f}% de la cible")
+    else:
+        col3.metric("Prix actuel", "—")
+
+    # Table des niveaux
+    rows = []
+    for i, drop in enumerate(buy_levels):
+        price = trailing_high * (1 + drop)
+        rows.append({
+            "Palier": f"L{i + 1}",
+            "Drop": f"{drop * 100:+.0f}%",
+            "Prix": f"${price:,.0f}",
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  TAB: Revolut Infinity
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1263,6 +1542,11 @@ def render_revolut_infinity():
     st.caption("DCA inversé sur BTC — H4, maker-only, 65% du capital Revolut X")
 
     _render_kpis(d["stats"], len(d["open"]), cfg["max_pos"])
+    st.divider()
+
+    # ── V-Curve du cycle actif ──
+    cycle = _fetch_infinity_cycle()
+    _render_infinity_vcurve(cycle)
     st.divider()
 
     # ── Cycle actif (positions ouvertes) ──

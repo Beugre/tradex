@@ -31,6 +31,7 @@ import sys
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -72,6 +73,7 @@ from src.firebase.trade_logger import (
     log_daily_snapshot as fb_log_daily_snapshot,
     cleanup_old_events as fb_cleanup_events,
 )
+from src.firebase.client import add_document as fb_add_document
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 
@@ -1404,7 +1406,7 @@ class InfinityBot:
             except Exception:
                 pass
 
-    def _save_state(self) -> None:
+    def _save_state(self, sync_firebase: bool = True) -> None:
         self._store.save(
             cycle=self._cycle,
             candle_highs=self._candle_highs,
@@ -1412,6 +1414,60 @@ class InfinityBot:
             cycle_count=self._cycle_count,
             consecutive_stops=self._consecutive_stops,
         )
+        if sync_firebase:
+            self._sync_cycle_firebase()
+
+    def _sync_cycle_firebase(self) -> None:
+        """Sync le cycle courant dans Firebase (infinity_cycles/current).
+
+        Permet au dashboard de visualiser le cycle en temps réel
+        et sert de backup cloud en cas de perte du disque VPS.
+        """
+        try:
+            cycle = self._cycle
+            trailing_high = self._get_trailing_high()
+            current_price = 0.0
+            try:
+                ticker = self._data.get_ticker(INF_SYMBOL)
+                if ticker:
+                    current_price = ticker.last_price
+            except Exception:
+                pass
+
+            doc = {
+                # Cycle state
+                "phase": cycle.phase,
+                "reference_price": cycle.reference_price,
+                "pmp": cycle.pmp,
+                "total_size": cycle.total_size,
+                "total_cost": cycle.total_cost,
+                "size_remaining": cycle.size_remaining,
+                "total_proceeds": cycle.total_proceeds,
+                "breakeven_active": cycle.breakeven_active,
+                "cycle_start_ts": cycle.cycle_start_ts,
+                # Config (pour le dashboard)
+                "buy_levels": list(self._cfg.buy_levels),
+                "buy_pcts": list(self._cfg.buy_pcts),
+                "sell_levels": list(self._cfg.sell_levels),
+                "stop_loss_pct": self._cfg.stop_loss_pct,
+                "entry_drop_pct": self._cfg.entry_drop_pct,
+                # Buys / Sells détaillés
+                "buys": cycle.buys,
+                "sells": cycle.sells,
+                "sell_levels_hit": cycle.sell_levels_hit,
+                # Contexte marché
+                "trailing_high": trailing_high,
+                "current_price": current_price,
+                "target_entry": trailing_high * (1 - self._cfg.entry_drop_pct),
+                # Meta
+                "symbol": INF_SYMBOL,
+                "cycle_count": self._cycle_count,
+                "consecutive_stops": self._consecutive_stops,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            fb_add_document("infinity_cycles", doc, doc_id="current")
+        except Exception as e:
+            logger.debug("Firebase cycle sync failed: %s", e)
 
     @staticmethod
     def _format_order_price(price: float) -> str:
