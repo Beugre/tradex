@@ -1364,6 +1364,12 @@ class InfinityBot:
         except Exception:
             pass
 
+        # Sync cycle state → Firebase (pour la V-curve dashboard)
+        try:
+            self._sync_cycle_firebase(current_price=current_price)
+        except Exception:
+            logger.debug("Firebase cycle sync failed", exc_info=True)
+
     # ── Helpers ────────────────────────────────────────────────────────────────
 
     def _maybe_daily_tasks(self) -> None:
@@ -1417,7 +1423,7 @@ class InfinityBot:
         if sync_firebase:
             self._sync_cycle_firebase()
 
-    def _sync_cycle_firebase(self) -> None:
+    def _sync_cycle_firebase(self, current_price: float | None = None) -> None:
         """Sync le cycle courant dans Firebase (infinity_cycles/current).
 
         Permet au dashboard de visualiser le cycle en temps réel
@@ -1426,13 +1432,14 @@ class InfinityBot:
         try:
             cycle = self._cycle
             trailing_high = self._get_trailing_high()
-            current_price = 0.0
-            try:
-                ticker = self._data.get_ticker(INF_SYMBOL)
-                if ticker:
-                    current_price = ticker.last_price
-            except Exception:
-                pass
+            if current_price is None:
+                current_price = 0.0
+                try:
+                    ticker = self._data.get_ticker(INF_SYMBOL)
+                    if ticker:
+                        current_price = ticker.last_price
+                except Exception:
+                    pass
 
             doc = {
                 # Cycle state
