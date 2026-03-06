@@ -2,7 +2,7 @@
 
 ## Table des matières
 
-1. [L'idée générale](#lidée-générale)
+1. [L&#39;idée générale](#lidée-générale)
 2. [Les quatre bots](#les-quatre-bots)
 3. [Bot 1 — Trail Range (Binance)](#bot-1--trail-range-binance)
    - [Détecter le range](#détecter-le-range)
@@ -11,22 +11,22 @@
    - [Trail@TP : le trailing OCO](#trailtp--le-trailing-oco)
    - [Sortie forcée si tendance confirmée](#sortie-forcée-si-tendance-confirmée)
 4. [Bot 2 — CrashBot (Binance)](#bot-2--crashbot-binance)
-   - [L'idée](#lidée-crashbot)
+   - [L&#39;idée](#lidée-crashbot)
    - [Détecter un crash](#détecter-un-crash)
    - [Entrée et Stop Loss](#entrée-et-stop-loss-crashbot)
    - [Step Trailing : le TP qui monte par paliers](#step-trailing--le-tp-qui-monte-par-paliers)
    - [Kill-Switch mensuel](#kill-switch-mensuel)
 5. [Bot 3 — Momentum Continuation (Revolut X)](#bot-3--momentum-continuation-revolut-x)
-   - [L'idée](#lidée-momentum)
+   - [L&#39;idée](#lidée-momentum)
    - [Phase 1 : Filtre macro M15](#phase-1--filtre-macro-m15)
-   - [Phase 2 : Détecter l'impulsion M5](#phase-2--détecter-limpulsion-m5)
+   - [Phase 2 : Détecter l&#39;impulsion M5](#phase-2--détecter-limpulsion-m5)
    - [Phase 3 : Attendre le pullback](#phase-3--attendre-le-pullback)
    - [Phase 4 : Entrée sur reprise](#phase-4--entrée-sur-reprise)
    - [Exécution maker-only](#exécution-maker-only)
 6. [Bot 4 — Infinity Bot (Revolut X)](#bot-4--infinity-bot-revolut-x)
-   - [L'idée](#lidée-infinity)
+   - [L&#39;idée](#lidée-infinity)
    - [Trailing High](#trailing-high--le-prix-de-référence-dynamique)
-   - [Paliers d'achat](#paliers-dachat-dca-inversé)
+   - [Paliers d&#39;achat](#paliers-dachat-dca-inversé)
    - [Paliers de vente](#paliers-de-vente-distribution-progressive)
    - [Sécurités](#sécurités)
 7. [Allocation dynamique du capital](#allocation-dynamique-du-capital)
@@ -41,7 +41,7 @@
 14. [Exemple concret — Trade INFINITY](#exemple-concret--trade-infinity)
 15. [Ce que les bots ne font PAS](#ce-que-les-bots-ne-font-pas)
 16. [Les paramètres importants](#les-paramètres-importants-fichier-env)
-17. [Infrastructure & Déploiement](#infrastructure--déploiement)
+17. [Infrastructure &amp; Déploiement](#infrastructure--déploiement)
 
 ---
 
@@ -54,7 +54,7 @@ Les bots fonctionnent sur **2 exchanges** avec **4 stratégies complémentaires*
 > **🔄 Trail Range** (Binance) : "Quand le prix oscille dans un couloir, je joue les rebonds entre le plafond et le plancher."
 > **💥 CrashBot** (Binance) : "Quand une crypto s'effondre brutalement, j'achète le dip et je laisse remonter."
 > **🚀 Momentum** (Revolut X) : "Quand une bougie M5 explose avec du volume, j'attends le pullback puis j'entre dans la direction."
-> **♾️ Infinity** (Revolut X) : "Quand BTC baisse de 5%+, j'accumule par paliers DCA puis je revends progressivement."
+> **♾️ Infinity** (Revolut X) : "Quand une crypto baisse de X% par rapport à son plus haut récent, j'accumule par paliers DCA puis je revends progressivement."
 
 Aucun bot ne prédit l'avenir. Chacun **constate** un pattern spécifique et agit en conséquence.
 
@@ -62,12 +62,12 @@ Aucun bot ne prédit l'avenir. Chacun **constate** un pattern spécifique et agi
 
 ## Les quatre bots
 
-| Bot | Exchange | Paires | Logique | Side | Capital |
-|-----|----------|--------|---------|------|--------|
-| 🔄 **Trail Range** | Binance (USDC) | ~284 (auto-discovery) | Rebonds dans le range + trailing OCO | Long & Short | 10–40% Binance (dynamique) |
-| 💥 **CrashBot** | Binance (USDC) | ~284 (auto-discovery) | Dip-buy + step-trail | **Long Only** | 60–90% Binance (dynamique) |
-| 🚀 **Momentum** | Revolut X (USD) | 7 (ETH, SOL, BNB, XRP, LINK, ADA, LTC) | Impulsion M5 → pullback → entrée | **Long Only** | 35% Revolut X |
-| ♾️ **Infinity** | Revolut X (USD) | BTC-USD uniquement | DCA inversé + vente paliers | **Long Only** | 65% Revolut X |
+| Bot                     | Exchange        | Paires                                 | Logique                              | Side                | Capital                     |
+| ----------------------- | --------------- | -------------------------------------- | ------------------------------------ | ------------------- | --------------------------- |
+| 🔄**Trail Range** | Binance (USDC)  | ~284 (auto-discovery)                  | Rebonds dans le range + trailing OCO | Long Only           | 10–40% Binance (dynamique) |
+| 💥**CrashBot**    | Binance (USDC)  | ~284 (auto-discovery)                  | Dip-buy + step-trail                 | **Long Only** | 60–90% Binance (dynamique) |
+| 🚀**Momentum**    | Revolut X (USD) | 7 (ETH, SOL, BNB, XRP, LINK, ADA, LTC) | Impulsion M5 → pullback → entrée  | **Long Only** | 35% Revolut X               |
+| ♾️**Infinity**  | Revolut X (USD) | BTC, AAVE, XLM (configs optimisées) | DCA inversé + vente paliers         | **Long Only** | 65% Revolut X (~22% par paire) |
 
 ---
 
@@ -105,9 +105,9 @@ Le bot utilise la **Dow Theory** pour classifier la tendance :
 
 Le bot attend que le prix touche une borne du range :
 
-| Signal | Condition | Logique |
-|--------|-----------|---------|
-| **BUY** | Prix ≤ Range Low × (1 + 0.2%) | "Le prix touche le plancher, il va remonter" |
+| Signal         | Condition                        | Logique                                        |
+| -------------- | -------------------------------- | ---------------------------------------------- |
+| **BUY**  | Prix ≤ Range Low × (1 + 0.2%)  | "Le prix touche le plancher, il va remonter"   |
 | **SELL** | Prix ≥ Range High × (1 - 0.2%) | "Le prix touche le plafond, il va redescendre" |
 
 C'est de la **mean-reversion** : on parie que le prix revient au centre du range.
@@ -118,9 +118,9 @@ C'est de la **mean-reversion** : on parie que le prix revient au centre du range
 
 Binance supporte les **ordres OCO** (One-Cancels-Other) : un Take Profit ET un Stop Loss sont posés simultanément. Quand l'un est touché, l'autre est automatiquement annulé.
 
-| | Valeur | Logique |
-|---|--------|---------|
-| **TP** | Milieu du range | "Le prix revient au centre" |
+|              | Valeur                                | Logique                         |
+| ------------ | ------------------------------------- | ------------------------------- |
+| **TP** | Milieu du range                       | "Le prix revient au centre"     |
 | **SL** | Breakout au-delà de la borne + marge | "Le range est cassé, on coupe" |
 
 ### Trail@TP : le trailing OCO
@@ -181,18 +181,18 @@ Prix maintenant : 78$
 Drop = -22% → ≥ 20% de seuil → 💥 SIGNAL CRASH !
 ```
 
-| Paramètre | Valeur | Description |
-|-----------|--------|-------------|
-| `drop_threshold` | 20% | Baisse minimum pour déclencher |
-| `lookback_bars` | 12 | 12 × 4h = 48 heures de recul |
+| Paramètre         | Valeur | Description                     |
+| ------------------ | ------ | ------------------------------- |
+| `drop_threshold` | 20%    | Baisse minimum pour déclencher |
+| `lookback_bars`  | 12     | 12 × 4h = 48 heures de recul   |
 
 ### Entrée et Stop Loss (CrashBot)
 
-| | Formule | Logique |
-|---|---------|---------|
-| **Entrée** | Market order au prix actuel | On achète immédiatement le dip |
-| **TP initial** | Entrée × (1 + 8%) | Objectif : +8% de rebond |
-| **SL** | Entrée - 1.5 × ATR | Protection basée sur la volatilité |
+|                      | Formule                     | Logique                              |
+| -------------------- | --------------------------- | ------------------------------------ |
+| **Entrée**    | Market order au prix actuel | On achète immédiatement le dip     |
+| **TP initial** | Entrée × (1 + 8%)         | Objectif : +8% de rebond             |
+| **SL**         | Entrée - 1.5 × ATR        | Protection basée sur la volatilité |
 
 Si l'ATR n'est pas disponible, le SL est fixé à -2% sous l'entrée.
 
@@ -246,6 +246,7 @@ C'est un signal en **4 phases** :
 📄 **Fichier : `momentum_engine.py`**
 
 Le bot vérifie d'abord que le marché est **actif** sur M15 :
+
 - ATR(14) > moyenne mobile de l'ATR → la volatilité est au-dessus de la normale
 - Volume > moyenne mobile du volume → le marché est liquide
 
@@ -255,12 +256,12 @@ Si le marché est "mort" (faible volatilité, faible volume), le bot ne cherche 
 
 Le bot cherche une bougie M5 exceptionnelle qui réunit **4 critères** :
 
-| # | Critère | Condition | Pourquoi |
-|---|---------|-----------|----------|
-| 1 | **Body important** | Body ≥ 0.4% du prix | Bougie avec du contenu, pas juste une mèche |
-| 2 | **Volume explosif** | Volume ≥ 2× MA20 | Beaucoup plus d'échanges que la normale |
-| 3 | **Close dans le top** | Close dans le top 20% de la bougie | Le prix a clôturé dans la direction du move |
-| 4 | **Tendance directionnelle** | ADX(14) > 15 | Le mouvement a de la force, pas du bruit |
+| # | Critère                          | Condition                          | Pourquoi                                      |
+| - | --------------------------------- | ---------------------------------- | --------------------------------------------- |
+| 1 | **Body important**          | Body ≥ 0.4% du prix               | Bougie avec du contenu, pas juste une mèche  |
+| 2 | **Volume explosif**         | Volume ≥ 2× MA20                 | Beaucoup plus d'échanges que la normale      |
+| 3 | **Close dans le top**       | Close dans le top 20% de la bougie | Le prix a clôturé dans la direction du move |
+| 4 | **Tendance directionnelle** | ADX(14) > 15                       | Le mouvement a de la force, pas du bruit      |
 
 ```
 Exemple ETH-USD, bougie M5 :
@@ -275,11 +276,11 @@ Exemple ETH-USD, bougie M5 :
 
 Après l'impulsion, le bot attend un **retracement sain** :
 
-| Critère | Condition | Pourquoi |
-|---------|-----------|----------|
-| Retracement | 25–55% du move d'impulsion | Ni trop peu (pas de pullback), ni trop (reversal) |
-| RSI(14) | Entre 40 et 65 | Pas suracheté, pas survendu |
-| Prix touche EMA20 | ± tolérance | Le prix revient sur la moyenne rapide |
+| Critère          | Condition                   | Pourquoi                                          |
+| ----------------- | --------------------------- | ------------------------------------------------- |
+| Retracement       | 25–55% du move d'impulsion | Ni trop peu (pas de pullback), ni trop (reversal) |
+| RSI(14)           | Entre 40 et 65              | Pas suracheté, pas survendu                      |
+| Prix touche EMA20 | ± tolérance               | Le prix revient sur la moyenne rapide             |
 
 Le bot attend **max 35 bougies M5** (~3h) après l'impulsion. Si aucun pullback valide → signal annulé.
 
@@ -295,14 +296,15 @@ Impulsion haussière de 2 100$ à 2 112$ (move = 12$)
 ### Phase 4 : Entrée sur reprise
 
 Le bot attend une **bougie de reprise** dans la direction de l'impulsion :
+
 - Volume > MA10
 - La bougie confirme la direction (close > open pour un long)
 
-| | Valeur | Logique |
-|---|--------|---------|
-| **Entrée** | Ordre limit maker | 0% de frais sur Revolut X |
-| **SL** | Sous le creux du pullback + marge | Si le pullback n'a pas tenu |
-| **Risque** | 4% du capital | MC_RISK_PERCENT |
+|                   | Valeur                            | Logique                     |
+| ----------------- | --------------------------------- | --------------------------- |
+| **Entrée** | Ordre limit maker                 | 0% de frais sur Revolut X   |
+| **SL**      | Sous le creux du pullback + marge | Si le pullback n'a pas tenu |
+| **Risque**  | 4% du capital                     | MC_RISK_PERCENT             |
 
 ### Exécution maker-only
 
@@ -316,76 +318,109 @@ Si l'ordre n'est pas rempli dans les 60 secondes (`MC_MAKER_WAIT_SECONDS`), le b
 
 ## Bot 4 — Infinity Bot (Revolut X)
 
-C'est le bot **DCA inversé** sur BTC uniquement. Il achète les baisses par paliers et revend progressivement quand le prix remonte.
+C'est le bot **DCA inversé** multi-paires. Il achète les baisses par paliers et revend progressivement quand le prix remonte.
 
-### L'idée {#lidée-infinity}
+### L'idée
 
-> "Quand BTC baisse de 5% par rapport à son plus haut récent, j'achète. S'il continue de baisser, j'achète encore à -10%, -15%, -20%, -25%. Puis je revends par paliers quand il remonte."
+> "Quand une crypto baisse de X% par rapport à son plus haut récent, j'achète. S'il continue de baisser, j'achète encore à des paliers plus profonds. Puis je revends par paliers quand il remonte."
 
-C'est l'opposé d'un grid bot : au lieu d'acheter et vendre sur des niveaux fixes, le prix de référence suit dynamiquement le marché (trailing high sur 12 jours).
+C'est l'opposé d'un grid bot : au lieu d'acheter et vendre sur des niveaux fixes, le prix de référence suit dynamiquement le marché (trailing high).
+
+### Paires tradées et configs optimisées
+
+Chaque paire a une config **walk-forward validée** (entraînement 2020→2024, test 2024→2026) :
+
+| Paire    | Trail | Entry Drop | Buy Levels           | Sell Levels                    | SL   | Test PnL   | Test PF |
+| -------- | ----- | ---------- | -------------------- | ------------------------------ | ---- | ---------- | ------- |
+| BTC-USD  | 72 bars (12j) | -5% | -5%,-10%,-15%,-20%,-25% | +0.8%,+1.5%,+2.2%,+3%,+4%  | 15%  | (en prod)  | —      |
+| AAVE-USD | 48 bars (8j)  | -12% | -12%,-20%,-28%,-35%,-42% | +2%,+4%,+6%,+8%,+12%       | 25%  | **+47.20%** | **4.92** |
+| XLM-USD  | 48 bars (8j)  | -12% | -12%,-20%,-28%,-35%,-42% | +0.8%,+1.5%,+2.2%,+3%,+4% | 25%  | **+26.13%** | **32.66** |
+
+> **Pourquoi ces 3 paires ?** Un grid search de 336 combinaisons par paire + validation out-of-sample a identifié AAVE et XLM comme les meilleurs candidats. ETH et SOL ont été rejetés (surfit en test).
 
 ### Trailing High — le prix de référence dynamique
 
 📄 **Fichier : `infinity_engine.py`**
 
-Le bot calcule en permanence le **plus haut des 72 dernières bougies H4** (≈ 12 jours). C'est le "trailing high" :
+Le bot calcule en permanence le **plus haut des N dernières bougies H4** (configurable par paire : 72 bars pour BTC, 48 bars pour AAVE/XLM) :
 
 ```
-│    ╱★ Trailing High (plus haut sur 12 jours)
+│    ╱★ Trailing High (plus haut sur N bars H4)
 │   ╱  ╲
 │  ╱    ╲
 │ ╱      ╲──── Prix actuel
 │╱         ╲
-│            ╲── Drop ≥ 5% → Premier achat !
+│            ╲── Drop ≥ seuil → Premier achat !
 ```
 
-Quand le prix **chute de ≥ 5%** par rapport à ce trailing high → le bot déclenche le premier achat.
+Quand le prix **chute de ≥ seuil** (5% pour BTC, 12% pour AAVE/XLM) par rapport à ce trailing high → le bot déclenche le premier achat.
 
-### Paliers d'achat (DCA inversé)
+### Paliers d'achat (DCA inversé) — BTC
 
-Le bot a 5 niveaux d'achat, chacun plus profond que le précédent :
+| Palier | Drop depuis la référence | % du capital     | RSI gate                        |
+| ------ | -------------------------- | ---------------- | ------------------------------- |
+| L1     | -5%                        | 25%              | RSI < 50 → full, 30-50 → demi |
+| L2     | -10%                       | 20%              | idem                            |
+| L3     | -15%                       | 15%              | idem                            |
+| L4     | -20%                       | 10%              | idem                            |
+| L5     | -25%                       | Reste disponible | idem                            |
 
-| Palier | Drop depuis le référence | % du capital | RSI gate |
-|--------|--------------------------|-------------|----------|
-| L1 | -5% | 25% | RSI < 50 → full, 30-50 → demi |
-| L2 | -10% | 20% | idem |
-| L3 | -15% | 15% | idem |
-| L4 | -20% | 10% | idem |
-| L5 | -25% | Reste disponible | idem |
+### Paliers d'achat — AAVE & XLM
 
-**Sizing décroissant** : on investit plus au début (quand le prix est encore proche du haut) et moins quand on est profond dans le dip. Cela évite de surcharger dans les crashs imprévus.
+| Palier | Drop depuis la référence | % du capital     | RSI gate                        |
+| ------ | -------------------------- | ---------------- | ------------------------------- |
+| L1     | -12%                       | 25%              | RSI < 50 → full, 30-50 → demi |
+| L2     | -20%                       | 20%              | idem                            |
+| L3     | -28%                       | 15%              | idem                            |
+| L4     | -35%                       | 10%              | idem                            |
+| L5     | -42%                       | Reste disponible | idem                            |
+
+> Les altcoins ont des paliers plus larges car ils sont plus volatils que BTC.
 
 ### Paliers de vente (distribution progressive)
 
-Quand le prix remonte au-dessus du **PMP (Prix Moyen Pondéré)**, le bot vend 20% à chaque palier :
+Quand le prix remonte au-dessus du **PMP (Prix Moyen Pondéré)**, le bot vend 20% à chaque palier.
 
-| Palier | Distance du PMP | Action |
-|--------|-----------------|--------|
-| TP1 | +0.8% | Vend 20% + active le breakeven stop |
-| TP2 | +1.5% | Vend 20% |
-| TP3 | +2.2% | Vend 20% |
-| TP4 | +3.0% | Vend 20% |
-| TP5 | +4.0% | Vend tout le reste |
+**BTC :**
+| Palier | Distance du PMP | Action                              |
+| ------ | --------------- | ----------------------------------- |
+| TP1    | +0.8%           | Vend 20% + active le breakeven stop |
+| TP2    | +1.5%           | Vend 20%                            |
+| TP3    | +2.2%           | Vend 20%                            |
+| TP4    | +3.0%           | Vend 20%                            |
+| TP5    | +4.0%           | Vend tout le reste                  |
+
+**AAVE :**
+| Palier | Distance du PMP | Action                              |
+| ------ | --------------- | ----------------------------------- |
+| TP1    | +2.0%           | Vend 20% + active le breakeven stop |
+| TP2    | +4.0%           | Vend 20%                            |
+| TP3    | +6.0%           | Vend 20%                            |
+| TP4    | +8.0%           | Vend 20%                            |
+| TP5    | +12.0%          | Vend tout le reste                  |
+
+**XLM :** Mêmes paliers de vente que BTC.
 
 ### Sécurités
 
 - **Breakeven stop** : Après TP1, si le prix retombe au PMP → vente totale (pas de perte)
-- **Stop-loss** : Si le prix baisse de **-15%** sous le PMP → vente market (taker 0.09%)
+- **Stop-loss** : Si le prix baisse sous le PMP → vente market (BTC: -15%, AAVE/XLM: -25%)
 - **Override sell** : Si le prix monte de +20% au-dessus du PMP → vente totale immédiate
 - **Max investi** : 70% du capital alloué maximum par cycle
 - **Pas de RSI gate sur les ventes** (clé de performance — +107% vs +50% avec)
 
-### Capital et allocation {#allocation-revolut}
+### Capital et allocation
 
-Le capital Revolut X est partagé entre **Infinity** et **Momentum** :
+Le capital Revolut X est partagé entre **Infinity** (3 paires) et **Momentum** :
 
-| Bot | % du capital Revolut X |
-|-----|------------------------|
-| ♾️ Infinity | **65%** |
-| 🚀 Momentum | **35%** |
+| Bot           | % du capital Revolut X |
+| ------------- | ---------------------- |
+| ♾️ Infinity | **65%** (≈22% par paire × 3) |
+| 🚀 Momentum   | **35%**          |
 
-### Résultats backtest (6 ans, 2020-2026)
+### Résultats backtest & walk-forward (6 ans, 2020-2026)
 
+**BTC-USD (config par défaut) :**
 ```
 Rendement : +107.56%
 Sharpe    : 3.85
@@ -393,6 +428,22 @@ PF        : 3.10
 Max DD    : -15.78%
 Win Rate  : 90% (18/20 trades gagnants)
 Stops     : seulement 2 en 6 ans
+```
+
+**AAVE-USD (walk-forward test period 2024-2026) :**
+```
+Rendement : +47.20%
+PF        : 4.92
+Max DD    : -7.90%
+Stops     : 1
+```
+
+**XLM-USD (walk-forward test period 2024-2026) :**
+```
+Rendement : +26.13%
+PF        : 32.66
+Max DD    : -4.54%
+Stops     : 0
 ```
 
 ---
@@ -414,11 +465,11 @@ PF > 1 → le bot gagne plus qu'il ne perd
 PF < 1 → le bot perd plus qu'il ne gagne
 ```
 
-| PF Trail Range (90j) | Trail Range | CrashBot | Régime |
-|----------------------|-------------|----------|--------|
+| PF Trail Range (90j)    | Trail Range   | CrashBot      | Régime        |
+| ----------------------- | ------------- | ------------- | -------------- |
 | PF < 0.9 OU < 20 trades | **10%** | **90%** | 🛡️ DÉFENSIF |
-| 0.9 ≤ PF ≤ 1.1 | **20%** | **80%** | ⚖️ NEUTRE |
-| PF > 1.1 | **40%** | **60%** | 🚀 AGRESSIF |
+| 0.9 ≤ PF ≤ 1.1        | **20%** | **80%** | ⚖️ NEUTRE    |
+| PF > 1.1                | **40%** | **60%** | 🚀 AGRESSIF    |
 
 ```
 Exemple : Capital Binance = 3 226 USDC, PF Trail = 0.47
@@ -456,12 +507,12 @@ position_size = risk_amount / sl_distance # ex: 150 / 5 = 30 unités
 
 ### Risque par bot
 
-| Bot | Exchange | Risque/trade | Max positions | Max % capital/position |
-|-----|----------|-------------|---------------|------------------------|
-| 🔄 Trail Range | Binance | 5% | 3 | 30% |
-| 💥 CrashBot | Binance | 2% | 3 | 30% |
-| 🚀 Momentum | Revolut X | 4% | 3 | 90% |
-| ♾️ Infinity | Revolut X | 15% (SL) | 1 cycle | 70% (max investi) |
+| Bot            | Exchange  | Risque/trade | Max positions | Max % capital/position |
+| -------------- | --------- | ------------ | ------------- | ---------------------- |
+| 🔄 Trail Range | Binance   | 5%           | 3             | 30%                    |
+| 💥 CrashBot    | Binance   | 2%           | 3             | 30%                    |
+| 🚀 Momentum    | Revolut X | 4%           | 3             | 90%                    |
+| ♾️ Infinity  | Revolut X | 15-25% (SL)  | 3 cycles max  | 70% (max investi/paire) |
 
 ### Calcul d'equity
 
@@ -542,12 +593,13 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 ┌──────────────────────────────────────────────────────────┐
 │ TOUTES LES 30 SECONDES (tick)                            │
 │                                                          │
-│  1. Récupérer prix BTC-USD (ticker Revolut X)            │
+│  POUR CHAQUE PAIRE (BTC-USD, AAVE-USD, XLM-USD) :       │
+│  1. Récupérer prix (ticker Revolut X)                    │
 │  2. Selon la phase :                                     │
 │                                                          │
 │  WAITING (pas de position)                               │
 │    ├─ Nouvelle bougie H4 ? → Évaluer conditions d'entrée │
-│    │   ├─ Drop ≥ 5% vs trailing high ? ✅/❌             │
+│    │   ├─ Drop ≥ seuil vs trailing high ? ✅/❌          │
 │    │   ├─ RSI(14) ≤ 50 ?                ✅/❌             │
 │    │   └─ Tout OK → Premier achat (L1 : 25% du capital)  │
 │    └─ Pas de nouvelle H4 → Attendre                      │
@@ -588,36 +640,36 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 
 ## Les fichiers et qui fait quoi
 
-| Fichier | Rôle en une phrase |
-|---------|-------------------|
-| `config.py` | Charge les paramètres depuis `.env` (clés API, % de risque, etc.) |
-| `models.py` | Définit les "objets" : bougie, swing, tendance, ordre, position, range |
-| `swing_detector.py` | Trouve les sommets et les creux dans les bougies |
-| `trend_engine.py` | Classifie la tendance : BULLISH, BEARISH ou NEUTRAL |
-| `strategy_mean_rev.py` | 🔄 Stratégie Mean Reversion : signaux BUY/SELL dans le range |
-| `strategy_trend.py` | Stratégie Trend Following : signaux BUY/SELL en tendance |
-| `crashbot_detector.py` | 💥 Détecte les crashes (drop ≥ 20%) + step trailing |
-| `momentum_engine.py` | 🚀 Détecte les impulsions M5, pullbacks et reprises |
-| `allocator.py` | Répartit le capital Binance entre Trail Range et CrashBot |
-| `risk_manager.py` | Calcul de taille de position, zero-risk, trailing, equity |
-| `position_store.py` | Sérialisation/désérialisation des positions en JSON |
-| `bot_binance.py` | 🔄 Boucle principale Trail Range (Binance, ~284 paires, OCO) |
-| `bot_binance_crashbot.py` | 💥 Boucle principale CrashBot (Binance, dip-buy, step-trail) |
-| `bot_momentum.py` | 🚀 Boucle principale Momentum (Revolut X, 7 paires, maker-only) |
-| `bot_infinity.py` | ♾️ Boucle principale Infinity (Revolut X, BTC-USD, DCA inversé) |
-| `infinity_engine.py` | ♾️ Logique DCA inversé : check_first_entry, paliers, trailing high |
-| `bot.py` | (legacy) Ancien bot Dow Theory Revolut X |
-| `binance_client.py` | Communique avec l'API Binance (OCO, market, balances) |
-| `revolut_client.py` | Communique avec l'API Revolut X (Ed25519, limit orders) |
-| `data_provider.py` | Récupère les bougies OHLCV |
-| `telegram.py` | Envoie les alertes sur ton téléphone via Telegram |
-| `trade_logger.py` | Log chaque trade, heartbeat et allocation dans Firebase |
-| `client.py` (firebase) | Connexion Firestore, CRUD générique |
+| Fichier                     | Rôle en une phrase                                                     |
+| --------------------------- | ----------------------------------------------------------------------- |
+| `config.py`               | Charge les paramètres depuis `.env` (clés API, % de risque, etc.)   |
+| `models.py`               | Définit les "objets" : bougie, swing, tendance, ordre, position, range |
+| `swing_detector.py`       | Trouve les sommets et les creux dans les bougies                        |
+| `trend_engine.py`         | Classifie la tendance : BULLISH, BEARISH ou NEUTRAL                     |
+| `strategy_mean_rev.py`    | 🔄 Stratégie Mean Reversion : signaux BUY/SELL dans le range           |
+| `strategy_trend.py`       | Stratégie Trend Following : signaux BUY/SELL en tendance               |
+| `crashbot_detector.py`    | 💥 Détecte les crashes (drop ≥ 20%) + step trailing                   |
+| `momentum_engine.py`      | 🚀 Détecte les impulsions M5, pullbacks et reprises                    |
+| `allocator.py`            | Répartit le capital Binance entre Trail Range et CrashBot              |
+| `risk_manager.py`         | Calcul de taille de position, zero-risk, trailing, equity               |
+| `position_store.py`       | Sérialisation/désérialisation des positions en JSON                  |
+| `bot_binance.py`          | 🔄 Boucle principale Trail Range (Binance, ~284 paires, OCO)            |
+| `bot_binance_crashbot.py` | 💥 Boucle principale CrashBot (Binance, dip-buy, step-trail)            |
+| `bot_momentum.py`         | 🚀 Boucle principale Momentum (Revolut X, 7 paires, maker-only)         |
+| `bot_infinity.py`         | ♾️ Boucle principale Infinity (Revolut X, BTC+AAVE+XLM, DCA inversé) |
+| `infinity_engine.py`      | ♾️ Logique DCA inversé : check_first_entry, paliers, trailing high   |
+| `bot.py`                  | (legacy) Ancien bot Dow Theory Revolut X                                |
+| `binance_client.py`       | Communique avec l'API Binance (OCO, market, balances)                   |
+| `revolut_client.py`       | Communique avec l'API Revolut X (Ed25519, limit orders)                 |
+| `data_provider.py`        | Récupère les bougies OHLCV                                            |
+| `telegram.py`             | Envoie les alertes sur ton téléphone via Telegram                     |
+| `trade_logger.py`         | Log chaque trade, heartbeat et allocation dans Firebase                 |
+| `client.py` (firebase)    | Connexion Firestore, CRUD générique                                   |
 
 ### Dashboard
 
-| Dashboard | Port | Description |
-|-----------|------|-------------|
+| Dashboard            | Port | Description                                           |
+| -------------------- | ---- | ----------------------------------------------------- |
 | 📊 Dashboard unifié | 8502 | 4 onglets : Overview, Trail Range, CrashBot, Momentum |
 
 ---
@@ -834,13 +886,13 @@ Prix crash à 58 100$ → SL touché ❌
 
 ## Ce que les bots ne font PAS
 
-| ❌ Ne fait pas | ✅ Fait à la place |
-|---------------|-------------------|
-| Prédire l'avenir | Constater des patterns (range, crash, impulsion) et réagir |
-| Miser tout le capital | Risk 2–5% par trade, allocation dynamique |
-| Shorter en spot | CrashBot et Momentum = long only. Trail Range = long & short |
-| Trader en permanence | Chaque bot attend SES conditions spécifiques |
-| Ignorer les pertes | Kill-switch mensuel, SL sur chaque trade, trailing lock |
+| ❌ Ne fait pas        | ✅ Fait à la place                                          |
+| --------------------- | ------------------------------------------------------------ |
+| Prédire l'avenir     | Constater des patterns (range, crash, impulsion) et réagir  |
+| Miser tout le capital | Risk 2–5% par trade, allocation dynamique                   |
+| Shorter en spot       | CrashBot et Momentum = long only. Trail Range = long & short |
+| Trader en permanence  | Chaque bot attend SES conditions spécifiques                |
+| Ignorer les pertes    | Kill-switch mensuel, SL sur chaque trade, trailing lock      |
 
 ---
 
@@ -848,66 +900,65 @@ Prix crash à 58 100$ → SL touché ❌
 
 ### Trail Range 🔄
 
-| Paramètre | Valeur | Ce que ça fait |
-|-----------|--------|----------------|
-| `RISK_PERCENT` | 5% | Risque par trade Range |
-| `RANGE_WIDTH_MIN` | 2% | Largeur minimum du range pour trader |
-| `RANGE_COOLDOWN_BARS` | 3 | Bougies H4 de pause après un breakout (=12h) |
-| `BINANCE_RANGE_TRAIL_SWAP_PCT` | variable | Distance au TP pour déclencher le swap OCO |
-| `BINANCE_RANGE_TRAIL_STEP_PCT` | ~1% | Extension du TP par step |
-| `BINANCE_RANGE_TRAIL_SL_LOCK_PCT` | ~2% | Protection du profit verrouillé |
+| Paramètre                          | Valeur   | Ce que ça fait                               |
+| ----------------------------------- | -------- | --------------------------------------------- |
+| `RISK_PERCENT`                    | 5%       | Risque par trade Range                        |
+| `RANGE_WIDTH_MIN`                 | 2%       | Largeur minimum du range pour trader          |
+| `RANGE_COOLDOWN_BARS`             | 3        | Bougies H4 de pause après un breakout (=12h) |
+| `BINANCE_RANGE_TRAIL_SWAP_PCT`    | variable | Distance au TP pour déclencher le swap OCO   |
+| `BINANCE_RANGE_TRAIL_STEP_PCT`    | ~1%      | Extension du TP par step                      |
+| `BINANCE_RANGE_TRAIL_SL_LOCK_PCT` | ~2%      | Protection du profit verrouillé              |
 
 ### CrashBot 💥
 
-| Paramètre | Valeur | Ce que ça fait |
-|-----------|--------|----------------|
-| `drop_threshold` | 20% | Baisse minimum pour déclencher un signal |
-| `lookback_bars` | 12 | Fenêtre = 12 × 4h = 48 heures |
-| `tp_pct` | 8% | Take profit initial |
-| `atr_sl_mult` | 1.5 | Multiplicateur ATR pour le SL |
-| `trail_step_pct` | 0.5% | Extension du TP par step |
-| `BINANCE_CRASHBOT_KILL_PCT` | -10% | Seuil du kill-switch mensuel |
+| Paramètre                    | Valeur | Ce que ça fait                           |
+| ----------------------------- | ------ | ----------------------------------------- |
+| `drop_threshold`            | 20%    | Baisse minimum pour déclencher un signal |
+| `lookback_bars`             | 12     | Fenêtre = 12 × 4h = 48 heures           |
+| `tp_pct`                    | 8%     | Take profit initial                       |
+| `atr_sl_mult`               | 1.5    | Multiplicateur ATR pour le SL             |
+| `trail_step_pct`            | 0.5%   | Extension du TP par step                  |
+| `BINANCE_CRASHBOT_KILL_PCT` | -10%   | Seuil du kill-switch mensuel              |
 
 ### Momentum 🚀
 
-| Paramètre | Valeur | Ce que ça fait |
-|-----------|--------|----------------|
-| `MC_RISK_PERCENT` | 4% | Risque par trade |
-| `MC_MAX_POSITIONS` | 3 | Nombre max de trades ouverts |
-| `MC_MAX_POSITION_PCT` | 90% | Part max du capital par position |
-| `MC_POLLING_SECONDS` | 30s | Fréquence de vérification |
-| `MC_MAKER_WAIT_SECONDS` | 60s | Temps d'attente pour un fill maker |
-| `impulse_body_min_pct` | 0.4% | Body minimum de l'impulsion |
-| `impulse_vol_mult` | 2× | Volume minimum (vs MA20) |
-| `pullback_retrace_min/max` | 25–55% | Fenêtre de retracement valide |
-| `adx_min` | 15 | ADX minimum pour confirmer la direction |
+| Paramètre                   | Valeur  | Ce que ça fait                         |
+| ---------------------------- | ------- | --------------------------------------- |
+| `MC_RISK_PERCENT`          | 4%      | Risque par trade                        |
+| `MC_MAX_POSITIONS`         | 3       | Nombre max de trades ouverts            |
+| `MC_MAX_POSITION_PCT`      | 90%     | Part max du capital par position        |
+| `MC_POLLING_SECONDS`       | 30s     | Fréquence de vérification             |
+| `MC_MAKER_WAIT_SECONDS`    | 60s     | Temps d'attente pour un fill maker      |
+| `impulse_body_min_pct`     | 0.4%    | Body minimum de l'impulsion             |
+| `impulse_vol_mult`         | 2×     | Volume minimum (vs MA20)                |
+| `pullback_retrace_min/max` | 25–55% | Fenêtre de retracement valide          |
+| `adx_min`                  | 15      | ADX minimum pour confirmer la direction |
 
 ### Infinity ♾️
 
-| Paramètre | Valeur | Ce que ça fait |
-|-----------|--------|----------------|
-| `INF_TRADING_PAIR` | BTC-USD | Paire unique tradée |
-| `INF_CAPITAL_PCT` | 65% | Part du capital Revolut X allouée |
-| `INF_ENTRY_DROP_PCT` | 5% | Drop minimum vs trailing high pour entrer |
-| `INF_TRAILING_HIGH_PERIOD` | 72 bars | Fenêtre du trailing high (72 × 4h = 12 jours) |
-| `INF_RSI_ENTRY_MAX` | 50 | RSI maximum pour valider l'entrée |
-| `INF_STOP_LOSS_PCT` | 15% | Drop sous le PMP pour déclencher le SL |
-| `INF_MAX_INVESTED_PCT` | 70% | Capital max investi par cycle |
-| `INF_BUY_LEVELS` | -5%,-10%,-15%,-20%,-25% | Paliers d'achat DCA (drop vs trailing high) |
-| `INF_BUY_PCTS` | 25%,20%,15%,10%,0% | % du capital par palier |
-| `INF_SELL_LEVELS` | +0.8%,+1.5%,+2.2%,+3.0%,+4.0% | Paliers de vente (% au-dessus du PMP) |
-| `INF_USE_BREAKEVEN` | true | Active le breakeven stop après TP1 |
-| `INF_POLLING_SECONDS` | 30s | Fréquence de polling prix |
-| `INF_MAKER_WAIT_SECONDS` | 60s | Attente max pour fill maker |
-| `INF_HEARTBEAT_SECONDS` | 600s | Fréquence heartbeat (10 min) |
+| Paramètre                   | Valeur                        | Ce que ça fait                                 |
+| ---------------------------- | ----------------------------- | ----------------------------------------------- |
+| `INF_TRADING_PAIRS`        | BTC-USD,AAVE-USD,XLM-USD     | Paires tradées (configs validées par paire)   |
+| `INF_CAPITAL_PCT`          | 65%                           | Part du capital Revolut X allouée (÷3 paires) |
+| `INF_POLLING_SECONDS`      | 30s                           | Fréquence de polling prix                      |
+| `INF_MAKER_WAIT_SECONDS`   | 60s                           | Attente max pour fill maker                     |
+| `INF_HEARTBEAT_SECONDS`    | 600s                          | Fréquence heartbeat (10 min)                   |
+
+> Les paramètres de stratégie (buy_levels, sell_levels, SL, trailing) sont codés en dur dans `PAIR_CONFIGS` (walk-forward validés).
+
+| Paire    | Entry Drop | Trail High | SL   | Buy Levels            | Sell Levels                   |
+| -------- | ---------- | ---------- | ---- | --------------------- | ----------------------------- |
+| BTC-USD  | 5%         | 72 bars    | 15%  | -5%→-25%              | +0.8%→+4.0%                   |
+| AAVE-USD | 12%        | 48 bars    | 25%  | -12%→-42%             | +2%→+12%                      |
+| XLM-USD  | 12%        | 48 bars    | 25%  | -12%→-42%             | +0.8%→+4.0%                   |
 
 ### Allocation dynamique
 
-| Paramètre | Valeur | Ce que ça fait |
-|-----------|--------|----------------|
-| `PF_LOW` | 0.9 | Seuil bas du PF (en-dessous → Défensif) |
-| `PF_HIGH` | 1.1 | Seuil haut du PF (au-dessus → Agressif) |
-| `MIN_TRADES` | 20 | Nombre minimum de trades pour évaluer le PF |
+| Paramètre     | Valeur | Ce que ça fait                              |
+| -------------- | ------ | -------------------------------------------- |
+| `PF_LOW`     | 0.9    | Seuil bas du PF (en-dessous → Défensif)    |
+| `PF_HIGH`    | 1.1    | Seuil haut du PF (au-dessus → Agressif)     |
+| `MIN_TRADES` | 20     | Nombre minimum de trades pour évaluer le PF |
 
 ---
 
@@ -915,24 +966,24 @@ Prix crash à 58 100$ → SL touché ❌
 
 ### VPS (Contabo)
 
-| | Détail |
-|---|--------|
-| **OS** | Ubuntu 22.04 LTS |
-| **IP** | 213.199.41.168 |
-| **Connexion** | `ssh BOT-VPS` |
-| **App** | `/opt/tradex` |
-| **Python** | 3.10, venv `.venv` |
-| **Gestion** | systemd services |
+|                     | Détail              |
+| ------------------- | -------------------- |
+| **OS**        | Ubuntu 22.04 LTS     |
+| **IP**        | 213.199.41.168       |
+| **Connexion** | `ssh BOT-VPS`      |
+| **App**       | `/opt/tradex`      |
+| **Python**    | 3.10, venv `.venv` |
+| **Gestion**   | systemd services     |
 
 ### Services actifs
 
-| Service | Description | Port |
-|---------|-------------|------|
-| `tradex-binance` | Bot Trail Range (284 paires USDC, OCO) | — |
-| `tradex-binance-crashbot` | Bot CrashBot (284 paires USDC, dip-buy) | — |
-| `tradex-momentum` | Bot Momentum (7 paires USD, Revolut X) | — |
-| `tradex-infinity` | Bot Infinity (BTC-USD, DCA inversé, Revolut X) | — |
-| `tradex-dashboard-unified` | Dashboard Streamlit unifié | 8502 |
+| Service                      | Description                                     | Port |
+| ---------------------------- | ----------------------------------------------- | ---- |
+| `tradex-binance`           | Bot Trail Range (284 paires USDC, OCO)          | —   |
+| `tradex-binance-crashbot`  | Bot CrashBot (284 paires USDC, dip-buy)         | —   |
+| `tradex-momentum`          | Bot Momentum (7 paires USD, Revolut X)          | —   |
+| `tradex-infinity`          | Bot Infinity (BTC+AAVE+XLM, DCA inversé, Revolut X)   | —   |
+| `tradex-dashboard-unified` | Dashboard Streamlit unifié                     | 8502 |
 
 ### Commandes utiles
 

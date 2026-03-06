@@ -242,7 +242,10 @@ BINANCE_RANGE_TRAIL_SWAP_PCT: float = float(
 MAKER_WAIT_SECONDS: int = int(os.getenv("MAKER_WAIT_SECONDS", "30"))
 
 # ── Infinity Bot (bot_infinity.py) ─────────────────────────────────────────────
-INF_TRADING_PAIR: str = os.getenv("INF_TRADING_PAIR", "BTC-USD")
+INF_TRADING_PAIR: str = os.getenv("INF_TRADING_PAIR", "BTC-USD")  # legacy, single pair
+INF_TRADING_PAIRS: list[str] = [
+    p.strip() for p in os.getenv("INF_TRADING_PAIRS", "BTC-USD,AAVE-USD,XLM-USD").split(",")
+]
 INF_POLLING_SECONDS: int = int(os.getenv("INF_POLLING_SECONDS", "30"))
 INF_HEARTBEAT_SECONDS: int = int(os.getenv("INF_HEARTBEAT_SECONDS", "600"))
 INF_MAKER_WAIT_SECONDS: int = int(os.getenv("INF_MAKER_WAIT_SECONDS", "60"))

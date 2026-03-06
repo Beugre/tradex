@@ -381,7 +381,7 @@ BOTS = {
     "binance": {"label": "Binance Range", "icon": "🟡", "exchange": "binance", "color": "#f0b90b", "max_pos": 3},
     "crashbot": {"label": "Binance CrashBot", "icon": "💥", "exchange": "binance-crashbot", "color": "#7c4dff", "max_pos": 5},
     "momentum": {"label": "Revolut Momentum", "icon": "🚀", "exchange": "revolut", "color": "#00c853", "max_pos": 3},
-    "infinity": {"label": "Revolut Infinity", "icon": "♾️", "exchange": "revolut-infinity", "color": "#ff6d00", "max_pos": 1},
+    "infinity": {"label": "Revolut Infinity", "icon": "♾️", "exchange": "revolut-infinity", "color": "#ff6d00", "max_pos": 3},
 }
 
 
@@ -403,17 +403,33 @@ def _load_all(days: int):
     return data
 
 
+INF_PAIRS = ["BTC-USD", "AAVE-USD", "XLM-USD"]
+
+
 @st.cache_data(ttl=55)
-def _fetch_infinity_cycle() -> dict | None:
-    """Lit le cycle Infinity courant depuis Firebase (infinity_cycles/current)."""
+def _fetch_infinity_cycles() -> dict[str, dict]:
+    """Lit les cycles Infinity par paire depuis Firebase (infinity_cycles/{symbol})."""
+    cycles = {}
     try:
         db = _get_db()
-        doc = db.collection("infinity_cycles").document("current").get()
-        if doc.exists:
-            return doc.to_dict()
+        for symbol in INF_PAIRS:
+            doc = db.collection("infinity_cycles").document(symbol).get()
+            if doc.exists:
+                cycles[symbol] = doc.to_dict()
     except Exception:
         pass
-    return None
+    # Fallback: try legacy "current" doc
+    if not cycles:
+        try:
+            db = _get_db()
+            doc = db.collection("infinity_cycles").document("current").get()
+            if doc.exists:
+                data = doc.to_dict()
+                sym = data.get("symbol", "BTC-USD")
+                cycles[sym] = data
+        except Exception:
+            pass
+    return cycles
 
 
 all_data = _load_all(days_filter)
@@ -1282,7 +1298,7 @@ def _render_infinity_vcurve(cycle: dict | None):
             _render_vcurve_theoretical(cycle)
         return
 
-    st.subheader("📊 Cycle actif — Courbe en V")
+    st.subheader(f"📊 Cycle actif — {cycle.get('symbol', '?')}")
 
     ref_price = cycle.get("reference_price", 0)
     pmp = cycle.get("pmp", 0)
@@ -1338,7 +1354,7 @@ def _render_infinity_vcurve(cycle: dict | None):
             textposition="bottom center",
             textfont=dict(size=11, color="#ff1744"),
             hovertext=f"🔴 ACHAT L{lvl + 1}<br>${b['price']:,.0f}<br>"
-                       f"Size: {b.get('size', 0):.6f} BTC<br>"
+                       f"Size: {b.get('size', 0):.6f} {cycle.get('symbol', '?').split('-')[0]}<br>"
                        f"Coût: ${b.get('cost', 0):,.2f}",
             hoverinfo="text",
             name=f"🔴 Achat L{lvl + 1}",
@@ -1357,7 +1373,7 @@ def _render_infinity_vcurve(cycle: dict | None):
             textfont=dict(size=12, color="#ff6d00", family="Arial Black"),
             hovertext=f"💎 PMP (Prix Moyen Pondéré)<br>${pmp:,.2f}<br>"
                        f"Total investi: ${cycle.get('total_cost', 0):,.2f}<br>"
-                       f"BTC restant: {cycle.get('size_remaining', 0):.6f}",
+                       f"{cycle.get('symbol', '?').split('-')[0]} restant: {cycle.get('size_remaining', 0):.6f}",
             hoverinfo="text",
             name="💎 PMP",
             showlegend=True,
@@ -1401,7 +1417,7 @@ def _render_infinity_vcurve(cycle: dict | None):
             textposition="top center",
             textfont=dict(size=11, color="#00e676"),
             hovertext=f"🟢 VENTE TP{lvl + 1}<br>${s['price']:,.0f}<br>"
-                       f"Size: {s.get('size', 0):.6f} BTC<br>"
+                       f"Size: {s.get('size', 0):.6f} {cycle.get('symbol', '?').split('-')[0]}<br>"
                        f"Revenus: ${s.get('proceeds', 0):,.2f}",
             hoverinfo="text",
             name=f"🟢 Vente TP{lvl + 1}",
@@ -1454,7 +1470,7 @@ def _render_infinity_vcurve(cycle: dict | None):
     # ━━ Layout ━━
     fig.update_layout(
         title=dict(
-            text=f"♾️ Cycle #{cycle.get('cycle_count', 0)} — {cycle.get('phase', '?')}",
+            text=f"♾️ {cycle.get('symbol', '?')} — Cycle #{cycle.get('cycle_count', 0)} — {cycle.get('phase', '?')}",
             font=dict(size=18),
         ),
         xaxis=dict(
@@ -1464,10 +1480,10 @@ def _render_infinity_vcurve(cycle: dict | None):
             categoryarray=buy_x + (["PMP"] if pmp > 0 else []) + sell_x,
         ),
         yaxis=dict(
-            title="Prix BTC ($)",
+            title=f"Prix {cycle.get('symbol', '').split('-')[0]} ($)",
             showgrid=True,
             gridcolor="rgba(255,255,255,0.1)",
-            tickformat="$,.0f",
+            tickformat="$,.2f" if (pmp > 0 and pmp < 10) else "$,.0f",
         ),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
@@ -1488,7 +1504,8 @@ def _render_infinity_vcurve(cycle: dict | None):
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Buys", f"{len(buys)}/5")
         c2.metric("Sells", f"{len(sells)}/5")
-        c3.metric("PMP", f"${pmp:,.0f}")
+        pmp_fmt = f"${pmp:,.4f}" if pmp < 10 else f"${pmp:,.2f}" if pmp < 1000 else f"${pmp:,.0f}"
+        c3.metric("PMP", pmp_fmt)
         invested = cycle.get("total_cost", 0)
         c4.metric("Investi", f"${invested:,.2f}")
         if current_price > 0 and invested > 0:
@@ -1539,14 +1556,20 @@ def render_revolut_infinity():
     cfg = BOTS["infinity"]
 
     st.title(f"{cfg['icon']} Revolut Infinity")
-    st.caption("DCA inversé sur BTC — H4, maker-only, 65% du capital Revolut X")
+    st.caption("DCA inversé multi-paires (BTC, AAVE, XLM) — H4, maker-only, 65% du capital Revolut X")
 
     _render_kpis(d["stats"], len(d["open"]), cfg["max_pos"])
     st.divider()
 
-    # ── V-Curve du cycle actif ──
-    cycle = _fetch_infinity_cycle()
-    _render_infinity_vcurve(cycle)
+    # ── V-Curves per pair ──
+    cycles = _fetch_infinity_cycles()
+    if cycles:
+        pair_tabs = st.tabs([f"{sym}" for sym in cycles.keys()])
+        for tab, (sym, cycle) in zip(pair_tabs, cycles.items()):
+            with tab:
+                _render_infinity_vcurve(cycle)
+    else:
+        st.info("♾️ Aucun cycle actif — En attente de données Firebase.")
     st.divider()
 
     # ── Cycle actif (positions ouvertes) ──

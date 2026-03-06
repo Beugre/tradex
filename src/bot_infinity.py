@@ -1,18 +1,18 @@
 """
-Bot Infinity — DCA inversé sur BTC, Revolut X, maker-only.
+Bot Infinity — DCA inversé multi-paires sur Revolut X, maker-only.
 
-Timeframe H4, BTC-USD uniquement.
-Polling toutes les 30s (prix), gestion sur bougie H4.
+Paires : BTC-USD, AAVE-USD, XLM-USD (configs walk-forward validées)
+Timeframe H4, polling toutes les 30s, gestion sur bougie H4.
 
-Stratégie :
-  1. Calcul trailing high (72 H4 = 12 jours)
-  2. Si prix chute ≥ 5% du trailing high → premier achat
-  3. DCA : 5 paliers (-5% à -25% du prix de référence)
-  4. Vente : 5 paliers (+0.8% à +4% du PMP)
+Stratégie par paire :
+  1. Calcul trailing high (N bougies H4, configurable)
+  2. Si prix chute ≥ drop_pct du trailing high → premier achat
+  3. DCA : 5 paliers d'achat (configurables par paire)
+  4. Vente : 5 paliers progressifs au-dessus du PMP
   5. Breakeven stop après TP1
-  6. Stop-loss : -15% du PMP
+  6. Stop-loss configurable par paire
 
-Capital : 65% du solde Revolut X (35% réservé au Momentum bot).
+Capital : 65% du solde Revolut X, réparti également entre les paires actives.
 
 Usage :
     python -m src.bot_infinity              # Production
@@ -89,42 +89,74 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
-# ── Config Infinity (depuis .env) ──────────────────────────────────────────────
+# ── Config Infinity ────────────────────────────────────────────────────────────
 
-INF_SYMBOL: str = config.INF_TRADING_PAIR
 INF_POLLING_SECONDS: int = config.INF_POLLING_SECONDS
 INF_HEARTBEAT_SECONDS: int = config.INF_HEARTBEAT_SECONDS
 INF_MAKER_WAIT_SECONDS: int = config.INF_MAKER_WAIT_SECONDS
 INF_CAPITAL_PCT: float = config.INF_CAPITAL_PCT
 
-# Parse buy/sell levels from config
-_buy_levels_raw = [float(x) for x in config.INF_BUY_LEVELS.split(",")]
-_buy_pcts_raw = [float(x) for x in config.INF_BUY_PCTS.split(",")]
-_sell_levels_raw = [float(x) for x in config.INF_SELL_LEVELS.split(",")]
+# ── Per-pair validated configs ────────────────────────────────────────────────
+# Walk-forward validated: train 2020→2024, test 2024→2026
+# BTC  : defaults (déjà live)
+# AAVE : TEST +47.20%, PF 4.92, DD 7.90%
+# XLM  : TEST +26.13%, PF 32.66, DD 4.54%
 
-INF_CONFIG = InfinityConfig(
-    trailing_high_period=config.INF_TRAILING_HIGH_PERIOD,
-    entry_drop_pct=config.INF_ENTRY_DROP_PCT,
-    buy_levels=tuple(_buy_levels_raw),
-    buy_pcts=tuple(_buy_pcts_raw),
-    sell_levels=tuple(_sell_levels_raw),
-    stop_loss_pct=config.INF_STOP_LOSS_PCT,
-    max_invested_pct=config.INF_MAX_INVESTED_PCT,
-    first_entry_rsi_max=config.INF_RSI_ENTRY_MAX,
-    use_breakeven_stop=config.INF_USE_BREAKEVEN,
-    scale_with_equity=True,
-    rsi_sell_min=0.0,  # Pas de RSI gate sur les ventes (clé de perf)
-    maker_fee=0.0,
-    taker_fee=0.0009,
-)
+PAIR_CONFIGS: dict[str, InfinityConfig] = {
+    "BTC-USD": InfinityConfig(
+        trailing_high_period=72,         # 12 jours
+        entry_drop_pct=0.05,             # -5%
+        buy_levels=(-0.05, -0.10, -0.15, -0.20, -0.25),
+        buy_pcts=(0.25, 0.20, 0.15, 0.10, 0.00),
+        sell_levels=(0.008, 0.015, 0.022, 0.030, 0.040),
+        stop_loss_pct=0.15,
+        max_invested_pct=0.70,
+        first_entry_rsi_max=50.0,
+        use_breakeven_stop=True,
+        scale_with_equity=True,
+        rsi_sell_min=0.0,
+        maker_fee=0.0,
+        taker_fee=0.0009,
+    ),
+    "AAVE-USD": InfinityConfig(
+        trailing_high_period=48,         # 8 jours
+        entry_drop_pct=0.12,             # -12%
+        buy_levels=(-0.12, -0.20, -0.28, -0.35, -0.42),
+        buy_pcts=(0.25, 0.20, 0.15, 0.10, 0.00),
+        sell_levels=(0.020, 0.040, 0.060, 0.080, 0.120),
+        stop_loss_pct=0.25,
+        max_invested_pct=0.70,
+        first_entry_rsi_max=50.0,
+        use_breakeven_stop=True,
+        scale_with_equity=True,
+        rsi_sell_min=0.0,
+        maker_fee=0.0,
+        taker_fee=0.0009,
+    ),
+    "XLM-USD": InfinityConfig(
+        trailing_high_period=48,         # 8 jours
+        entry_drop_pct=0.12,             # -12%
+        buy_levels=(-0.12, -0.20, -0.28, -0.35, -0.42),
+        buy_pcts=(0.25, 0.20, 0.15, 0.10, 0.00),
+        sell_levels=(0.008, 0.015, 0.022, 0.030, 0.040),
+        stop_loss_pct=0.25,
+        max_invested_pct=0.70,
+        first_entry_rsi_max=50.0,
+        use_breakeven_stop=True,
+        scale_with_equity=True,
+        rsi_sell_min=0.0,
+        maker_fee=0.0,
+        taker_fee=0.0009,
+    ),
+}
+
+# Trading pairs (from .env or default to all validated pairs)
+INF_TRADING_PAIRS: list[str] = [
+    p.strip()
+    for p in os.getenv("INF_TRADING_PAIRS", ",".join(PAIR_CONFIGS.keys())).split(",")
+]
 
 H4_INTERVAL = 240  # H4 en minutes
-
-# State file dédié
-INF_STATE_FILE: str = os.getenv(
-    "INF_STATE_FILE",
-    os.path.join(os.path.dirname(__file__), "..", "data", "state_infinity.json"),
-)
 
 
 def _fmt(price: float) -> str:
@@ -212,13 +244,31 @@ class InfLiveCycle:
         return c
 
 
+# ── Per-pair context ───────────────────────────────────────────────────────────
+
+
+@dataclass
+class PairContext:
+    """All state for one trading pair."""
+    symbol: str
+    config: InfinityConfig
+    cycle: InfLiveCycle
+    store: "InfinityStateStore"
+    candle_highs: list[float] = field(default_factory=list)
+    last_candle_ts: int = 0
+    cycle_count: int = 0
+    consecutive_stops: int = 0
+    last_eval: dict = field(default_factory=dict)
+    capital_pct: float = 0.0
+
+
 # ── State store ────────────────────────────────────────────────────────────────
 
 
 class InfinityStateStore:
-    """Persistance atomique du cycle + candle tracking pour le bot Infinity."""
+    """Persistance atomique du cycle + candle tracking pour une paire."""
 
-    def __init__(self, state_file: str = INF_STATE_FILE) -> None:
+    def __init__(self, state_file: str) -> None:
         self._path = Path(state_file).resolve()
 
     def save(
@@ -243,7 +293,7 @@ class InfinityStateStore:
                 json.dump(state, f, indent=2)
             tmp.replace(self._path)
         except Exception as e:
-            logger.error("❌ Save failed: %s", e)
+            logger.error("❌ Save failed (%s): %s", self._path.name, e)
             if tmp.exists():
                 try:
                     tmp.unlink()
@@ -252,13 +302,13 @@ class InfinityStateStore:
 
     def load(self) -> dict:
         if not self._path.exists():
-            logger.info("📂 Pas de state infinity — démarrage à vide")
+            logger.info("📂 Pas de state — démarrage à vide (%s)", self._path.name)
             return {}
         try:
             with open(self._path, "r") as f:
                 return json.load(f)
         except Exception as e:
-            logger.error("❌ Load state infinity échoué: %s", e)
+            logger.error("❌ Load state échoué (%s): %s", self._path.name, e)
             return {}
 
 
@@ -266,7 +316,7 @@ class InfinityStateStore:
 
 
 class InfinityBot:
-    """Bot DCA inversé sur BTC — Revolut X, maker-only, H4."""
+    """Bot DCA inversé multi-paires — Revolut X, maker-only, H4."""
 
     def __init__(self, dry_run: bool = False) -> None:
         self.dry_run = dry_run
@@ -283,23 +333,41 @@ class InfinityBot:
             chat_id=config.TELEGRAM_CHAT_ID,
         )
 
-        # Config
-        self._cfg = INF_CONFIG
+        # Build per-pair contexts
+        n_pairs = len(INF_TRADING_PAIRS)
+        per_pair_pct = INF_CAPITAL_PCT / n_pairs if n_pairs > 0 else INF_CAPITAL_PCT
 
-        # State
-        self._store = InfinityStateStore()
-        self._cycle = InfLiveCycle()
-        self._candle_highs: list[float] = []  # H4 highs pour trailing
-        self._last_candle_ts: int = 0
-        self._cycle_count: int = 0
-        self._consecutive_stops: int = 0
+        self._pairs: dict[str, PairContext] = {}
+        data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
+        for symbol in INF_TRADING_PAIRS:
+            cfg = PAIR_CONFIGS.get(symbol)
+            if not cfg:
+                logger.warning("⚠️ Pas de config validée pour %s — skip", symbol)
+                continue
+            safe_name = symbol.replace("-", "_")
+            state_file = os.path.join(data_dir, f"state_infinity_{safe_name}.json")
+            self._pairs[symbol] = PairContext(
+                symbol=symbol,
+                config=cfg,
+                cycle=InfLiveCycle(),
+                store=InfinityStateStore(state_file),
+                capital_pct=per_pair_pct,
+            )
+
+        # Migrate old single-pair state file → BTC-USD per-pair file
+        old_state = os.path.join(data_dir, "state_infinity.json")
+        new_btc = os.path.join(data_dir, "state_infinity_BTC_USD.json")
+        if os.path.exists(old_state) and not os.path.exists(new_btc) and "BTC-USD" in self._pairs:
+            try:
+                import shutil
+                shutil.copy2(old_state, new_btc)
+                logger.info("📦 State migré: state_infinity.json → state_infinity_BTC_USD.json")
+            except Exception as e:
+                logger.warning("⚠️ Migration state échouée: %s", e)
 
         # Heartbeat
         self._last_heartbeat: float = 0.0
         self._tick_count: int = 0
-
-        # Last evaluation result (for heartbeat display)
-        self._last_eval: dict = {}  # {ts, drop_ok, drop_pct, rsi_ok, rsi, vol_ok, volume, volume_ma, result, reason}
 
         # Daily cleanup / snapshot
         self._last_cleanup_date: str = ""
@@ -315,27 +383,26 @@ class InfinityBot:
 
     def run(self) -> None:
         self._running = True
-        buy_lvls = ", ".join(f"{x*100:.0f}%" for x in self._cfg.buy_levels)
-        sell_lvls = ", ".join(f"+{x*100:.1f}%" for x in self._cfg.sell_levels)
-        buy_pcts = ", ".join(f"{x*100:.0f}%" for x in self._cfg.buy_pcts)
 
         logger.info("═" * 60)
-        logger.info("♾️  InfinityBot démarré — DCA inversé BTC")
-        logger.info("   Paire      : %s", INF_SYMBOL)
-        logger.info("   Capital    : %.0f%% du solde Revolut X", INF_CAPITAL_PCT * 100)
-        logger.info("   Timeframe  : H4 | Trail high: %d bars (%d jours)",
-                     self._cfg.trailing_high_period,
-                     self._cfg.trailing_high_period * 4 // 24)
-        logger.info("   Entry drop : %.1f%% | SL: %.1f%%",
-                     self._cfg.entry_drop_pct * 100, self._cfg.stop_loss_pct * 100)
-        logger.info("   Buy levels : %s", buy_lvls)
-        logger.info("   Buy sizing : %s (equity %%)", buy_pcts)
-        logger.info("   Sell levels: %s", sell_lvls)
-        logger.info("   Breakeven  : %s (après TP%d)",
-                     "ON" if self._cfg.use_breakeven_stop else "OFF",
-                     self._cfg.breakeven_after_level + 1)
-        logger.info("   Polling    : %ds | Maker wait: %ds",
+        logger.info("♾️  InfinityBot démarré — DCA inversé multi-paires")
+        logger.info("   Paires    : %s", ", ".join(self._pairs.keys()))
+        logger.info("   Capital   : %.0f%% du solde Revolut X (%.0f%% par paire)",
+                     INF_CAPITAL_PCT * 100,
+                     INF_CAPITAL_PCT / len(self._pairs) * 100 if self._pairs else 0)
+        logger.info("   Polling   : %ds | Maker wait: %ds",
                      INF_POLLING_SECONDS, INF_MAKER_WAIT_SECONDS)
+        for symbol, ctx in self._pairs.items():
+            cfg = ctx.config
+            buy_lvls = ", ".join(f"{x*100:.0f}%" for x in cfg.buy_levels)
+            sell_lvls = ", ".join(f"+{x*100:.1f}%" for x in cfg.sell_levels)
+            logger.info("   ── %s ──", symbol)
+            logger.info("      Trail: %d bars (%dj) | Drop: %.0f%% | SL: %.0f%%",
+                         cfg.trailing_high_period,
+                         cfg.trailing_high_period * 4 // 24,
+                         cfg.entry_drop_pct * 100, cfg.stop_loss_pct * 100)
+            logger.info("      Buy : %s", buy_lvls)
+            logger.info("      Sell: %s", sell_lvls)
         if self.dry_run:
             logger.info("   ⚠️  DRY-RUN actif")
         logger.info("═" * 60)
@@ -357,239 +424,249 @@ class InfinityBot:
     # ── Init ───────────────────────────────────────────────────────────────────
 
     def _initialize(self) -> None:
-        """Charge l'état persisté + bougies initiales."""
-        # Charger l'état
-        state = self._store.load()
+        """Charge l'état persisté + bougies initiales pour chaque paire."""
+        for symbol, ctx in self._pairs.items():
+            self._initialize_pair(ctx)
+        logger.info("── Init terminée | %d paires actives ──", len(self._pairs))
+
+    def _initialize_pair(self, ctx: PairContext) -> None:
+        """Initialise une paire : charge state + bougies H4."""
+        symbol = ctx.symbol
+
+        # Charger l'état persisté
+        state = ctx.store.load()
         if state:
             cycle_data = state.get("cycle")
             if cycle_data:
-                self._cycle = InfLiveCycle.from_dict(cycle_data)
-            self._candle_highs = state.get("candle_highs", [])
-            self._last_candle_ts = state.get("last_candle_ts", 0)
-            self._cycle_count = state.get("cycle_count", 0)
-            self._consecutive_stops = state.get("consecutive_stops", 0)
+                ctx.cycle = InfLiveCycle.from_dict(cycle_data)
+            ctx.candle_highs = state.get("candle_highs", [])
+            ctx.last_candle_ts = state.get("last_candle_ts", 0)
+            ctx.cycle_count = state.get("cycle_count", 0)
+            ctx.consecutive_stops = state.get("consecutive_stops", 0)
             logger.info(
-                "📂 State chargé: phase=%s, cycle=%d, buys=%d, sells=%d, stops_consec=%d",
-                self._cycle.phase, self._cycle_count,
-                len(self._cycle.buys), len(self._cycle.sells),
-                self._consecutive_stops,
+                "[%s] 📂 State chargé: phase=%s, cycle=%d, buys=%d, sells=%d, stops_consec=%d",
+                symbol, ctx.cycle.phase, ctx.cycle_count,
+                len(ctx.cycle.buys), len(ctx.cycle.sells),
+                ctx.consecutive_stops,
             )
 
         # Charger les bougies H4 initiales
-        logger.info("── Chargement des bougies H4 initiales ──")
         try:
-            candles = self._client.get_candles(INF_SYMBOL, interval=H4_INTERVAL)
+            candles = self._client.get_candles(symbol, interval=H4_INTERVAL)
             candles.sort(key=lambda c: c.timestamp)
             if candles:
-                # Construire le tableau des highs
-                self._candle_highs = [c.high for c in candles]
-                self._last_candle_ts = candles[-1].timestamp
+                ctx.candle_highs = [c.high for c in candles]
+                ctx.last_candle_ts = candles[-1].timestamp
                 logger.info(
-                    "[%s] %d bougies H4 chargées | dernier high=%.2f",
-                    INF_SYMBOL, len(candles), candles[-1].high,
+                    "[%s] %d bougies H4 chargées | dernier high=%s",
+                    symbol, len(candles), _fmt(candles[-1].high),
                 )
             else:
-                logger.warning("[%s] Aucune bougie H4 reçue", INF_SYMBOL)
+                logger.warning("[%s] Aucune bougie H4 reçue", symbol)
         except Exception as e:
-            logger.error("[%s] ❌ Erreur chargement bougies: %s", INF_SYMBOL, e)
+            logger.error("[%s] ❌ Erreur chargement bougies: %s", symbol, e)
 
-        # Réconciliation : vérifier que le BTC est bien là si on a un cycle actif
-        if self._cycle.phase != "WAITING" and self._cycle.size_remaining > 0:
-            self._reconcile_position()
+        # Réconciliation si cycle actif
+        if ctx.cycle.phase != "WAITING" and ctx.cycle.size_remaining > 0:
+            self._reconcile_position(ctx)
 
-        logger.info("── Init terminée | phase=%s ──", self._cycle.phase)
-
-    def _reconcile_position(self) -> None:
-        """Vérifie le solde BTC contre le cycle actif."""
+    def _reconcile_position(self, ctx: PairContext) -> None:
+        """Vérifie le solde base currency contre le cycle actif."""
         try:
             balances = self._client.get_balances()
-            base_currency = INF_SYMBOL.split("-")[0]
+            base_currency = ctx.symbol.split("-")[0]
             base_bal = next((b for b in balances if b.currency == base_currency), None)
             held = (base_bal.available + base_bal.reserved) if base_bal else 0.0
 
-            if held >= self._cycle.size_remaining * 0.90:
+            if held >= ctx.cycle.size_remaining * 0.90:
                 logger.info(
                     "[%s] ✅ Position confirmée | %.8f %s (attendu %.8f)",
-                    INF_SYMBOL, held, base_currency, self._cycle.size_remaining,
+                    ctx.symbol, held, base_currency, ctx.cycle.size_remaining,
                 )
             else:
                 logger.warning(
-                    "[%s] ⚠️ BTC insuffisant: solde=%.8f, attendu=%.8f",
-                    INF_SYMBOL, held, self._cycle.size_remaining,
+                    "[%s] ⚠️ Solde insuffisant: %.8f %s, attendu: %.8f",
+                    ctx.symbol, held, base_currency, ctx.cycle.size_remaining,
                 )
         except Exception as e:
-            logger.warning("⚠️ Réconciliation impossible: %s", e)
+            logger.warning("[%s] ⚠️ Réconciliation impossible: %s", ctx.symbol, e)
 
     # ── Tick ───────────────────────────────────────────────────────────────────
 
     def _tick(self) -> None:
-        """Un cycle de polling."""
+        """Un cycle de polling — itère sur toutes les paires."""
         self._tick_count += 1
 
-        try:
-            # 1. Récupérer le prix actuel
-            ticker = self._data.get_ticker(INF_SYMBOL)
-            if not ticker:
-                return
-            price = ticker.last_price
-
-            # 2. Vérifier les nouvelles bougies H4
-            new_candle = self._check_new_candle()
-
-            # 3. Gérer le cycle actif
-            if self._cycle.phase == "WAITING":
-                if new_candle:
-                    self._try_first_entry(price)
-            elif self._cycle.phase in ("ACCUMULATING", "DISTRIBUTING"):
-                self._manage_cycle(price, new_candle)
-
-        except Exception as e:
-            logger.error("[%s] Erreur tick: %s", INF_SYMBOL, e, exc_info=True)
+        for symbol, ctx in self._pairs.items():
+            try:
+                self._tick_pair(ctx)
+            except Exception as e:
+                logger.error("[%s] Erreur tick: %s", symbol, e, exc_info=True)
 
         self._maybe_heartbeat()
         self._maybe_daily_tasks()
 
-    def _check_new_candle(self) -> bool:
+    def _tick_pair(self, ctx: PairContext) -> None:
+        """Tick pour une paire spécifique."""
+        # 1. Récupérer le prix actuel
+        ticker = self._data.get_ticker(ctx.symbol)
+        if not ticker:
+            return
+        price = ticker.last_price
+
+        # 2. Vérifier les nouvelles bougies H4
+        new_candle = self._check_new_candle(ctx)
+
+        # 3. Gérer le cycle actif
+        if ctx.cycle.phase == "WAITING":
+            if new_candle:
+                self._try_first_entry(ctx, price)
+        elif ctx.cycle.phase in ("ACCUMULATING", "DISTRIBUTING"):
+            self._manage_cycle(ctx, price, new_candle)
+
+    def _check_new_candle(self, ctx: PairContext) -> bool:
         """Vérifie s'il y a une nouvelle bougie H4. Retourne True si oui."""
         try:
-            candles = self._client.get_candles(INF_SYMBOL, interval=H4_INTERVAL)
+            candles = self._client.get_candles(ctx.symbol, interval=H4_INTERVAL)
             candles.sort(key=lambda c: c.timestamp)
         except Exception as e:
-            logger.debug("[%s] Candle fetch failed: %s", INF_SYMBOL, e)
+            logger.debug("[%s] Candle fetch failed: %s", ctx.symbol, e)
             return False
 
         if not candles:
             return False
 
         latest_ts = candles[-1].timestamp
-        if latest_ts <= self._last_candle_ts:
+        if latest_ts <= ctx.last_candle_ts:
             return False
 
         # Nouvelle bougie H4
-        self._last_candle_ts = latest_ts
-        self._candle_highs = [c.high for c in candles]
-        self._save_state()
+        ctx.last_candle_ts = latest_ts
+        ctx.candle_highs = [c.high for c in candles]
+        self._save_state(ctx)
 
         logger.debug(
-            "[%s] Nouvelle bougie H4 | close=%.2f | high=%.2f | vol=%.2f",
-            INF_SYMBOL, candles[-1].close, candles[-1].high, candles[-1].volume,
+            "[%s] Nouvelle bougie H4 | close=%s | high=%s | vol=%.2f",
+            ctx.symbol, _fmt(candles[-1].close), _fmt(candles[-1].high), candles[-1].volume,
         )
         return True
 
     # ── Trailing high ──────────────────────────────────────────────────────────
 
-    def _get_trailing_high(self) -> float:
+    def _get_trailing_high(self, ctx: PairContext) -> float:
         """Calcule le trailing high sur les N dernières bougies H4."""
-        period = self._cfg.trailing_high_period
-        if not self._candle_highs:
+        period = ctx.config.trailing_high_period
+        if not ctx.candle_highs:
             return 0.0
-        window = self._candle_highs[-period:] if len(self._candle_highs) >= period else self._candle_highs
+        window = ctx.candle_highs[-period:] if len(ctx.candle_highs) >= period else ctx.candle_highs
         return max(window)
 
     # ── RSI calculation ────────────────────────────────────────────────────────
 
-    def _get_current_rsi(self) -> float:
+    def _get_current_rsi(self, ctx: PairContext) -> float:
         """Calcule le RSI courant à partir des closes H4."""
         try:
-            candles = self._client.get_candles(INF_SYMBOL, interval=H4_INTERVAL)
+            candles = self._client.get_candles(ctx.symbol, interval=H4_INTERVAL)
             candles.sort(key=lambda c: c.timestamp)
-            if len(candles) < self._cfg.rsi_period + 1:
+            if len(candles) < ctx.config.rsi_period + 1:
                 return 50.0
             closes = [c.close for c in candles]
-            rsi_vals = rsi_series(closes, self._cfg.rsi_period)
+            rsi_vals = rsi_series(closes, ctx.config.rsi_period)
             return rsi_vals[-1]
         except Exception:
             return 50.0
 
     # ── Volume MA ──────────────────────────────────────────────────────────────
 
-    def _get_volume_data(self) -> tuple[float, float]:
+    def _get_volume_data(self, ctx: PairContext) -> tuple[float, float]:
         """Retourne (volume_courant, volume_ma20)."""
         try:
-            candles = self._client.get_candles(INF_SYMBOL, interval=H4_INTERVAL)
+            candles = self._client.get_candles(ctx.symbol, interval=H4_INTERVAL)
             candles.sort(key=lambda c: c.timestamp)
             if not candles:
                 return 0.0, 0.0
             volumes = [c.volume for c in candles]
-            ma_vals = sma_series(volumes, self._cfg.volume_ma_len)
+            ma_vals = sma_series(volumes, ctx.config.volume_ma_len)
             return volumes[-1], ma_vals[-1]
         except Exception:
             return 0.0, 0.0
 
     # ── Allocated capital ──────────────────────────────────────────────────────
 
-    def _get_allocated_balance(self) -> float:
-        """Retourne le capital alloué à l'Infinity Bot (65% du solde USD)."""
+    def _get_allocated_balance(self, ctx: PairContext) -> float:
+        """Retourne le capital alloué à cette paire (capital_pct du solde total)."""
         try:
             balances = self._client.get_balances()
-            quote = INF_SYMBOL.split("-")[1]  # USD
+            quote = ctx.symbol.split("-")[1]  # USD
             usd_bal = next((b for b in balances if b.currency == quote), None)
             available = usd_bal.available if usd_bal else 0.0
 
-            # Si on a un cycle actif, l'equity = cash dispo + valeur BTC
-            if self._cycle.phase != "WAITING" and self._cycle.size_remaining > 0:
-                ticker = self._data.get_ticker(INF_SYMBOL)
-                btc_value = self._cycle.size_remaining * ticker.last_price if ticker else 0
-                total = available + btc_value
+            # Si cycle actif, l'equity = cash dispo + valeur position
+            if ctx.cycle.phase != "WAITING" and ctx.cycle.size_remaining > 0:
+                ticker = self._data.get_ticker(ctx.symbol)
+                position_value = ctx.cycle.size_remaining * ticker.last_price if ticker else 0
+                total = available + position_value
             else:
                 total = available
 
-            return total * INF_CAPITAL_PCT
+            return total * ctx.capital_pct
         except Exception as e:
-            logger.warning("⚠️ Impossible de calculer le solde alloué: %s", e)
+            logger.warning("[%s] ⚠️ Impossible de calculer le solde alloué: %s", ctx.symbol, e)
             return 0.0
 
-    def _get_cash_available(self) -> float:
-        """Retourne le cash USD disponible × INF_CAPITAL_PCT."""
+    def _get_cash_available(self, ctx: PairContext) -> float:
+        """Retourne le cash USD disponible × capital_pct de la paire."""
         try:
             balances = self._client.get_balances()
-            quote = INF_SYMBOL.split("-")[1]
+            quote = ctx.symbol.split("-")[1]
             usd_bal = next((b for b in balances if b.currency == quote), None)
             available = usd_bal.available if usd_bal else 0.0
-            return available * INF_CAPITAL_PCT
+            return available * ctx.capital_pct
         except Exception:
             return 0.0
 
     # ── First entry ────────────────────────────────────────────────────────────
 
-    def _try_first_entry(self, price: float) -> None:
-        """Tente le premier achat d'un nouveau cycle."""
+    def _try_first_entry(self, ctx: PairContext, price: float) -> None:
+        """Tente le premier achat d'un nouveau cycle pour la paire."""
+        cfg = ctx.config
+
         # Safety: max consecutive stops
-        if self._consecutive_stops >= self._cfg.max_consecutive_stops:
+        if ctx.consecutive_stops >= cfg.max_consecutive_stops:
             logger.warning(
-                "♾️ %d stops consécutifs → pause (max=%d)",
-                self._consecutive_stops, self._cfg.max_consecutive_stops,
+                "[%s] ♾️ %d stops consécutifs → pause (max=%d)",
+                ctx.symbol, ctx.consecutive_stops, cfg.max_consecutive_stops,
             )
             return
 
-        trailing_high = self._get_trailing_high()
+        trailing_high = self._get_trailing_high(ctx)
         if trailing_high <= 0:
             return
 
-        rsi = self._get_current_rsi()
-        volume, volume_ma = self._get_volume_data()
+        rsi = self._get_current_rsi(ctx)
+        volume, volume_ma = self._get_volume_data(ctx)
 
         # Evaluate each condition individually for diagnostics
         drop = (trailing_high - price) / trailing_high if trailing_high > 0 else 0
-        drop_ok = drop >= self._cfg.entry_drop_pct
-        rsi_ok = rsi <= self._cfg.first_entry_rsi_max
+        drop_ok = drop >= cfg.entry_drop_pct
+        rsi_ok = rsi <= cfg.first_entry_rsi_max
         vol_ok = True
-        if self._cfg.require_volume_entry:
+        if cfg.require_volume_entry:
             vol_ok = volume_ma > 0 and volume > volume_ma
 
         # Build reason string
         reasons = []
         if not drop_ok:
-            reasons.append(f"drop {drop*100:.1f}% < {self._cfg.entry_drop_pct*100:.1f}%")
+            reasons.append(f"drop {drop*100:.1f}% < {cfg.entry_drop_pct*100:.1f}%")
         if not rsi_ok:
-            reasons.append(f"RSI {rsi:.1f} > {self._cfg.first_entry_rsi_max:.0f}")
+            reasons.append(f"RSI {rsi:.1f} > {cfg.first_entry_rsi_max:.0f}")
         if not vol_ok:
             reasons.append(f"vol {volume:.0f} <= MA {volume_ma:.0f}")
 
         all_ok = drop_ok and rsi_ok and vol_ok
 
         # Store evaluation for heartbeat display
-        self._last_eval = {
+        ctx.last_eval = {
             "ts": datetime.now(timezone.utc).isoformat()[:16],
             "price": price,
             "drop_pct": drop * 100,
@@ -606,15 +683,15 @@ class InfinityBot:
         # Log evaluation result on each new candle
         drop_icon = "✅" if drop_ok else "❌"
         rsi_icon = "✅" if rsi_ok else "❌"
-        vol_icon = "✅" if vol_ok else "⬜" if not self._cfg.require_volume_entry else ("✅" if vol_ok else "❌")
+        vol_icon = "✅" if vol_ok else "⬜" if not cfg.require_volume_entry else ("✅" if vol_ok else "❌")
         logger.info(
-            "♾️ 🕯️ ÉVALUATION H4 | prix=%.2f | résultat=%s\n"
+            "[%s] ♾️ 🕯️ ÉVALUATION H4 | prix=%s | résultat=%s\n"
             "   %s Drop: %.1f%% (seuil: %.1f%%)\n"
             "   %s RSI: %.1f (max: %.0f)\n"
             "   %s Volume: %.0f vs MA %.0f",
-            price, self._last_eval["result"],
-            drop_icon, drop * 100, self._cfg.entry_drop_pct * 100,
-            rsi_icon, rsi, self._cfg.first_entry_rsi_max,
+            ctx.symbol, _fmt(price), ctx.last_eval["result"],
+            drop_icon, drop * 100, cfg.entry_drop_pct * 100,
+            rsi_icon, rsi, cfg.first_entry_rsi_max,
             vol_icon, volume, volume_ma,
         )
 
@@ -623,40 +700,40 @@ class InfinityBot:
 
         drop_pct = (trailing_high - price) / trailing_high * 100
         logger.info(
-            "♾️ ENTRY SIGNAL | prix=%.2f | trail_high=%.2f | drop=%.1f%% | RSI=%.1f",
-            price, trailing_high, drop_pct, rsi,
+            "[%s] ♾️ ENTRY SIGNAL | prix=%s | trail_high=%s | drop=%.1f%% | RSI=%.1f",
+            ctx.symbol, _fmt(price), _fmt(trailing_high), drop_pct, rsi,
         )
 
         # Calculer le montant du premier achat
-        allocated = self._get_allocated_balance()
+        allocated = self._get_allocated_balance(ctx)
         if allocated <= 0:
-            logger.warning("♾️ Pas de capital alloué — skip")
+            logger.warning("[%s] ♾️ Pas de capital alloué — skip", ctx.symbol)
             return
 
         # Premier palier : buy_pcts[0] de l'equity allouée
-        target_amount = allocated * self._cfg.buy_pcts[0]
+        target_amount = allocated * cfg.buy_pcts[0]
 
         buy_amount = compute_buy_size(
             rsi=rsi,
-            rsi_full=self._cfg.rsi_full_buy,
-            rsi_half=self._cfg.rsi_half_buy,
+            rsi_full=cfg.rsi_full_buy,
+            rsi_half=cfg.rsi_half_buy,
             target_amount=target_amount,
-            cash_available=self._get_cash_available(),
-            max_invested=allocated * self._cfg.max_invested_pct,
+            cash_available=self._get_cash_available(ctx),
+            max_invested=allocated * cfg.max_invested_pct,
             already_invested=0.0,
         )
 
         if buy_amount <= 10:  # min $10
-            logger.info("♾️ Montant trop faible ($%.2f) — skip", buy_amount)
+            logger.info("[%s] ♾️ Montant trop faible ($%.2f) — skip", ctx.symbol, buy_amount)
             return
 
         # Exécuter l'achat
         size = buy_amount / price
-        success = self._execute_buy(price, size, buy_amount, level=0)
+        success = self._execute_buy(ctx, price, size, buy_amount, level=0)
 
         if success:
             # Démarrer un nouveau cycle
-            self._cycle = InfLiveCycle(
+            ctx.cycle = InfLiveCycle(
                 phase="ACCUMULATING",
                 reference_price=trailing_high,
                 buys=[{"level": 0, "price": price, "size": size, "cost": buy_amount, "ts": time.time()}],
@@ -666,18 +743,18 @@ class InfinityBot:
                 size_remaining=size,
                 cycle_start_ts=time.time(),
             )
-            self._cycle_count += 1
-            self._consecutive_stops = 0
-            self._save_state()
+            ctx.cycle_count += 1
+            ctx.consecutive_stops = 0
+            self._save_state(ctx)
 
             logger.info(
-                "♾️ CYCLE #%d démarré | ref=%.2f | buy L1 @ %.2f | size=%.8f ($%.2f)",
-                self._cycle_count, trailing_high, price, size, buy_amount,
+                "[%s] ♾️ CYCLE #%d démarré | ref=%s | buy L1 @ %s | size=%.8f ($%.2f)",
+                ctx.symbol, ctx.cycle_count, _fmt(trailing_high), _fmt(price), size, buy_amount,
             )
 
             # Telegram
             self._telegram.notify_infinity_buy(
-                symbol=INF_SYMBOL,
+                symbol=ctx.symbol,
                 level=0,
                 price=price,
                 size=size,
@@ -688,41 +765,42 @@ class InfinityBot:
             )
 
             # Firebase
-            self._log_buy_firebase(price, size, buy_amount, allocated)
+            self._log_buy_firebase(ctx, price, size, buy_amount, allocated)
 
     # ── Manage active cycle ────────────────────────────────────────────────────
 
-    def _manage_cycle(self, price: float, new_candle: bool) -> None:
+    def _manage_cycle(self, ctx: PairContext, price: float, new_candle: bool) -> None:
         """Gère un cycle actif : check SL, sells, additional buys."""
-        cycle = self._cycle
-        cfg = self._cfg
+        cycle = ctx.cycle
+        cfg = ctx.config
 
         # ── 1. Stop-loss check (toujours, pas que sur nouvelle bougie) ──
         if cycle.pmp > 0 and check_stop_loss(price, cycle.pmp, cfg.stop_loss_pct):
             logger.info(
-                "♾️ 🛑 STOP LOSS | prix=%.2f | PMP=%.2f | SL=%.2f",
-                price, cycle.pmp, cycle.pmp * (1 - cfg.stop_loss_pct),
+                "[%s] ♾️ 🛑 STOP LOSS | prix=%s | PMP=%s | SL=%s",
+                ctx.symbol, _fmt(price), _fmt(cycle.pmp),
+                _fmt(cycle.pmp * (1 - cfg.stop_loss_pct)),
             )
-            self._close_cycle(price, InfinityExitReason.STOP_LOSS)
+            self._close_cycle(ctx, price, InfinityExitReason.STOP_LOSS)
             return
 
         # ── 2. Breakeven stop check ──
         if cycle.breakeven_active and cycle.pmp > 0 and price <= cycle.pmp:
             logger.info(
-                "♾️ 🔒 BREAKEVEN STOP | prix=%.2f | PMP=%.2f",
-                price, cycle.pmp,
+                "[%s] ♾️ 🔒 BREAKEVEN STOP | prix=%s | PMP=%s",
+                ctx.symbol, _fmt(price), _fmt(cycle.pmp),
             )
-            self._close_cycle(price, InfinityExitReason.STOP_LOSS)
+            self._close_cycle(ctx, price, InfinityExitReason.STOP_LOSS)
             return
 
         # ── 3. Override sell (+20% du PMP) ──
         if check_override_sell(price, cycle.pmp, cfg.override_sell_pct):
             logger.info(
-                "♾️ 🚀 OVERRIDE SELL | prix=%.2f | PMP=%.2f | +%.1f%%",
-                price, cycle.pmp,
+                "[%s] ♾️ 🚀 OVERRIDE SELL | prix=%s | PMP=%s | +%.1f%%",
+                ctx.symbol, _fmt(price), _fmt(cycle.pmp),
                 (price - cycle.pmp) / cycle.pmp * 100,
             )
-            self._close_cycle(price, InfinityExitReason.OVERRIDE_SELL)
+            self._close_cycle(ctx, price, InfinityExitReason.OVERRIDE_SELL)
             return
 
         # ── 4. Check sell levels (paliers de vente) ──
@@ -750,7 +828,7 @@ class InfinityBot:
                         continue
 
                     proceeds = sell_size * price
-                    success = self._execute_sell(price, sell_size, proceeds, level=i)
+                    success = self._execute_sell(ctx, price, sell_size, proceeds, level=i)
 
                     if success:
                         cycle.sells.append({
@@ -764,8 +842,9 @@ class InfinityBot:
 
                         gain_pct = (price - cycle.pmp) / cycle.pmp * 100
                         logger.info(
-                            "♾️ TP%d HIT | prix=%.2f | PMP=%.2f | +%.2f%% | sold=%.8f ($%.2f) | remaining=%.8f",
-                            i + 1, price, cycle.pmp, gain_pct, sell_size, proceeds, cycle.size_remaining,
+                            "[%s] ♾️ TP%d HIT | prix=%s | PMP=%s | +%.2f%% | sold=%.8f ($%.2f) | remaining=%.8f",
+                            ctx.symbol, i + 1, _fmt(price), _fmt(cycle.pmp),
+                            gain_pct, sell_size, proceeds, cycle.size_remaining,
                         )
 
                         # Breakeven après le premier TP
@@ -773,13 +852,13 @@ class InfinityBot:
                                 and i >= cfg.breakeven_after_level
                                 and not cycle.breakeven_active):
                             cycle.breakeven_active = True
-                            logger.info("♾️ 🔒 BREAKEVEN activé après TP%d", i + 1)
+                            logger.info("[%s] ♾️ 🔒 BREAKEVEN activé après TP%d", ctx.symbol, i + 1)
 
-                        self._save_state()
+                        self._save_state(ctx)
 
                         # Telegram
                         self._telegram.notify_infinity_sell(
-                            symbol=INF_SYMBOL,
+                            symbol=ctx.symbol,
                             level=i,
                             price=price,
                             size=sell_size,
@@ -791,21 +870,21 @@ class InfinityBot:
 
                         # Cycle complet ?
                         if cycle.size_remaining <= 0:
-                            self._complete_cycle()
+                            self._complete_cycle(ctx)
                             return
 
                     break  # un seul palier par tick
 
         # ── 5. Check additional buys (DCA, seulement sur nouvelle bougie) ──
         if new_candle and cycle.phase == "ACCUMULATING":
-            self._try_additional_buy(price)
+            self._try_additional_buy(ctx, price)
 
     # ── Additional DCA buy ─────────────────────────────────────────────────────
 
-    def _try_additional_buy(self, price: float) -> None:
+    def _try_additional_buy(self, ctx: PairContext, price: float) -> None:
         """Tente un achat DCA additionnel si un palier est atteint."""
-        cycle = self._cycle
-        cfg = self._cfg
+        cycle = ctx.cycle
+        cfg = ctx.config
         filled_levels = {b["level"] for b in cycle.buys}
 
         for i, drop_pct in enumerate(cfg.buy_levels):
@@ -820,8 +899,8 @@ class InfinityBot:
                 continue
 
             # RSI + volume check
-            rsi = self._get_current_rsi()
-            volume, volume_ma = self._get_volume_data()
+            rsi = self._get_current_rsi(ctx)
+            volume, volume_ma = self._get_volume_data(ctx)
 
             if not check_buy_conditions(
                 close=price,
@@ -834,7 +913,7 @@ class InfinityBot:
                 continue
 
             # Calculer le montant
-            allocated = self._get_allocated_balance()
+            allocated = self._get_allocated_balance(ctx)
             pct = cfg.buy_pcts[i] if i < len(cfg.buy_pcts) else 0.10
             target_amount = allocated * pct if pct > 0 else (allocated - cycle.total_cost)
 
@@ -843,7 +922,7 @@ class InfinityBot:
                 rsi_full=cfg.rsi_full_buy,
                 rsi_half=cfg.rsi_half_buy,
                 target_amount=target_amount,
-                cash_available=self._get_cash_available(),
+                cash_available=self._get_cash_available(ctx),
                 max_invested=allocated * cfg.max_invested_pct,
                 already_invested=cycle.total_cost,
             )
@@ -852,7 +931,7 @@ class InfinityBot:
                 continue
 
             size = buy_amount / price
-            success = self._execute_buy(price, size, buy_amount, level=i)
+            success = self._execute_buy(ctx, price, size, buy_amount, level=i)
 
             if success:
                 cycle.buys.append({
@@ -864,16 +943,17 @@ class InfinityBot:
                 cycle.total_cost += buy_amount
                 cycle.size_remaining += size
                 cycle.recalc_pmp()
-                self._save_state()
+                self._save_state(ctx)
 
                 logger.info(
-                    "♾️ BUY L%d | prix=%.2f | size=%.8f ($%.2f) | PMP=%.2f | total_inv=$%.2f",
-                    i + 1, price, size, buy_amount, cycle.pmp, cycle.total_cost,
+                    "[%s] ♾️ BUY L%d | prix=%s | size=%.8f ($%.2f) | PMP=%s | total_inv=$%.2f",
+                    ctx.symbol, i + 1, _fmt(price), size, buy_amount,
+                    _fmt(cycle.pmp), cycle.total_cost,
                 )
 
                 # Telegram
                 self._telegram.notify_infinity_buy(
-                    symbol=INF_SYMBOL,
+                    symbol=ctx.symbol,
                     level=i,
                     price=price,
                     size=size,
@@ -884,26 +964,26 @@ class InfinityBot:
                 )
 
                 # Firebase
-                self._log_buy_firebase(price, size, buy_amount, allocated)
+                self._log_buy_firebase(ctx, price, size, buy_amount, allocated)
 
             break  # un seul achat par tick
 
     # ── Cycle completion ───────────────────────────────────────────────────────
 
-    def _complete_cycle(self) -> None:
+    def _complete_cycle(self, ctx: PairContext) -> None:
         """Cycle terminé : tous les TP atteints."""
-        cycle = self._cycle
+        cycle = ctx.cycle
         pnl_usd = cycle.total_proceeds - cycle.total_cost
         pnl_pct = pnl_usd / cycle.total_cost * 100 if cycle.total_cost > 0 else 0
 
         logger.info(
-            "♾️ ✅ CYCLE #%d COMPLET | PMP=%.2f | Inv=$%.2f → Rec=$%.2f | PnL=$%+.2f (%+.1f%%)",
-            self._cycle_count, cycle.pmp, cycle.total_cost,
+            "[%s] ♾️ ✅ CYCLE #%d COMPLET | PMP=%s | Inv=$%.2f → Rec=$%.2f | PnL=$%+.2f (%+.1f%%)",
+            ctx.symbol, ctx.cycle_count, _fmt(cycle.pmp), cycle.total_cost,
             cycle.total_proceeds, pnl_usd, pnl_pct,
         )
 
         self._telegram.notify_infinity_cycle_complete(
-            symbol=INF_SYMBOL,
+            symbol=ctx.symbol,
             pmp=cycle.pmp,
             total_cost=cycle.total_cost,
             total_proceeds=cycle.total_proceeds,
@@ -914,32 +994,31 @@ class InfinityBot:
         )
 
         # Firebase : close all trade docs
-        self._log_cycle_close_firebase(cycle.pmp, pnl_usd, "TP_COMPLETE")
+        self._log_cycle_close_firebase(ctx, cycle.pmp, pnl_usd, "TP_COMPLETE")
 
         # Reset cycle
-        self._cycle = InfLiveCycle()
-        self._save_state()
+        ctx.cycle = InfLiveCycle()
+        self._save_state(ctx)
 
-    def _close_cycle(self, price: float, reason: InfinityExitReason) -> None:
-        """Ferme le cycle entier : vend tout le BTC restant."""
-        cycle = self._cycle
+    def _close_cycle(self, ctx: PairContext, price: float, reason: InfinityExitReason) -> None:
+        """Ferme le cycle entier : vend tout le restant."""
+        cycle = ctx.cycle
         if cycle.size_remaining <= 0:
-            self._cycle = InfLiveCycle()
-            self._save_state()
+            ctx.cycle = InfLiveCycle()
+            self._save_state(ctx)
             return
 
         # Sell tout le restant
         proceeds = cycle.size_remaining * price
         is_stop = reason == InfinityExitReason.STOP_LOSS
-        fill_type = "taker" if is_stop else "maker"
 
         success = self._execute_sell(
-            price, cycle.size_remaining, proceeds,
+            ctx, price, cycle.size_remaining, proceeds,
             level=-1, use_taker=is_stop,
         )
 
         if not success:
-            logger.error("♾️ ❌ Échec clôture cycle — retry au prochain tick")
+            logger.error("[%s] ♾️ ❌ Échec clôture cycle — retry au prochain tick", ctx.symbol)
             return
 
         cycle.total_proceeds += proceeds
@@ -947,15 +1026,16 @@ class InfinityBot:
         pnl_pct = pnl_usd / cycle.total_cost * 100 if cycle.total_cost > 0 else 0
 
         logger.info(
-            "♾️ %s CYCLE #%d | %s | PMP=%.2f | PnL=$%+.2f (%+.1f%%)",
+            "[%s] ♾️ %s CYCLE #%d | %s | PMP=%s | PnL=$%+.2f (%+.1f%%)",
+            ctx.symbol,
             "🛑" if is_stop else "🚀",
-            self._cycle_count, reason.value, cycle.pmp, pnl_usd, pnl_pct,
+            ctx.cycle_count, reason.value, _fmt(cycle.pmp), pnl_usd, pnl_pct,
         )
 
         if is_stop:
-            self._consecutive_stops += 1
+            ctx.consecutive_stops += 1
             self._telegram.notify_infinity_stop(
-                symbol=INF_SYMBOL,
+                symbol=ctx.symbol,
                 price=price,
                 pmp=cycle.pmp,
                 total_cost=cycle.total_cost,
@@ -964,9 +1044,9 @@ class InfinityBot:
                 pnl_pct=pnl_pct,
             )
         else:
-            self._consecutive_stops = 0
+            ctx.consecutive_stops = 0
             self._telegram.notify_infinity_cycle_complete(
-                symbol=INF_SYMBOL,
+                symbol=ctx.symbol,
                 pmp=cycle.pmp,
                 total_cost=cycle.total_cost,
                 total_proceeds=cycle.total_proceeds,
@@ -977,20 +1057,20 @@ class InfinityBot:
             )
 
         # Firebase
-        self._log_cycle_close_firebase(price, pnl_usd, reason.value)
+        self._log_cycle_close_firebase(ctx, price, pnl_usd, reason.value)
 
         # Reset
-        self._cycle = InfLiveCycle()
-        self._save_state()
+        ctx.cycle = InfLiveCycle()
+        self._save_state(ctx)
 
     # ── Order execution ────────────────────────────────────────────────────────
 
-    def _execute_buy(self, price: float, size: float, cost_usd: float, level: int) -> bool:
-        """Exécute un achat BTC via Revolut X (maker-only)."""
+    def _execute_buy(self, ctx: PairContext, price: float, size: float, cost_usd: float, level: int) -> bool:
+        """Exécute un achat via Revolut X (maker-only)."""
         if self.dry_run:
             logger.info(
                 "[DRY-RUN] INFINITY BUY L%d | %s @ %s | size=%.8f ($%.2f)",
-                level + 1, INF_SYMBOL, _fmt(price), size, cost_usd,
+                level + 1, ctx.symbol, _fmt(price), size, cost_usd,
             )
             return True
 
@@ -998,7 +1078,7 @@ class InfinityBot:
         size_str = f"{size:.8f}"
 
         order = OrderRequest(
-            symbol=INF_SYMBOL,
+            symbol=ctx.symbol,
             side=OrderSide.BUY,
             base_size=size_str,
             price=price_str,
@@ -1010,50 +1090,51 @@ class InfinityBot:
 
             if fill_type == "no_fill":
                 logger.info(
-                    "♾️ BUY L%d: pas de fill maker après %ds — abandonné",
-                    level + 1, INF_MAKER_WAIT_SECONDS,
+                    "[%s] ♾️ BUY L%d: pas de fill maker après %ds — abandonné",
+                    ctx.symbol, level + 1, INF_MAKER_WAIT_SECONDS,
                 )
                 try:
                     fb_log_event(
                         event_type="infinity_maker_no_fill",
                         data={"level": level, "price": price, "side": "BUY"},
-                        symbol=INF_SYMBOL,
+                        symbol=ctx.symbol,
                     )
                 except Exception:
                     pass
                 return False
 
             logger.info(
-                "♾️ ✅ BUY L%d exécuté | %s @ %s | size=%s | %s",
-                level + 1, INF_SYMBOL, price_str, size_str, fill_type,
+                "[%s] ♾️ ✅ BUY L%d exécuté | @ %s | size=%s | %s",
+                ctx.symbol, level + 1, price_str, size_str, fill_type,
             )
             return True
 
         except Exception as e:
-            logger.error("♾️ ❌ BUY L%d échoué: %s", level + 1, e)
-            self._telegram.notify_error(f"♾️ BUY L{level + 1} {INF_SYMBOL} échoué: {e}")
+            logger.error("[%s] ♾️ ❌ BUY L%d échoué: %s", ctx.symbol, level + 1, e)
+            self._telegram.notify_error(f"♾️ BUY L{level + 1} {ctx.symbol} échoué: {e}")
             return False
 
     def _execute_sell(
         self,
+        ctx: PairContext,
         price: float,
         size: float,
         proceeds: float,
         level: int,
         use_taker: bool = False,
     ) -> bool:
-        """Exécute une vente BTC via Revolut X."""
+        """Exécute une vente via Revolut X."""
         if self.dry_run:
             label = f"TP{level + 1}" if level >= 0 else "CLOSE"
             logger.info(
                 "[DRY-RUN] INFINITY SELL %s | %s @ %s | size=%.8f ($%.2f)",
-                label, INF_SYMBOL, _fmt(price), size, proceeds,
+                label, ctx.symbol, _fmt(price), size, proceeds,
             )
             return True
 
         # Vérifier le solde réel
         try:
-            base_currency = INF_SYMBOL.split("-")[0]
+            base_currency = ctx.symbol.split("-")[0]
             balances = self._client.get_balances()
             base_bal = next((b for b in balances if b.currency == base_currency), None)
             real_available = base_bal.available if base_bal else 0.0
@@ -1061,7 +1142,7 @@ class InfinityBot:
             # Annuler les ordres actifs si besoin
             if real_available < size * 0.90:
                 try:
-                    active_orders = self._client.get_active_orders([INF_SYMBOL])
+                    active_orders = self._client.get_active_orders([ctx.symbol])
                     for ao in active_orders:
                         ao_id = ao.get("venue_order_id") or ao.get("id")
                         if ao_id:
@@ -1079,20 +1160,20 @@ class InfinityBot:
 
             if real_available < size:
                 size = real_available
-                logger.info("♾️ 📐 Taille ajustée: %.8f", size)
+                logger.info("[%s] ♾️ 📐 Taille ajustée: %.8f", ctx.symbol, size)
 
             if size <= 0:
-                logger.warning("♾️ ⚠️ Aucun BTC disponible pour la vente")
+                logger.warning("[%s] ♾️ ⚠️ Aucun token disponible pour la vente", ctx.symbol)
                 return False
 
         except Exception as e:
-            logger.warning("♾️ ⚠️ Balance check échoué: %s", e)
+            logger.warning("[%s] ♾️ ⚠️ Balance check échoué: %s", ctx.symbol, e)
 
         price_str = self._format_order_price(price)
         size_str = f"{size:.8f}"
 
         order = OrderRequest(
-            symbol=INF_SYMBOL,
+            symbol=ctx.symbol,
             side=OrderSide.SELL,
             base_size=size_str,
             price=price_str,
@@ -1105,22 +1186,22 @@ class InfinityBot:
                 result = self._place_maker_only_order(order)
                 if result.get("fill_type") == "no_fill":
                     # Fallback taker pour les ventes (ne pas rater la sortie)
-                    logger.warning("♾️ Maker no-fill → TAKER FALLBACK")
+                    logger.warning("[%s] ♾️ Maker no-fill → TAKER FALLBACK", ctx.symbol)
                     result = self._place_taker_order(order)
 
             fill_type = result.get("fill_type", "unknown")
             logger.info(
-                "♾️ ✅ SELL exécuté | %s @ %s | size=%s | %s",
-                INF_SYMBOL, price_str, size_str, fill_type,
+                "[%s] ♾️ ✅ SELL exécuté | @ %s | size=%s | %s",
+                ctx.symbol, price_str, size_str, fill_type,
             )
             return True
 
         except Exception as e:
-            logger.error("♾️ ❌ SELL échoué: %s", e)
-            self._telegram.notify_error(f"♾️ SELL {INF_SYMBOL} échoué: {e}")
+            logger.error("[%s] ♾️ ❌ SELL échoué: %s", ctx.symbol, e)
+            self._telegram.notify_error(f"♾️ SELL {ctx.symbol} échoué: {e}")
             return False
 
-    # ── Maker-only order execution ─────────────────────────────────────────────
+    # ── Maker-only order execution (pair-agnostic via OrderRequest) ────────────
 
     def _place_maker_only_order(self, order: OrderRequest) -> dict:
         """Place un ordre limit passif (maker 0%). Si pas rempli → annule."""
@@ -1248,48 +1329,48 @@ class InfinityBot:
 
     # ── Firebase logging ───────────────────────────────────────────────────────
 
-    def _log_buy_firebase(self, price: float, size: float, cost: float, equity: float) -> None:
+    def _log_buy_firebase(self, ctx: PairContext, price: float, size: float, cost: float, equity: float) -> None:
         """Log un achat dans Firebase."""
         try:
             fb_position = Position(
-                symbol=INF_SYMBOL,
+                symbol=ctx.symbol,
                 side=OrderSide.BUY,
                 entry_price=price,
-                sl_price=self._cycle.pmp * (1 - self._cfg.stop_loss_pct) if self._cycle.pmp > 0 else 0,
+                sl_price=ctx.cycle.pmp * (1 - ctx.config.stop_loss_pct) if ctx.cycle.pmp > 0 else 0,
                 size=size,
                 venue_order_id=str(uuid.uuid4()),
                 status=PositionStatus.OPEN,
                 strategy=StrategyType.INFINITY,
-                tp_price=self._cycle.pmp * (1 + self._cfg.sell_levels[0]) if self._cycle.pmp > 0 else 0,
+                tp_price=ctx.cycle.pmp * (1 + ctx.config.sell_levels[0]) if ctx.cycle.pmp > 0 else 0,
             )
             fb_id = log_trade_opened(
                 position=fb_position,
                 fill_type="maker",
                 maker_wait_seconds=INF_MAKER_WAIT_SECONDS,
-                risk_pct=self._cfg.stop_loss_pct,
-                risk_amount_usd=cost * self._cfg.stop_loss_pct,
+                risk_pct=ctx.config.stop_loss_pct,
+                risk_amount_usd=cost * ctx.config.stop_loss_pct,
                 fiat_balance=equity,
                 current_equity=equity,
                 portfolio_risk_before=0.0,
                 exchange="revolut-infinity",
             )
             if fb_id:
-                self._cycle.firebase_trade_ids.append(fb_id)
-                self._save_state()
+                ctx.cycle.firebase_trade_ids.append(fb_id)
+                self._save_state(ctx)
         except Exception as e:
-            logger.warning("🔥 Firebase log_trade_opened échoué: %s", e)
+            logger.warning("[%s] 🔥 Firebase log_trade_opened échoué: %s", ctx.symbol, e)
 
-    def _log_cycle_close_firebase(self, exit_price: float, pnl_usd: float, reason: str) -> None:
+    def _log_cycle_close_firebase(self, ctx: PairContext, exit_price: float, pnl_usd: float, reason: str) -> None:
         """Close tous les trade docs Firebase du cycle."""
-        equity = self._get_allocated_balance()
-        for fb_id in self._cycle.firebase_trade_ids:
+        equity = self._get_allocated_balance(ctx)
+        for fb_id in ctx.cycle.firebase_trade_ids:
             try:
                 fb_position = Position(
-                    symbol=INF_SYMBOL,
+                    symbol=ctx.symbol,
                     side=OrderSide.BUY,
-                    entry_price=self._cycle.pmp,
+                    entry_price=ctx.cycle.pmp,
                     sl_price=0,
-                    size=self._cycle.total_size,
+                    size=ctx.cycle.total_size,
                     venue_order_id="cycle-close",
                     status=PositionStatus.CLOSED,
                     strategy=StrategyType.INFINITY,
@@ -1304,7 +1385,7 @@ class InfinityBot:
                     equity_after=equity,
                 )
             except Exception as e:
-                logger.warning("🔥 Firebase log_trade_closed échoué: %s", e)
+                logger.warning("[%s] 🔥 Firebase log_trade_closed échoué: %s", ctx.symbol, e)
 
     # ── Heartbeat ──────────────────────────────────────────────────────────────
 
@@ -1313,28 +1394,6 @@ class InfinityBot:
         if now - self._last_heartbeat < INF_HEARTBEAT_SECONDS:
             return
         self._last_heartbeat = now
-
-        cycle = self._cycle
-        allocated = self._get_allocated_balance()
-
-        # Prix actuel
-        current_price = 0.0
-        try:
-            ticker = self._data.get_ticker(INF_SYMBOL)
-            if ticker:
-                current_price = ticker.last_price
-        except Exception:
-            pass
-
-        trailing_high = self._get_trailing_high()
-
-        # PnL latent
-        pnl_latent = 0.0
-        pnl_latent_pct = 0.0
-        if cycle.phase != "WAITING" and cycle.size_remaining > 0 and current_price > 0:
-            current_value = cycle.size_remaining * current_price + cycle.total_proceeds
-            pnl_latent = current_value - cycle.total_cost
-            pnl_latent_pct = pnl_latent / cycle.total_cost * 100 if cycle.total_cost > 0 else 0
 
         # Equity totale sur Revolut X
         total_equity = 0.0
@@ -1355,11 +1414,7 @@ class InfinityBot:
         except Exception:
             pass
 
-        target_entry = trailing_high * (1 - INF_CONFIG.entry_drop_pct)
-        ecart = current_price - target_entry
-        ecart_pct = (ecart / target_entry * 100) if target_entry > 0 else 0
-
-        # Calculer countdown prochaine bougie H4
+        # Countdown prochaine bougie H4
         now_utc = datetime.now(timezone.utc)
         h4_hour = ((now_utc.hour // 4) + 1) * 4
         if h4_hour >= 24:
@@ -1371,86 +1426,133 @@ class InfinityBot:
         next_h4_paris = next_h4.astimezone(ZoneInfo("Europe/Paris"))
         countdown_str = f"{countdown_hm} ({next_h4_paris.strftime('%Hh%M')} Paris - {next_h4.strftime('%Hh%M')} UTC)"
 
+        # Per-pair status
+        active_pairs = 0
+        total_allocated = 0.0
+        tg_pair_lines = []  # for Telegram multi-pair heartbeat
+
+        for symbol, ctx in self._pairs.items():
+            cycle = ctx.cycle
+            cfg = ctx.config
+            allocated = self._get_allocated_balance(ctx)
+            total_allocated += allocated
+
+            trailing_high = self._get_trailing_high(ctx)
+
+            # Prix actuel
+            current_price = 0.0
+            try:
+                ticker = self._data.get_ticker(symbol)
+                if ticker:
+                    current_price = ticker.last_price
+            except Exception:
+                pass
+
+            target_entry = trailing_high * (1 - cfg.entry_drop_pct)
+            ecart = current_price - target_entry
+            ecart_pct = (ecart / target_entry * 100) if target_entry > 0 else 0
+
+            # PnL latent
+            pnl_latent = 0.0
+            pnl_latent_pct = 0.0
+            if cycle.phase != "WAITING" and cycle.size_remaining > 0 and current_price > 0:
+                active_pairs += 1
+                current_value = cycle.size_remaining * current_price + cycle.total_proceeds
+                pnl_latent = current_value - cycle.total_cost
+                pnl_latent_pct = pnl_latent / cycle.total_cost * 100 if cycle.total_cost > 0 else 0
+
+            # Console log per pair
+            logger.info(
+                "   [%s] phase=%s | alloc=$%.0f | trail=%s | prix=%s | cible=%s | écart=%.1f%%",
+                symbol, cycle.phase, allocated,
+                _fmt(trailing_high), _fmt(current_price), _fmt(target_entry), ecart_pct,
+            )
+
+            if cycle.phase != "WAITING":
+                logger.info(
+                    "      PMP=%s | inv=$%.2f | size=%.8f | buys=%d | sells=%d | PnL=$%+.2f (%+.1f%%)",
+                    _fmt(cycle.pmp), cycle.total_cost, cycle.size_remaining,
+                    len(cycle.buys), len(cycle.sells), pnl_latent, pnl_latent_pct,
+                )
+
+            # Log last eval
+            if ctx.last_eval:
+                ev = ctx.last_eval
+                drop_icon = "✅" if ev.get("drop_ok") else "❌"
+                rsi_icon = "✅" if ev.get("rsi_ok") else "❌"
+                logger.info(
+                    "      🔎 Dernière éval (%s): %s | %s Drop: %.1f%% | %s RSI: %.1f",
+                    ev.get("ts", "?"), ev.get("result", "?"),
+                    drop_icon, ev.get("drop_pct", 0),
+                    rsi_icon, ev.get("rsi", 0),
+                )
+
+            # Sync cycle to Firebase per pair
+            try:
+                self._sync_cycle_firebase(ctx, current_price=current_price)
+            except Exception:
+                logger.debug("[%s] Firebase cycle sync failed", symbol, exc_info=True)
+
+            # Build Telegram lines for this pair
+            base = symbol.split("-")[0]
+            ecart_fire = "🔥" if abs(ecart_pct) < 1.0 else ""
+            tg_pair_lines.append(f"\n  ── *{symbol}* ──")
+            tg_pair_lines.append(f"  Phase: `{cycle.phase}` | Cycle: `{ctx.cycle_count}`")
+            tg_pair_lines.append(
+                f"  📊 Trail: `{_fmt(trailing_high)}` → Cible: `{_fmt(target_entry)}` | Écart: `{ecart_pct:+.1f}%` {ecart_fire}"
+            )
+            if cycle.phase != "WAITING":
+                pnl_emoji = "🟢" if pnl_latent >= 0 else "🔴"
+                be_tag = " 🔒BE" if cycle.breakeven_active else ""
+                tg_pair_lines.append(
+                    f"  PMP: `{_fmt(cycle.pmp)}` | Inv: `${cycle.total_cost:,.2f}` | "
+                    f"B: `{len(cycle.buys)}/5` S: `{len(cycle.sells)}/5`{be_tag}"
+                )
+                tg_pair_lines.append(
+                    f"  {pnl_emoji} Latent: `{pnl_latent:+.2f}$` (`{pnl_latent_pct:+.1f}%`)"
+                )
+            elif ctx.last_eval:
+                ev = ctx.last_eval
+                d_i = "✅" if ev.get("drop_ok") else "❌"
+                r_i = "✅" if ev.get("rsi_ok") else "❌"
+                tg_pair_lines.append(
+                    f"  🔎 {d_i} Drop `{ev.get('drop_pct', 0):.1f}%` | {r_i} RSI `{ev.get('rsi', 0):.1f}`"
+                )
+
+        # Console summary
         logger.info(
-            "💓 INFINITY Alive | tick=%d | cycle=%d | phase=%s | equity=$%.2f "
-            "| alloc=$%.2f\n"
-            "   📊 Trail High: %.2f | Prix: %.2f\n"
-            "   🎯 Cible: %.2f | Écart: $%.0f (%.1f%%)\n"
+            "💓 INFINITY Alive | tick=%d | paires=%d/%d actives | equity=$%.2f | alloc=$%.2f\n"
             "   ⏳ Prochaine H4: %s",
-            self._tick_count, self._cycle_count, cycle.phase,
-            total_equity, allocated,
-            trailing_high, current_price,
-            target_entry, ecart, ecart_pct,
+            self._tick_count, active_pairs, len(self._pairs),
+            total_equity, total_allocated,
             countdown_str,
         )
 
-        if cycle.phase != "WAITING":
-            logger.info(
-                "   PMP=%.2f | invested=$%.2f | BTC=%.8f | buys=%d | sells=%d | PnL latent=$%+.2f (%+.1f%%)",
-                cycle.pmp, cycle.total_cost, cycle.size_remaining,
-                len(cycle.buys), len(cycle.sells), pnl_latent, pnl_latent_pct,
-            )
-
-        # Log last evaluation result
-        if self._last_eval:
-            ev = self._last_eval
-            drop_icon = "✅" if ev.get("drop_ok") else "❌"
-            rsi_icon = "✅" if ev.get("rsi_ok") else "❌"
-            vol_icon = "✅" if ev.get("vol_ok") else "❌"
-            logger.info(
-                "   🔎 Dernière éval (%s): %s\n"
-                "      %s Drop: %.1f%% (seuil: %.1f%%)\n"
-                "      %s RSI: %.1f (max: %.0f)\n"
-                "      %s Volume: %.0f vs MA %.0f",
-                ev.get("ts", "?"), ev.get("result", "?"),
-                drop_icon, ev.get("drop_pct", 0), INF_CONFIG.entry_drop_pct * 100,
-                rsi_icon, ev.get("rsi", 0), INF_CONFIG.first_entry_rsi_max,
-                vol_icon, ev.get("volume", 0), ev.get("volume_ma", 0),
-            )
-
-        # Telegram heartbeat
+        # Telegram multi-pair heartbeat
         try:
-            self._telegram.notify_infinity_heartbeat(
-                equity=total_equity,
-                allocated_equity=allocated,
-                phase=cycle.phase,
-                pmp=cycle.pmp,
-                total_invested=cycle.total_cost,
-                size_btc=cycle.size_remaining,
-                buys_filled=len(cycle.buys),
-                sells_filled=len(cycle.sells),
-                pnl_latent_usd=pnl_latent,
-                pnl_latent_pct=pnl_latent_pct,
-                trailing_high=trailing_high,
-                current_price=current_price,
-                target_price=target_entry,
-                breakeven_active=cycle.breakeven_active,
-                cycle_count=self._cycle_count,
-                ecart_usd=ecart,
-                ecart_pct=ecart_pct,
-                countdown_str=countdown_str,
-                last_eval=self._last_eval,
-            )
+            tg_lines = [
+                f"💓 *INFINITY* ♾️ ({len(self._pairs)} paires)",
+                f"  Equity: `${total_equity:,.0f}` | Alloué: `${total_allocated:,.0f}`",
+                f"  ⏳ Prochaine H4: `{countdown_str}`",
+            ]
+            tg_lines.extend(tg_pair_lines)
+            from src.notifications.telegram import DASHBOARD_URL
+            tg_lines.append(f"\n[Dashboard]({DASHBOARD_URL})")
+            self._telegram.send_raw("\n".join(tg_lines))
         except Exception:
             logger.warning("Telegram heartbeat failed", exc_info=True)
 
         # Firebase heartbeat
         try:
             fb_log_heartbeat(
-                open_positions=1 if cycle.phase != "WAITING" else 0,
+                open_positions=active_pairs,
                 total_equity=total_equity,
                 total_risk_pct=0.0,
-                pairs_count=1,
+                pairs_count=len(self._pairs),
                 exchange="revolut-infinity",
             )
         except Exception:
             pass
-
-        # Sync cycle state → Firebase (pour la V-curve dashboard)
-        try:
-            self._sync_cycle_firebase(current_price=current_price)
-        except Exception:
-            logger.debug("Firebase cycle sync failed", exc_info=True)
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1470,21 +1572,24 @@ class InfinityBot:
         if today != self._last_snapshot_date:
             self._last_snapshot_date = today
             try:
-                equity = self._get_allocated_balance()
+                total_equity = 0.0
                 positions = []
-                cycle = self._cycle
-                if cycle.phase != "WAITING":
-                    positions.append({
-                        "symbol": INF_SYMBOL,
-                        "phase": cycle.phase,
-                        "pmp": cycle.pmp,
-                        "size": cycle.size_remaining,
-                        "invested": cycle.total_cost,
-                        "buys": len(cycle.buys),
-                        "sells": len(cycle.sells),
-                    })
+                for symbol, ctx in self._pairs.items():
+                    allocated = self._get_allocated_balance(ctx)
+                    total_equity += allocated
+                    cycle = ctx.cycle
+                    if cycle.phase != "WAITING":
+                        positions.append({
+                            "symbol": symbol,
+                            "phase": cycle.phase,
+                            "pmp": cycle.pmp,
+                            "size": cycle.size_remaining,
+                            "invested": cycle.total_cost,
+                            "buys": len(cycle.buys),
+                            "sells": len(cycle.sells),
+                        })
                 fb_log_daily_snapshot(
-                    equity=equity,
+                    equity=total_equity,
                     positions=positions,
                     daily_pnl=0.0,
                     trades_today=0,
@@ -1494,30 +1599,30 @@ class InfinityBot:
             except Exception:
                 pass
 
-    def _save_state(self, sync_firebase: bool = True) -> None:
-        self._store.save(
-            cycle=self._cycle,
-            candle_highs=self._candle_highs,
-            last_candle_ts=self._last_candle_ts,
-            cycle_count=self._cycle_count,
-            consecutive_stops=self._consecutive_stops,
+    def _save_state(self, ctx: PairContext, sync_firebase: bool = True) -> None:
+        ctx.store.save(
+            cycle=ctx.cycle,
+            candle_highs=ctx.candle_highs,
+            last_candle_ts=ctx.last_candle_ts,
+            cycle_count=ctx.cycle_count,
+            consecutive_stops=ctx.consecutive_stops,
         )
         if sync_firebase:
-            self._sync_cycle_firebase()
+            self._sync_cycle_firebase(ctx)
 
-    def _sync_cycle_firebase(self, current_price: float | None = None) -> None:
-        """Sync le cycle courant dans Firebase (infinity_cycles/current).
+    def _sync_cycle_firebase(self, ctx: PairContext, current_price: float | None = None) -> None:
+        """Sync le cycle courant dans Firebase (infinity_cycles/{symbol}).
 
-        Permet au dashboard de visualiser le cycle en temps réel
-        et sert de backup cloud en cas de perte du disque VPS.
+        Per-pair Firebase documents for the dashboard V-curve.
         """
         try:
-            cycle = self._cycle
-            trailing_high = self._get_trailing_high()
+            cycle = ctx.cycle
+            cfg = ctx.config
+            trailing_high = self._get_trailing_high(ctx)
             if current_price is None:
                 current_price = 0.0
                 try:
-                    ticker = self._data.get_ticker(INF_SYMBOL)
+                    ticker = self._data.get_ticker(ctx.symbol)
                     if ticker:
                         current_price = ticker.last_price
                 except Exception:
@@ -1535,11 +1640,11 @@ class InfinityBot:
                 "breakeven_active": cycle.breakeven_active,
                 "cycle_start_ts": cycle.cycle_start_ts,
                 # Config (pour le dashboard)
-                "buy_levels": list(self._cfg.buy_levels),
-                "buy_pcts": list(self._cfg.buy_pcts),
-                "sell_levels": list(self._cfg.sell_levels),
-                "stop_loss_pct": self._cfg.stop_loss_pct,
-                "entry_drop_pct": self._cfg.entry_drop_pct,
+                "buy_levels": list(cfg.buy_levels),
+                "buy_pcts": list(cfg.buy_pcts),
+                "sell_levels": list(cfg.sell_levels),
+                "stop_loss_pct": cfg.stop_loss_pct,
+                "entry_drop_pct": cfg.entry_drop_pct,
                 # Buys / Sells détaillés
                 "buys": cycle.buys,
                 "sells": cycle.sells,
@@ -1547,16 +1652,17 @@ class InfinityBot:
                 # Contexte marché
                 "trailing_high": trailing_high,
                 "current_price": current_price,
-                "target_entry": trailing_high * (1 - self._cfg.entry_drop_pct),
+                "target_entry": trailing_high * (1 - cfg.entry_drop_pct),
                 # Meta
-                "symbol": INF_SYMBOL,
-                "cycle_count": self._cycle_count,
-                "consecutive_stops": self._consecutive_stops,
+                "symbol": ctx.symbol,
+                "cycle_count": ctx.cycle_count,
+                "consecutive_stops": ctx.consecutive_stops,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
-            fb_add_document("infinity_cycles", doc, doc_id="current")
+            # Per-pair doc: infinity_cycles/BTC-USD, infinity_cycles/AAVE-USD, etc.
+            fb_add_document("infinity_cycles", doc, doc_id=ctx.symbol)
         except Exception as e:
-            logger.debug("Firebase cycle sync failed: %s", e)
+            logger.debug("[%s] Firebase cycle sync failed: %s", ctx.symbol, e)
 
     @staticmethod
     def _format_order_price(price: float) -> str:
@@ -1571,8 +1677,9 @@ class InfinityBot:
 
     def _shutdown(self) -> None:
         logger.info("🛑 Arrêt InfinityBot...")
-        self._save_state()
-        logger.info("💾 État final sauvegardé")
+        for symbol, ctx in self._pairs.items():
+            self._save_state(ctx, sync_firebase=False)
+        logger.info("💾 État final sauvegardé (%d paires)", len(self._pairs))
         self._client.close()
         self._telegram.close()
         logger.info("InfinityBot arrêté proprement")
@@ -1581,7 +1688,7 @@ class InfinityBot:
 # ── Point d'entrée ─────────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="TradeX – Infinity Bot (DCA inversé BTC)")
+    parser = argparse.ArgumentParser(description="TradeX – Infinity Bot (DCA inversé multi-paires)")
     parser.add_argument(
         "--dry-run",
         action="store_true",
