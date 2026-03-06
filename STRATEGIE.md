@@ -312,7 +312,20 @@ Le bot attend une **bougie de reprise** dans la direction de l'impulsion :
 
 Revolut X facture **0% en maker** et 0.09% en taker. Le bot place donc un **ordre limit** (maker) pour ne pas payer de frais.
 
-Si l'ordre n'est pas rempli dans les 60 secondes (`MC_MAKER_WAIT_SECONDS`), le bot peut fallback en taker (0.09%).
+**Stratégie d'exécution (Infinity BUY) :**
+```
+Maker #1 (prix initial)     → attente 60s → fill? ✅ OK (0% fee)
+       ↓ no-fill
+Rafraîchir le prix
+Maker #2 (prix actualisé)   → attente 60s → fill? ✅ OK (0% fee)
+       ↓ no-fill
+Rafraîchir le prix
+Taker fallback              → fill immédiat ✅ (0.09% fee)
+```
+
+**Ventes (SELL)** : 1 tentative maker, puis taker fallback immédiat (ne pas rater la sortie).
+
+**Momentum** : Si l'ordre n'est pas rempli dans les 60 secondes (`MC_MAKER_WAIT_SECONDS`), fallback en taker (0.09%).
 
 ---
 
@@ -601,7 +614,8 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 │    ├─ Nouvelle bougie H4 ? → Évaluer conditions d'entrée │
 │    │   ├─ Drop ≥ seuil vs trailing high ? ✅/❌          │
 │    │   ├─ RSI(14) ≤ 50 ?                ✅/❌             │
-│    │   └─ Tout OK → Premier achat (L1 : 25% du capital)  │
+│    │   └─ Tout OK → Premier achat L1 (25% du capital)     │
+│    │       └─ Maker ×2 (prix rafraîchi) → taker fallback  │
 │    └─ Pas de nouvelle H4 → Attendre                      │
 │                                                          │
 │  BUYING (accumulation DCA)                               │
