@@ -22,26 +22,26 @@
    - [Phase 2 : Détecter l&#39;impulsion M5](#phase-2--détecter-limpulsion-m5)
    - [Phase 3 : Attendre le pullback](#phase-3--attendre-le-pullback)
    - [Phase 4 : Entrée sur reprise](#phase-4--entrée-sur-reprise)
-   - [Exécution maker-only](#exécution-maker-only)
-6. [Bot 4 — Infinity Bot (Revolut X)](#bot-4--infinity-bot-revolut-x)
+6. [Exécution des ordres Revolut X](#exécution-des-ordres-revolut-x-momentum--infinity)
+7. [Bot 4 — Infinity Bot (Revolut X)](#bot-4--infinity-bot-revolut-x)
    - [L&#39;idée](#lidée-infinity)
    - [Trailing High](#trailing-high--le-prix-de-référence-dynamique)
    - [Paliers d&#39;achat](#paliers-dachat-dca-inversé)
    - [Paliers de vente](#paliers-de-vente-distribution-progressive)
    - [Sécurités](#sécurités)
-7. [Allocation dynamique du capital](#allocation-dynamique-du-capital)
+8. [Allocation dynamique du capital](#allocation-dynamique-du-capital)
    - [Comment ça marche](#comment-ça-marche)
    - [Pourquoi cette logique](#pourquoi-cette-logique)
-8. [Gestion du risque (Money Management)](#gestion-du-risque-money-management)
-9. [La boucle de chaque bot](#la-boucle-de-chaque-bot)
-10. [Les fichiers et qui fait quoi](#les-fichiers-et-qui-fait-quoi)
-11. [Exemple concret — Trade RANGE](#exemple-concret--trade-range)
-12. [Exemple concret — Trade CRASH](#exemple-concret--trade-crash)
-13. [Exemple concret — Trade MOMENTUM](#exemple-concret--trade-momentum)
-14. [Exemple concret — Trade INFINITY](#exemple-concret--trade-infinity)
-15. [Ce que les bots ne font PAS](#ce-que-les-bots-ne-font-pas)
-16. [Les paramètres importants](#les-paramètres-importants-fichier-env)
-17. [Infrastructure &amp; Déploiement](#infrastructure--déploiement)
+9. [Gestion du risque (Money Management)](#gestion-du-risque-money-management)
+10. [La boucle de chaque bot](#la-boucle-de-chaque-bot)
+11. [Les fichiers et qui fait quoi](#les-fichiers-et-qui-fait-quoi)
+12. [Exemple concret — Trade RANGE](#exemple-concret--trade-range)
+13. [Exemple concret — Trade CRASH](#exemple-concret--trade-crash)
+14. [Exemple concret — Trade MOMENTUM](#exemple-concret--trade-momentum)
+15. [Exemple concret — Trade INFINITY](#exemple-concret--trade-infinity)
+16. [Ce que les bots ne font PAS](#ce-que-les-bots-ne-font-pas)
+17. [Les paramètres importants](#les-paramètres-importants-fichier-env)
+18. [Infrastructure &amp; Déploiement](#infrastructure--déploiement)
 
 ---
 
@@ -306,13 +306,16 @@ Le bot attend une **bougie de reprise** dans la direction de l'impulsion :
 | **SL**      | Sous le creux du pullback + marge | Si le pullback n'a pas tenu |
 | **Risque**  | 4% du capital                     | MC_RISK_PERCENT             |
 
-### Exécution maker-only
+---
+
+## Exécution des ordres Revolut X (Momentum + Infinity)
 
 📄 **Fichier : `revolut_client.py`**
 
-Revolut X facture **0% en maker** et 0.09% en taker. Le bot place donc un **ordre limit** (maker) pour ne pas payer de frais.
+Revolut X facture **0% en maker** et 0.09% en taker. Les deux bots Revolut X (Momentum et Infinity) utilisent le même mécanisme d'exécution.
 
-**Stratégie d'exécution (Infinity BUY) :**
+### Infinity Bot (BUY) — retry maker 2× + taker fallback
+
 ```
 Maker #1 (prix initial)     → attente 60s → fill? ✅ OK (0% fee)
        ↓ no-fill
@@ -323,9 +326,13 @@ Rafraîchir le prix
 Taker fallback              → fill immédiat ✅ (0.09% fee)
 ```
 
-**Ventes (SELL)** : 1 tentative maker, puis taker fallback immédiat (ne pas rater la sortie).
+### Infinity Bot (SELL) — maker + taker fallback
 
-**Momentum** : Si l'ordre n'est pas rempli dans les 60 secondes (`MC_MAKER_WAIT_SECONDS`), fallback en taker (0.09%).
+1 tentative maker, puis taker fallback immédiat (ne pas rater la sortie).
+
+### Momentum Bot — maker + taker fallback
+
+1 tentative maker (60s via `MC_MAKER_WAIT_SECONDS`), puis fallback en taker (0.09%).
 
 ---
 
