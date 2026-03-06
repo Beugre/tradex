@@ -599,11 +599,14 @@ class TelegramNotifier:
         target_price: float,
         breakeven_active: bool,
         cycle_count: int,
+        ecart_usd: float = 0.0,
+        ecart_pct: float = 0.0,
+        countdown_str: str = "",
+        last_eval: dict | None = None,
     ) -> None:
         """Heartbeat périodique Infinity Bot."""
         be_tag = "🔒 BE" if breakeven_active else ""
         pnl_emoji = "🟢" if pnl_latent_usd >= 0 else "🔴"
-        drop_pct = (1 - current_price / trailing_high) * 100 if trailing_high > 0 else 0
         lines = [
             f"💓 *INFINITY BTC* ♾️",
             f"  Equity: `${equity:,.0f}` (alloué: `${allocated_equity:,.0f}`)",
@@ -615,11 +618,30 @@ class TelegramNotifier:
                 f"  BTC: `{size_btc:.8f}` | Buys: `{buys_filled}/5` | Sells: `{sells_filled}/5`",
                 f"  {pnl_emoji} Latent: `{pnl_latent_usd:+.2f}$` (`{pnl_latent_pct:+.1f}%`)",
             ])
+        # Ecart prix/cible
+        ecart_emoji = "🔥" if abs(ecart_pct) < 1.0 else ""
         lines.extend([
-            f"  Trail High: `{_fp(trailing_high)}` | Prix: `{_fp(current_price)}` (`{drop_pct:-.1f}%`)",
-            f"  🎯 Cible: `{_fp(target_price)}`",
-            f"[Dashboard]({DASHBOARD_URL})",
+            "",
+            f"  📊 Trail High: `{_fp(trailing_high)}` | Prix: `{_fp(current_price)}`",
+            f"  🎯 Cible: `{_fp(target_price)}` | Écart: `${ecart_usd:+,.0f}` (`{ecart_pct:+.1f}%`) {ecart_emoji}",
+            f"  ⏳ Prochaine H4: `{countdown_str}`",
         ])
+        # Last eval
+        if last_eval:
+            drop_icon = "✅" if last_eval.get("drop_ok") else "❌"
+            rsi_icon = "✅" if last_eval.get("rsi_ok") else "❌"
+            vol_icon = "✅" if last_eval.get("vol_ok") else "❌"
+            result_emoji = "🟢" if last_eval.get("result") == "ENTRY" else "⏸"
+            lines.extend([
+                "",
+                f"  🔎 Dernière éval ({last_eval.get('ts', '?')[-5:]}): {result_emoji} `{last_eval.get('result', '?')}`",
+                f"    {drop_icon} Drop: `{last_eval.get('drop_pct', 0):.1f}%` (seuil: `5.0%`)",
+                f"    {rsi_icon} RSI: `{last_eval.get('rsi', 0):.1f}` (max: `50`)",
+                f"    {vol_icon} Volume: `{last_eval.get('volume', 0):.0f}` vs MA `{last_eval.get('volume_ma', 0):.0f}`",
+            ])
+        else:
+            lines.append("\n  🔎 Aucune évaluation encore")
+        lines.append(f"[Dashboard]({DASHBOARD_URL})")
         self._send("\n".join(lines))
 
     def send_raw(self, text: str) -> None:

@@ -31,7 +31,7 @@ import sys
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -296,6 +296,9 @@ class InfinityBot:
         # Heartbeat
         self._last_heartbeat: float = 0.0
         self._tick_count: int = 0
+
+        # Last evaluation result (for heartbeat display)
+        self._last_eval: dict = {}  # {ts, drop_ok, drop_pct, rsi_ok, rsi, vol_ok, volume, volume_ma, result, reason}
 
         # Daily cleanup / snapshot
         self._last_cleanup_date: str = ""
@@ -565,19 +568,56 @@ class InfinityBot:
         rsi = self._get_current_rsi()
         volume, volume_ma = self._get_volume_data()
 
-        # Check conditions
-        ok = check_first_entry(
-            close=price,
-            trailing_high=trailing_high,
-            entry_drop_pct=self._cfg.entry_drop_pct,
-            rsi=rsi,
-            rsi_max=self._cfg.first_entry_rsi_max,
-            volume=volume,
-            volume_ma=volume_ma,
-            require_volume=self._cfg.require_volume_entry,
+        # Evaluate each condition individually for diagnostics
+        drop = (trailing_high - price) / trailing_high if trailing_high > 0 else 0
+        drop_ok = drop >= self._cfg.entry_drop_pct
+        rsi_ok = rsi <= self._cfg.first_entry_rsi_max
+        vol_ok = True
+        if self._cfg.require_volume_entry:
+            vol_ok = volume_ma > 0 and volume > volume_ma
+
+        # Build reason string
+        reasons = []
+        if not drop_ok:
+            reasons.append(f"drop {drop*100:.1f}% < {self._cfg.entry_drop_pct*100:.1f}%")
+        if not rsi_ok:
+            reasons.append(f"RSI {rsi:.1f} > {self._cfg.first_entry_rsi_max:.0f}")
+        if not vol_ok:
+            reasons.append(f"vol {volume:.0f} <= MA {volume_ma:.0f}")
+
+        all_ok = drop_ok and rsi_ok and vol_ok
+
+        # Store evaluation for heartbeat display
+        self._last_eval = {
+            "ts": datetime.now(timezone.utc).isoformat()[:16],
+            "price": price,
+            "drop_pct": drop * 100,
+            "drop_ok": drop_ok,
+            "rsi": rsi,
+            "rsi_ok": rsi_ok,
+            "volume": volume,
+            "volume_ma": volume_ma,
+            "vol_ok": vol_ok,
+            "result": "ENTRY" if all_ok else "SKIP",
+            "reason": ", ".join(reasons) if reasons else "all conditions met",
+        }
+
+        # Log evaluation result on each new candle
+        drop_icon = "✅" if drop_ok else "❌"
+        rsi_icon = "✅" if rsi_ok else "❌"
+        vol_icon = "✅" if vol_ok else "⬜" if not self._cfg.require_volume_entry else ("✅" if vol_ok else "❌")
+        logger.info(
+            "♾️ 🕯️ ÉVALUATION H4 | prix=%.2f | résultat=%s\n"
+            "   %s Drop: %.1f%% (seuil: %.1f%%)\n"
+            "   %s RSI: %.1f (max: %.0f)\n"
+            "   %s Volume: %.0f vs MA %.0f",
+            price, self._last_eval["result"],
+            drop_icon, drop * 100, self._cfg.entry_drop_pct * 100,
+            rsi_icon, rsi, self._cfg.first_entry_rsi_max,
+            vol_icon, volume, volume_ma,
         )
 
-        if not ok:
+        if not all_ok:
             return
 
         drop_pct = (trailing_high - price) / trailing_high * 100
@@ -1315,11 +1355,30 @@ class InfinityBot:
             pass
 
         target_entry = trailing_high * (1 - INF_CONFIG.entry_drop_pct)
+        ecart = current_price - target_entry
+        ecart_pct = (ecart / target_entry * 100) if target_entry > 0 else 0
+
+        # Calculer countdown prochaine bougie H4
+        now_utc = datetime.now(timezone.utc)
+        h4_hour = ((now_utc.hour // 4) + 1) * 4
+        if h4_hour >= 24:
+            next_h4 = now_utc.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        else:
+            next_h4 = now_utc.replace(hour=h4_hour, minute=0, second=0, microsecond=0)
+        countdown_min = max(0, int((next_h4 - now_utc).total_seconds() / 60))
+        countdown_str = f"{countdown_min}min" if countdown_min < 60 else f"{countdown_min // 60}h{countdown_min % 60:02d}"
+
         logger.info(
             "💓 INFINITY Alive | tick=%d | cycle=%d | phase=%s | equity=$%.2f "
-            "| alloc=$%.2f | trail_high=%.2f | cible=%.2f | price=%.2f",
+            "| alloc=$%.2f\n"
+            "   📊 Trail High: %.2f | Prix: %.2f\n"
+            "   🎯 Cible: %.2f | Écart: $%.0f (%.1f%%)\n"
+            "   ⏳ Prochaine H4: %s",
             self._tick_count, self._cycle_count, cycle.phase,
-            total_equity, allocated, trailing_high, target_entry, current_price,
+            total_equity, allocated,
+            trailing_high, current_price,
+            target_entry, ecart, ecart_pct,
+            countdown_str,
         )
 
         if cycle.phase != "WAITING":
@@ -1329,9 +1388,25 @@ class InfinityBot:
                 len(cycle.buys), len(cycle.sells), pnl_latent, pnl_latent_pct,
             )
 
+        # Log last evaluation result
+        if self._last_eval:
+            ev = self._last_eval
+            drop_icon = "✅" if ev.get("drop_ok") else "❌"
+            rsi_icon = "✅" if ev.get("rsi_ok") else "❌"
+            vol_icon = "✅" if ev.get("vol_ok") else "❌"
+            logger.info(
+                "   🔎 Dernière éval (%s): %s\n"
+                "      %s Drop: %.1f%% (seuil: %.1f%%)\n"
+                "      %s RSI: %.1f (max: %.0f)\n"
+                "      %s Volume: %.0f vs MA %.0f",
+                ev.get("ts", "?"), ev.get("result", "?"),
+                drop_icon, ev.get("drop_pct", 0), INF_CONFIG.entry_drop_pct * 100,
+                rsi_icon, ev.get("rsi", 0), INF_CONFIG.first_entry_rsi_max,
+                vol_icon, ev.get("volume", 0), ev.get("volume_ma", 0),
+            )
+
         # Telegram heartbeat
         try:
-            target_price = trailing_high * (1 - INF_CONFIG.entry_drop_pct)
             self._telegram.notify_infinity_heartbeat(
                 equity=total_equity,
                 allocated_equity=allocated,
@@ -1345,9 +1420,13 @@ class InfinityBot:
                 pnl_latent_pct=pnl_latent_pct,
                 trailing_high=trailing_high,
                 current_price=current_price,
-                target_price=target_price,
+                target_price=target_entry,
                 breakeven_active=cycle.breakeven_active,
                 cycle_count=self._cycle_count,
+                ecart_usd=ecart,
+                ecart_pct=ecart_pct,
+                countdown_str=countdown_str,
+                last_eval=self._last_eval,
             )
         except Exception:
             logger.warning("Telegram heartbeat failed", exc_info=True)
