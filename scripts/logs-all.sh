@@ -19,31 +19,31 @@ fi
 # Kill session existante si besoin
 tmux kill-session -t "$SESSION" 2>/dev/null || true
 
-# Créer la session avec le premier pane (Range = top-left)
+# ── Créer la grille 2×2 ──
+# Pane 0 = top-left : Range
 tmux new-session -d -s "$SESSION" -n logs \
-    "ssh $VPS 'sudo journalctl -u tradex-binance -f --no-pager -n 30'"
+    "echo -ne '\033]2;🔄 Range\033\\'; ssh $VPS 'sudo journalctl -u tradex-binance -f --no-pager -n 30'"
 
-# Split verticalement → pane 1 = bottom (Momentum)
-tmux split-window -v -p 50 -t "$SESSION" \
-    "ssh $VPS 'sudo journalctl -u tradex-momentum -f --no-pager -n 30'"
+# Split horizontal → top-right : CrashBot
+tmux split-window -h -t "$SESSION:logs" \
+    "echo -ne '\033]2;📉 CrashBot\033\\'; ssh $VPS 'sudo journalctl -u tradex-binance-crashbot -f --no-pager -n 30'"
 
-# Split le haut horizontalement → pane 2 = top-right (CrashBot)
-tmux split-window -h -p 50 -t "$SESSION.0" \
-    "ssh $VPS 'sudo journalctl -u tradex-binance-crashbot -f --no-pager -n 30'"
+# Revenir pane top-left (0) et split vertical → bottom-left : Momentum
+tmux select-pane -t "$SESSION:logs.0"
+tmux split-window -v -t "$SESSION:logs.0" \
+    "echo -ne '\033]2;🚀 Momentum\033\\'; ssh $VPS 'sudo journalctl -u tradex-momentum -f --no-pager -n 30'"
 
-# Split le bas horizontalement → pane 3 = bottom-right (Infinity)
-tmux split-window -h -p 50 -t "$SESSION.1" \
-    "ssh $VPS 'sudo journalctl -u tradex-infinity -f --no-pager -n 30'"
+# Aller au pane top-right (maintenant index 2 après insert) et split vertical → bottom-right : Infinity
+tmux select-pane -t "$SESSION:logs.2"
+tmux split-window -v -t "$SESSION:logs.2" \
+    "echo -ne '\033]2;♾️ Infinity\033\\'; ssh $VPS 'sudo journalctl -u tradex-infinity -f --no-pager -n 30'"
 
-# Titres des panes
-tmux select-pane -t "$SESSION.0" -T "🔄 Range"
-tmux select-pane -t "$SESSION.1" -T "🚀 Momentum"
-tmux select-pane -t "$SESSION.2" -T "📉 CrashBot"
-tmux select-pane -t "$SESSION.3" -T "♾️ Infinity"
-
-# Activer les titres de panes
+# Activer les titres de panes (utilise le titre défini par echo)
 tmux set -t "$SESSION" pane-border-status top
-tmux set -t "$SESSION" pane-border-format " #{pane_title} "
+tmux set -t "$SESSION" pane-border-format " #T "
+
+# Sélectionner le premier pane
+tmux select-pane -t "$SESSION:logs.0"
 
 # Attacher
 tmux attach -t "$SESSION"
