@@ -1089,19 +1089,26 @@ class InfinityBot:
             fill_type = result.get("fill_type", "unknown")
 
             if fill_type == "no_fill":
-                logger.info(
-                    "[%s] ♾️ BUY L%d: pas de fill maker après %ds — abandonné",
+                logger.warning(
+                    "[%s] ♾️ BUY L%d: maker no-fill après %ds → TAKER FALLBACK",
                     ctx.symbol, level + 1, INF_MAKER_WAIT_SECONDS,
                 )
-                try:
-                    fb_log_event(
-                        event_type="infinity_maker_no_fill",
-                        data={"level": level, "price": price, "side": "BUY"},
-                        symbol=ctx.symbol,
+                result = self._place_taker_order(order)
+                fill_type = result.get("fill_type", "unknown")
+                if fill_type == "no_fill":
+                    logger.error(
+                        "[%s] ♾️ BUY L%d: taker fallback échoué aussi — abandonné",
+                        ctx.symbol, level + 1,
                     )
-                except Exception:
-                    pass
-                return False
+                    try:
+                        fb_log_event(
+                            event_type="infinity_maker_no_fill",
+                            data={"level": level, "price": price, "side": "BUY"},
+                            symbol=ctx.symbol,
+                        )
+                    except Exception:
+                        pass
+                    return False
 
             logger.info(
                 "[%s] ♾️ ✅ BUY L%d exécuté | @ %s | size=%s | %s",
