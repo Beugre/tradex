@@ -38,9 +38,10 @@
 11. [Exemple concret — Trade RANGE](#exemple-concret--trade-range)
 12. [Exemple concret — Trade CRASH](#exemple-concret--trade-crash)
 13. [Exemple concret — Trade MOMENTUM](#exemple-concret--trade-momentum)
-14. [Ce que les bots ne font PAS](#ce-que-les-bots-ne-font-pas)
-15. [Les paramètres importants](#les-paramètres-importants-fichier-env)
-16. [Infrastructure & Déploiement](#infrastructure--déploiement)
+14. [Exemple concret — Trade INFINITY](#exemple-concret--trade-infinity)
+15. [Ce que les bots ne font PAS](#ce-que-les-bots-ne-font-pas)
+16. [Les paramètres importants](#les-paramètres-importants-fichier-env)
+17. [Infrastructure & Déploiement](#infrastructure--déploiement)
 
 ---
 
@@ -535,6 +536,54 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 └──────────────────────────────────────────────────────────┘
 ```
 
+### ♾️ Infinity (`bot_infinity.py`)
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ TOUTES LES 30 SECONDES (tick)                            │
+│                                                          │
+│  1. Récupérer prix BTC-USD (ticker Revolut X)            │
+│  2. Selon la phase :                                     │
+│                                                          │
+│  WAITING (pas de position)                               │
+│    ├─ Nouvelle bougie H4 ? → Évaluer conditions d'entrée │
+│    │   ├─ Drop ≥ 5% vs trailing high ? ✅/❌             │
+│    │   ├─ RSI(14) ≤ 50 ?                ✅/❌             │
+│    │   └─ Tout OK → Premier achat (L1 : 25% du capital)  │
+│    └─ Pas de nouvelle H4 → Attendre                      │
+│                                                          │
+│  BUYING (accumulation DCA)                               │
+│    ├─ Prix ≤ prochain palier ?                            │
+│    │   └─ OUI → Achat palier suivant (L2..L5)            │
+│    ├─ Breakeven stop actif + prix ≤ PMP ?                │
+│    │   └─ OUI → Vente totale market (protection)         │
+│    ├─ SL touché (PMP - 15%) ?                            │
+│    │   └─ OUI → Vente totale market (stop loss)          │
+│    └─ Prix ≥ TP1 ? → Passer en SELLING                   │
+│                                                          │
+│  SELLING (distribution progressive)                      │
+│    ├─ Prix ≥ prochain TP ? → Vendre 20% au palier        │
+│    │   ├─ TP1 (+0.8%) → vend 20% + active breakeven      │
+│    │   ├─ TP2 (+1.5%) → vend 20%                         │
+│    │   ├─ TP3 (+2.2%) → vend 20%                         │
+│    │   ├─ TP4 (+3.0%) → vend 20%                         │
+│    │   └─ TP5 (+4.0%) → vend tout le reste               │
+│    ├─ Override : prix ≥ PMP + 20% → vente totale         │
+│    ├─ Breakeven : prix ≤ PMP → vente totale              │
+│    └─ Tout vendu → Cycle terminé → retour WAITING        │
+│                                                          │
+│ TOUTES LES 4 HEURES (nouvelle bougie H4)                 │
+│    └─ Recalculer trailing high (72 bars = 12 jours)      │
+│                                                          │
+│ TOUTES LES 10 MINUTES                                    │
+│    └─ Heartbeat : écart prix/cible, countdown H4,        │
+│       dernière évaluation (drop/RSI), Firebase + Telegram │
+│                                                          │
+│ 1×/JOUR                                                  │
+│    └─ Cleanup events Firebase (> 2 jours)                │
+└──────────────────────────────────────────────────────────┘
+```
+
 ---
 
 ## Les fichiers et qui fait quoi
@@ -555,6 +604,8 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 | `bot_binance.py` | 🔄 Boucle principale Trail Range (Binance, ~284 paires, OCO) |
 | `bot_binance_crashbot.py` | 💥 Boucle principale CrashBot (Binance, dip-buy, step-trail) |
 | `bot_momentum.py` | 🚀 Boucle principale Momentum (Revolut X, 7 paires, maker-only) |
+| `bot_infinity.py` | ♾️ Boucle principale Infinity (Revolut X, BTC-USD, DCA inversé) |
+| `infinity_engine.py` | ♾️ Logique DCA inversé : check_first_entry, paliers, trailing high |
 | `bot.py` | (legacy) Ancien bot Dow Theory Revolut X |
 | `binance_client.py` | Communique avec l'API Binance (OCO, market, balances) |
 | `revolut_client.py` | Communique avec l'API Revolut X (Ed25519, limit orders) |
@@ -696,6 +747,91 @@ Bougie de reprise : Close 2 110.50$ > Open 2 108.30$, volume > MA10
 
 ---
 
+## Exemple concret — Trade INFINITY
+
+Imaginons BTC-USD sur Revolut X :
+
+### 1️⃣ Le bot surveille le trailing high
+
+```
+Trailing high (72 bougies H4 = 12 jours) = 74 064$
+Prix actuel = 71 200$
+Drop = -3.87% → < 5% → ❌ Pas encore
+Cible d'entrée = 74 064 × 0.95 = 70 361$
+→ ⏳ On attend. Écart : 839$ (1.2%)
+```
+
+### 2️⃣ Nouvelle bougie H4 — évaluation d'entrée
+
+```
+🕐 Bougie H4 de 08:00 UTC
+Prix = 70 150$ (close H4)
+
+  Drop = (74064 - 70150) / 74064 = -5.28% ≥ 5% ✅
+  RSI(14) = 42 ≤ 50 ✅
+→ ♾️ SIGNAL INFINITY BUY !
+```
+
+### 3️⃣ Premier achat (L1)
+
+```
+Capital Revolut X = 1 315$ | Allocation Infinity 65% = 855$
+
+L1 : 25% du capital → 214$
+→ Ordre limit maker @ 70 150$ (0% frais)
+  Taille = 214 / 70 150 = 0.00305 BTC
+  PMP = 70 150$ (1 seul achat)
+  SL = 70 150 × 0.85 = 59 628$
+```
+
+### 4️⃣ Le prix continue de baisser → L2
+
+```
+Prix descend à 66 658$ → palier L2 atteint (-10%)
+  L2 : 20% du capital → 171$
+  → Achat 0.00257 BTC @ 66 658$
+  PMP recalculé = (214 + 171) / (0.00305 + 0.00257) = 68 541$
+  SL = 68 541 × 0.85 = 58 260$
+```
+
+### 5️⃣ Le prix remonte → Ventes par paliers
+
+```
+PMP = 68 541$ | BTC total = 0.00562
+
+Prix remonte à 69 089$ → TP1 = PMP × 1.008 = 69 089$ ✅
+  → Vend 20% (0.00112 BTC) @ 69 089$
+  → Active breakeven stop @ PMP (68 541$)
+
+Prix monte à 69 569$ → TP2 = PMP × 1.015 = 69 569$ ✅
+  → Vend 20% (0.00112 BTC) @ 69 569$
+
+Prix monte à 70 049$ → TP3 = PMP × 1.022 = 70 049$ ✅
+  → Vend 20% (0.00112 BTC) @ 70 049$
+
+Prix monte à 70 597$ → TP4 = PMP × 1.030 = 70 597$ ✅
+  → Vend 20% (0.00112 BTC) @ 70 597$
+
+Prix monte à 71 282$ → TP5 = PMP × 1.040 = 71 282$ ✅
+  → Vend tout le reste (0.00114 BTC) @ 71 282$
+
+→ ✅ Cycle terminé ! PnL ≈ +7.50$ 🎉
+→ Retour en phase WAITING
+```
+
+### 6️⃣ Scénario alternatif : Stop Loss
+
+```
+PMP = 68 541$ | SL = 68 541 × 0.85 = 58 260$
+
+Prix crash à 58 100$ → SL touché ❌
+  → Vente market totale (taker 0.09%)
+  → Perte ≈ -15% du capital investi
+  → Retour en WAITING, compteur stops_consec +1
+```
+
+---
+
 ## Ce que les bots ne font PAS
 
 | ❌ Ne fait pas | ✅ Fait à la place |
@@ -746,6 +882,25 @@ Bougie de reprise : Close 2 110.50$ > Open 2 108.30$, volume > MA10
 | `pullback_retrace_min/max` | 25–55% | Fenêtre de retracement valide |
 | `adx_min` | 15 | ADX minimum pour confirmer la direction |
 
+### Infinity ♾️
+
+| Paramètre | Valeur | Ce que ça fait |
+|-----------|--------|----------------|
+| `INF_TRADING_PAIR` | BTC-USD | Paire unique tradée |
+| `INF_CAPITAL_PCT` | 65% | Part du capital Revolut X allouée |
+| `INF_ENTRY_DROP_PCT` | 5% | Drop minimum vs trailing high pour entrer |
+| `INF_TRAILING_HIGH_PERIOD` | 72 bars | Fenêtre du trailing high (72 × 4h = 12 jours) |
+| `INF_RSI_ENTRY_MAX` | 50 | RSI maximum pour valider l'entrée |
+| `INF_STOP_LOSS_PCT` | 15% | Drop sous le PMP pour déclencher le SL |
+| `INF_MAX_INVESTED_PCT` | 70% | Capital max investi par cycle |
+| `INF_BUY_LEVELS` | -5%,-10%,-15%,-20%,-25% | Paliers d'achat DCA (drop vs trailing high) |
+| `INF_BUY_PCTS` | 25%,20%,15%,10%,0% | % du capital par palier |
+| `INF_SELL_LEVELS` | +0.8%,+1.5%,+2.2%,+3.0%,+4.0% | Paliers de vente (% au-dessus du PMP) |
+| `INF_USE_BREAKEVEN` | true | Active le breakeven stop après TP1 |
+| `INF_POLLING_SECONDS` | 30s | Fréquence de polling prix |
+| `INF_MAKER_WAIT_SECONDS` | 60s | Attente max pour fill maker |
+| `INF_HEARTBEAT_SECONDS` | 600s | Fréquence heartbeat (10 min) |
+
 ### Allocation dynamique
 
 | Paramètre | Valeur | Ce que ça fait |
@@ -776,6 +931,7 @@ Bougie de reprise : Close 2 110.50$ > Open 2 108.30$, volume > MA10
 | `tradex-binance` | Bot Trail Range (284 paires USDC, OCO) | — |
 | `tradex-binance-crashbot` | Bot CrashBot (284 paires USDC, dip-buy) | — |
 | `tradex-momentum` | Bot Momentum (7 paires USD, Revolut X) | — |
+| `tradex-infinity` | Bot Infinity (BTC-USD, DCA inversé, Revolut X) | — |
 | `tradex-dashboard-unified` | Dashboard Streamlit unifié | 8502 |
 
 ### Commandes utiles
@@ -785,9 +941,10 @@ Bougie de reprise : Close 2 110.50$ > Open 2 108.30$, volume > MA10
 ssh BOT-VPS 'sudo journalctl -u tradex-binance -f'
 ssh BOT-VPS 'sudo journalctl -u tradex-binance-crashbot -f'
 ssh BOT-VPS 'sudo journalctl -u tradex-momentum -f'
+ssh BOT-VPS 'sudo journalctl -u tradex-infinity -f'
 
 # État de tous les services
-ssh BOT-VPS 'for svc in tradex-binance tradex-binance-crashbot tradex-momentum tradex-dashboard-unified; do echo -n "$svc: "; sudo systemctl is-active $svc; done'
+ssh BOT-VPS 'for svc in tradex-binance tradex-binance-crashbot tradex-momentum tradex-infinity tradex-dashboard-unified; do echo -n "$svc: "; sudo systemctl is-active $svc; done'
 
 # Redémarrer un bot
 ssh BOT-VPS 'sudo systemctl restart tradex-binance'
