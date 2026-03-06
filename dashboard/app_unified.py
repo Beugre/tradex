@@ -1284,6 +1284,16 @@ def render_revolut_momentum():
 #  Infinity V-Curve Visualization
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _pfmt(v: float) -> str:
+    """Format adaptatif pour les prix (XLM ~$0.15 vs BTC ~$68k)."""
+    if v < 1:
+        return f"${v:,.4f}"
+    if v < 10:
+        return f"${v:,.2f}"
+    if v < 1000:
+        return f"${v:,.2f}"
+    return f"${v:,.0f}"
+
 def _render_infinity_vcurve(cycle: dict | None):
     """Affiche la courbe en V du cycle DCA Infinity avec paliers d'achat/vente."""
 
@@ -1327,7 +1337,7 @@ def _render_infinity_vcurve(cycle: dict | None):
         pct_label = f"{buy_pcts[i] * 100:.0f}%" if i < len(buy_pcts) else "?"
         buy_x.append(f"L{i + 1} ({drop * 100:+.0f}%)")
         buy_y.append(price_at_level)
-        buy_texts.append(f"Buy L{i + 1}\n${price_at_level:,.0f}\n{pct_label} du capital")
+        buy_texts.append(f"Buy L{i + 1}\n{_pfmt(price_at_level)}\n{pct_label} du capital")
 
     # Ligne des niveaux d'achat (gris pointillé)
     fig.add_trace(go.Scatter(
@@ -1350,10 +1360,10 @@ def _render_infinity_vcurve(cycle: dict | None):
             mode="markers+text",
             marker=dict(size=18, color="#ff1744", symbol="circle",
                         line=dict(color="white", width=2)),
-            text=[f"${b['price']:,.0f}"],
+            text=[_pfmt(b['price'])],
             textposition="bottom center",
             textfont=dict(size=11, color="#ff1744"),
-            hovertext=f"🔴 ACHAT L{lvl + 1}<br>${b['price']:,.0f}<br>"
+            hovertext=f"🔴 ACHAT L{lvl + 1}<br>{_pfmt(b['price'])}<br>"
                        f"Size: {b.get('size', 0):.6f} {cycle.get('symbol', '?').split('-')[0]}<br>"
                        f"Coût: ${b.get('cost', 0):,.2f}",
             hoverinfo="text",
@@ -1368,7 +1378,7 @@ def _render_infinity_vcurve(cycle: dict | None):
             mode="markers+text",
             marker=dict(size=22, color="#ff6d00", symbol="diamond",
                         line=dict(color="white", width=2)),
-            text=[f"PMP\n${pmp:,.0f}"],
+            text=[f"PMP\n{_pfmt(pmp)}"],
             textposition="top center",
             textfont=dict(size=12, color="#ff6d00", family="Arial Black"),
             hovertext=f"💎 PMP (Prix Moyen Pondéré)<br>${pmp:,.2f}<br>"
@@ -1390,7 +1400,7 @@ def _render_infinity_vcurve(cycle: dict | None):
             price_at_level = pmp * (1 + gain)
             sell_x.append(f"TP{i + 1} (+{gain * 100:.1f}%)")
             sell_y.append(price_at_level)
-            sell_texts.append(f"Sell TP{i + 1}\n${price_at_level:,.0f}\n+{gain * 100:.1f}%")
+            sell_texts.append(f"Sell TP{i + 1}\n{_pfmt(price_at_level)}\n+{gain * 100:.1f}%")
 
         # Ligne des niveaux de vente (gris pointillé)
         fig.add_trace(go.Scatter(
@@ -1413,10 +1423,10 @@ def _render_infinity_vcurve(cycle: dict | None):
             mode="markers+text",
             marker=dict(size=18, color="#00e676", symbol="circle",
                         line=dict(color="white", width=2)),
-            text=[f"${s['price']:,.0f}"],
+            text=[_pfmt(s['price'])],
             textposition="top center",
             textfont=dict(size=11, color="#00e676"),
-            hovertext=f"🟢 VENTE TP{lvl + 1}<br>${s['price']:,.0f}<br>"
+            hovertext=f"🟢 VENTE TP{lvl + 1}<br>{_pfmt(s['price'])}<br>"
                        f"Size: {s.get('size', 0):.6f} {cycle.get('symbol', '?').split('-')[0]}<br>"
                        f"Revenus: ${s.get('proceeds', 0):,.2f}",
             hoverinfo="text",
@@ -1430,7 +1440,7 @@ def _render_infinity_vcurve(cycle: dict | None):
         fig.add_hline(
             y=current_price,
             line_dash="dash", line_color="#2196f3", line_width=1.5,
-            annotation_text=f"Prix actuel: ${current_price:,.0f}",
+            annotation_text=f"Prix actuel: {_pfmt(current_price)}",
             annotation_position="top right",
             annotation_font_color="#2196f3",
         )
@@ -1441,7 +1451,7 @@ def _render_infinity_vcurve(cycle: dict | None):
         fig.add_hline(
             y=sl_price,
             line_dash="dot", line_color="#ff1744", line_width=1,
-            annotation_text=f"SL: ${sl_price:,.0f} (-{stop_loss_pct * 100:.0f}%)",
+            annotation_text=f"SL: {_pfmt(sl_price)} (-{stop_loss_pct * 100:.0f}%)",
             annotation_position="bottom right",
             annotation_font_color="#ff1744",
         )
@@ -1462,7 +1472,7 @@ def _render_infinity_vcurve(cycle: dict | None):
         fig.add_hline(
             y=trailing_high,
             line_dash="dot", line_color="rgba(255,255,255,0.3)", line_width=1,
-            annotation_text=f"Trail High: ${trailing_high:,.0f}",
+            annotation_text=f"Trail High: {_pfmt(trailing_high)}",
             annotation_position="top right",
             annotation_font_color="rgba(255,255,255,0.5)",
         )
@@ -1527,11 +1537,11 @@ def _render_vcurve_theoretical(cycle: dict):
     st.subheader("📐 Niveaux théoriques (prochain cycle)")
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Trail High", f"${trailing_high:,.0f}")
-    col2.metric("🎯 Cible entrée", f"${target:,.0f}", f"-{entry_drop * 100:.0f}%")
+    col1.metric("Trail High", _pfmt(trailing_high))
+    col2.metric("🎯 Cible entrée", _pfmt(target), f"-{entry_drop * 100:.0f}%")
     if current_price > 0:
         gap = (current_price - target) / current_price * 100
-        col3.metric("Prix actuel", f"${current_price:,.0f}", f"{gap:+.1f}% de la cible")
+        col3.metric("Prix actuel", _pfmt(current_price), f"{gap:+.1f}% de la cible")
     else:
         col3.metric("Prix actuel", "—")
 
@@ -1542,7 +1552,7 @@ def _render_vcurve_theoretical(cycle: dict):
         rows.append({
             "Palier": f"L{i + 1}",
             "Drop": f"{drop * 100:+.0f}%",
-            "Prix": f"${price:,.0f}",
+            "Prix": _pfmt(price),
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
