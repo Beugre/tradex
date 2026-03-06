@@ -1478,12 +1478,8 @@ class TradeXBinanceCrashBot:
                 "gain_pct": gain,
                 "notional": notional,
                 "steps": steps,
+                "price": price,
             })
-            logger.info(
-                "  [%s] LONG @ %s | SL=%s | TP=%s | peak=%s | now=%s (%+.1f%%) | steps=%d",
-                pos.symbol, _fmt(pos.entry_price), _fmt(sl), _fmt(tp),
-                _fmt(peak), _fmt(price), gain, steps,
-            )
 
         exposure_pct = (exposure_notional / allocated_equity * 100) if allocated_equity > 0 else 0
         daily_pnl_pct = (self._daily_pnl / allocated_equity * 100) if allocated_equity > 0 else 0
@@ -1491,16 +1487,26 @@ class TradeXBinanceCrashBot:
         avg_latency = (sum(self._api_latencies) / len(self._api_latencies)) if self._api_latencies else 0
         self._check_data_freshness()
 
+        # Construire les lignes positions pour le heartbeat
+        pos_lines = ""
+        for pd in positions_detail:
+            emoji = "🟢" if pd["gain_pct"] >= 0 else "🔴"
+            pos_lines += (
+                f"\n   {emoji} {pd['symbol']} @ {_fmt(pd['entry'])} → {_fmt(pd['price'])} "
+                f"({pd['gain_pct']:+.1f}%) | SL={_fmt(pd['sl'])} | "
+                f"TP={_fmt(pd['tp'])} | steps={pd['steps']}"
+            )
+
         logger.info(
             "💓 CRASHBOT H4 | Equity: $%.0f | DD: %+.1f%% | "
             "Expo: %.0f%% | Pos: %d/%d | PnL jour: %+.2f$ (%+.1f%%) | Kill: %s | "
-            "Signaux: %d📡 | API: %.0fms | cycle #%d",
+            "Signaux: %d📡 | API: %.0fms | cycle #%d%s",
             allocated_equity, dd_pct,
             exposure_pct, len(open_pos), config.BINANCE_CRASHBOT_MAX_POSITIONS,
             self._daily_pnl, daily_pnl_pct,
             "🔴 ON" if self._kill_switch_active else "🟢 OFF",
             self._signals_detected,
-            avg_latency, self._cycle_count,
+            avg_latency, self._cycle_count, pos_lines,
         )
 
         # Heartbeat Telegram (moins fréquent)
