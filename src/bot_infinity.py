@@ -1366,7 +1366,8 @@ class InfinityBot:
         else:
             next_h4 = now_utc.replace(hour=h4_hour, minute=0, second=0, microsecond=0)
         countdown_min = max(0, int((next_h4 - now_utc).total_seconds() / 60))
-        countdown_str = f"{countdown_min}min" if countdown_min < 60 else f"{countdown_min // 60}h{countdown_min % 60:02d}"
+        countdown_hm = f"{countdown_min}min" if countdown_min < 60 else f"{countdown_min // 60}h{countdown_min % 60:02d}"
+        countdown_str = f"{countdown_hm} ({next_h4.strftime('%Hh%M')} UTC)"
 
         logger.info(
             "💓 INFINITY Alive | tick=%d | cycle=%d | phase=%s | equity=$%.2f "
