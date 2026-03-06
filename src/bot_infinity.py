@@ -1586,7 +1586,7 @@ class InfinityBot:
                     nt_price = cycle.pmp * (1 + cfg.sell_levels[n_sells])
                     next_tp_str = f"TP{n_sells + 1}@`{_fmt(nt_price)}`"
                 tg_pair_lines.append(
-                    f"  PMP: `{_fmt(cycle.pmp)}` | Inv: `${cycle.total_cost:,.2f}` | "
+                    f"  📊 Prix: `{_fmt(current_price)}` | PMP: `{_fmt(cycle.pmp)}` | Inv: `${cycle.total_cost:,.2f}` | "
                     f"B: `{len(cycle.buys)}/5` S: `{len(cycle.sells)}/5`{be_tag}"
                 )
                 tg_pair_lines.append(
