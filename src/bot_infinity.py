@@ -1513,16 +1513,34 @@ class InfinityBot:
                 pnl_latent_pct = pnl_latent / cycle.total_cost * 100 if cycle.total_cost > 0 else 0
 
             # Console log per pair
-            logger.info(
-                "   [%s] phase=%s | alloc=$%.0f | trail=%s | prix=%s | cible=%s | écart=%.1f%%",
-                symbol, cycle.phase, allocated,
-                _fmt(trailing_high), _fmt(current_price), _fmt(target_entry), ecart_pct,
-            )
-
-            if cycle.phase != "WAITING":
+            if cycle.phase == "WAITING":
                 logger.info(
-                    "      PMP=%s | inv=$%.2f | size=%.8f | buys=%d | sells=%d | PnL=$%+.2f (%+.1f%%)",
-                    _fmt(cycle.pmp), cycle.total_cost, cycle.size_remaining,
+                    "   [%s] phase=%s | alloc=$%.0f | trail=%s | prix=%s | cible=%s | écart=%.1f%%",
+                    symbol, cycle.phase, allocated,
+                    _fmt(trailing_high), _fmt(current_price), _fmt(target_entry), ecart_pct,
+                )
+            else:
+                # Prochain palier d'achat
+                n_buys = len(cycle.buys)
+                next_buy_str = "—"
+                if n_buys < len(cfg.buy_levels):
+                    next_buy_price = cycle.reference_price * (1 + cfg.buy_levels[n_buys])
+                    next_buy_str = f"L{n_buys + 1}@{_fmt(next_buy_price)}"
+                # Prochain palier de vente
+                n_sells = len(cycle.sells)
+                next_tp_str = "—"
+                if n_sells < len(cfg.sell_levels) and cycle.pmp > 0:
+                    next_tp_price = cycle.pmp * (1 + cfg.sell_levels[n_sells])
+                    next_tp_str = f"TP{n_sells + 1}@{_fmt(next_tp_price)}"
+
+                logger.info(
+                    "   [%s] phase=%s | alloc=$%.0f | prix=%s | PMP=%s | next_buy=%s | next_tp=%s",
+                    symbol, cycle.phase, allocated,
+                    _fmt(current_price), _fmt(cycle.pmp), next_buy_str, next_tp_str,
+                )
+                logger.info(
+                    "      inv=$%.2f | size=%.8f | buys=%d | sells=%d | PnL=$%+.2f (%+.1f%%)",
+                    cycle.total_cost, cycle.size_remaining,
                     len(cycle.buys), len(cycle.sells), pnl_latent, pnl_latent_pct,
                 )
 
@@ -1549,20 +1567,35 @@ class InfinityBot:
             ecart_fire = "🔥" if abs(ecart_pct) < 1.0 else ""
             tg_pair_lines.append(f"\n  ── *{symbol}* ──")
             tg_pair_lines.append(f"  Phase: `{cycle.phase}` | Cycle: `{ctx.cycle_count}`")
-            tg_pair_lines.append(
-                f"  📊 Trail: `{_fmt(trailing_high)}` → Cible: `{_fmt(target_entry)}` | Écart: `{ecart_pct:+.1f}%` {ecart_fire}"
-            )
-            if cycle.phase != "WAITING":
+            if cycle.phase == "WAITING":
+                tg_pair_lines.append(
+                    f"  📊 Trail: `{_fmt(trailing_high)}` → Cible: `{_fmt(target_entry)}` | Écart: `{ecart_pct:+.1f}%` {ecart_fire}"
+                )
+            else:
                 pnl_emoji = "🟢" if pnl_latent >= 0 else "🔴"
                 be_tag = " 🔒BE" if cycle.breakeven_active else ""
+                # Prochains paliers
+                n_buys = len(cycle.buys)
+                n_sells = len(cycle.sells)
+                next_buy_str = "—"
+                if n_buys < len(cfg.buy_levels):
+                    nb_price = cycle.reference_price * (1 + cfg.buy_levels[n_buys])
+                    next_buy_str = f"L{n_buys + 1}@`{_fmt(nb_price)}`"
+                next_tp_str = "—"
+                if n_sells < len(cfg.sell_levels) and cycle.pmp > 0:
+                    nt_price = cycle.pmp * (1 + cfg.sell_levels[n_sells])
+                    next_tp_str = f"TP{n_sells + 1}@`{_fmt(nt_price)}`"
                 tg_pair_lines.append(
                     f"  PMP: `{_fmt(cycle.pmp)}` | Inv: `${cycle.total_cost:,.2f}` | "
                     f"B: `{len(cycle.buys)}/5` S: `{len(cycle.sells)}/5`{be_tag}"
                 )
                 tg_pair_lines.append(
+                    f"  ⬇️ {next_buy_str} | ⬆️ {next_tp_str}"
+                )
+                tg_pair_lines.append(
                     f"  {pnl_emoji} Latent: `{pnl_latent:+.2f}$` (`{pnl_latent_pct:+.1f}%`)"
                 )
-            elif ctx.last_eval:
+            if cycle.phase == "WAITING" and ctx.last_eval:
                 ev = ctx.last_eval
                 d_i = "✅" if ev.get("drop_ok") else "❌"
                 r_i = "✅" if ev.get("rsi_ok") else "❌"
