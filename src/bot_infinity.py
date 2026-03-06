@@ -1066,7 +1066,13 @@ class InfinityBot:
     # ── Order execution ────────────────────────────────────────────────────────
 
     def _execute_buy(self, ctx: PairContext, price: float, size: float, cost_usd: float, level: int) -> bool:
-        """Exécute un achat via Revolut X (maker-only)."""
+        """Exécute un achat via Revolut X.
+
+        Stratégie d'exécution :
+        1. Maker (0% fee) avec le prix initial → attente 60s
+        2. Si no-fill : rafraîchit le prix, retry maker → attente 60s
+        3. Si toujours no-fill : taker fallback (0.09% fee) à prix rafraîchi
+        """
         if self.dry_run:
             logger.info(
                 "[DRY-RUN] INFINITY BUY L%d | %s @ %s | size=%.8f ($%.2f)",
@@ -1074,9 +1080,55 @@ class InfinityBot:
             )
             return True
 
-        price_str = self._format_order_price(price)
-        size_str = f"{size:.8f}"
+        MAX_MAKER_RETRIES = 2
 
+        current_price = price
+        for attempt in range(1, MAX_MAKER_RETRIES + 1):
+            price_str = self._format_order_price(current_price)
+            size_str = f"{cost_usd / current_price:.8f}"
+
+            order = OrderRequest(
+                symbol=ctx.symbol,
+                side=OrderSide.BUY,
+                base_size=size_str,
+                price=price_str,
+            )
+
+            try:
+                result = self._place_maker_only_order(order)
+                fill_type = result.get("fill_type", "unknown")
+
+                if fill_type != "no_fill":
+                    logger.info(
+                        "[%s] ♾️ ✅ BUY L%d exécuté | @ %s | size=%s | maker (tentative %d)",
+                        ctx.symbol, level + 1, price_str, size_str, attempt,
+                    )
+                    return True
+
+                # Maker no-fill → rafraîchir le prix pour la suite
+                logger.info(
+                    "[%s] ♾️ BUY L%d: maker no-fill (tentative %d/%d)",
+                    ctx.symbol, level + 1, attempt, MAX_MAKER_RETRIES,
+                )
+                try:
+                    ticker = self._data.get_ticker(ctx.symbol)
+                    if ticker:
+                        current_price = ticker.last_price
+                except Exception:
+                    pass
+
+            except Exception as e:
+                logger.error("[%s] ♾️ ❌ BUY L%d maker échoué (tentative %d): %s",
+                             ctx.symbol, level + 1, attempt, e)
+                break
+
+        # ── Taker fallback (prix rafraîchi) ──
+        logger.warning(
+            "[%s] ♾️ BUY L%d: %d makers no-fill → TAKER FALLBACK @ %s",
+            ctx.symbol, level + 1, MAX_MAKER_RETRIES, _fmt(current_price),
+        )
+        price_str = self._format_order_price(current_price)
+        size_str = f"{cost_usd / current_price:.8f}"
         order = OrderRequest(
             symbol=ctx.symbol,
             side=OrderSide.BUY,
@@ -1085,39 +1137,31 @@ class InfinityBot:
         )
 
         try:
-            result = self._place_maker_only_order(order)
+            result = self._place_taker_order(order)
             fill_type = result.get("fill_type", "unknown")
 
             if fill_type == "no_fill":
-                logger.warning(
-                    "[%s] ♾️ BUY L%d: maker no-fill après %ds → TAKER FALLBACK",
-                    ctx.symbol, level + 1, INF_MAKER_WAIT_SECONDS,
+                logger.error(
+                    "[%s] ♾️ BUY L%d: taker fallback échoué aussi — abandonné", ctx.symbol, level + 1,
                 )
-                result = self._place_taker_order(order)
-                fill_type = result.get("fill_type", "unknown")
-                if fill_type == "no_fill":
-                    logger.error(
-                        "[%s] ♾️ BUY L%d: taker fallback échoué aussi — abandonné",
-                        ctx.symbol, level + 1,
+                try:
+                    fb_log_event(
+                        event_type="infinity_maker_no_fill",
+                        data={"level": level, "price": current_price, "side": "BUY", "retries": MAX_MAKER_RETRIES},
+                        symbol=ctx.symbol,
                     )
-                    try:
-                        fb_log_event(
-                            event_type="infinity_maker_no_fill",
-                            data={"level": level, "price": price, "side": "BUY"},
-                            symbol=ctx.symbol,
-                        )
-                    except Exception:
-                        pass
-                    return False
+                except Exception:
+                    pass
+                return False
 
             logger.info(
-                "[%s] ♾️ ✅ BUY L%d exécuté | @ %s | size=%s | %s",
-                ctx.symbol, level + 1, price_str, size_str, fill_type,
+                "[%s] ♾️ ✅ BUY L%d exécuté | @ %s | size=%s | taker fallback",
+                ctx.symbol, level + 1, price_str, size_str,
             )
             return True
 
         except Exception as e:
-            logger.error("[%s] ♾️ ❌ BUY L%d échoué: %s", ctx.symbol, level + 1, e)
+            logger.error("[%s] ♾️ ❌ BUY L%d taker échoué: %s", ctx.symbol, level + 1, e)
             self._telegram.notify_error(f"♾️ BUY L{level + 1} {ctx.symbol} échoué: {e}")
             return False
 
