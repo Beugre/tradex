@@ -20,6 +20,7 @@ Usage :
 from __future__ import annotations
 
 import argparse
+import json as _json
 import logging
 import os
 import signal
@@ -86,6 +87,10 @@ EXCHANGE_NAME = "binance-crashbot"
 _STATE_FILE = os.environ.get(
     "TRADEX_BINANCE_CRASHBOT_STATE_FILE",
     os.path.join(os.path.dirname(__file__), "..", "data", "state_binance_crashbot.json"),
+)
+
+_MOMENTUM_STATE_FILE = os.path.join(
+    os.path.dirname(__file__), "..", "data", "crashbot_momentum_state.json",
 )
 
 # Cooldown H4 en ms (4h)
@@ -197,6 +202,12 @@ class TradeXBinanceCrashBot:
         self._dd_warning_sent: bool = False
         self._cumulative_pnl: float = 0.0  # PnL cumulé (chargé depuis Firebase au démarrage)
 
+        # ── Momentum Sizing ──
+        # Ajuste le risk% dynamiquement : ↑ après un WIN, ↓ après un LOSS
+        self._momentum_sizing_enabled: bool = config.BINANCE_CRASHBOT_MOMENTUM_SIZING
+        self._current_risk: float = config.BINANCE_CRASHBOT_RISK_PERCENT  # risk% dynamique
+        self._base_risk: float = config.BINANCE_CRASHBOT_RISK_PERCENT     # risk% de base (référence)
+
         # CrashBot config
         self._crash_cfg = CrashConfig(
             drop_threshold=config.BINANCE_CRASHBOT_DROP_THRESHOLD,
@@ -225,6 +236,8 @@ class TradeXBinanceCrashBot:
         self._init_cumulative_pnl()
         self._init_allocation()
         self._init_kill_switch()
+        if self._momentum_sizing_enabled:
+            self._load_momentum_state()
 
         logger.info("═" * 60)
         logger.info("🚀 TradeX BINANCE CRASHBOT démarré — Dip Buy, Long Only")
@@ -235,11 +248,24 @@ class TradeXBinanceCrashBot:
             self._crash_cfg.lookback_bars,
             self._crash_cfg.lookback_bars * 4,
         )
-        logger.info(
-            "   Risk       : %.0f%% par trade | Max positions: %d",
-            config.BINANCE_CRASHBOT_RISK_PERCENT * 100,
-            config.BINANCE_CRASHBOT_MAX_POSITIONS,
-        )
+        if self._momentum_sizing_enabled:
+            logger.info(
+                "   Risk       : %.1f%% actuel (base %.0f%%, range [%.0f%%–%.0f%%]) | "
+                "Boost ×%.1f / Shrink ×%.1f | Max positions: %d",
+                self._current_risk * 100,
+                self._base_risk * 100,
+                config.BINANCE_CRASHBOT_MIN_RISK_PCT * 100,
+                config.BINANCE_CRASHBOT_MAX_RISK_PCT * 100,
+                config.BINANCE_CRASHBOT_RISK_BOOST_MULT,
+                config.BINANCE_CRASHBOT_RISK_SHRINK_MULT,
+                config.BINANCE_CRASHBOT_MAX_POSITIONS,
+            )
+        else:
+            logger.info(
+                "   Risk       : %.0f%% par trade | Max positions: %d",
+                config.BINANCE_CRASHBOT_RISK_PERCENT * 100,
+                config.BINANCE_CRASHBOT_MAX_POSITIONS,
+            )
         logger.info(
             "   TP: +%.1f%% | SL: %.1f×ATR | Trail step: +%.2f%%",
             self._crash_cfg.tp_pct * 100,
@@ -906,8 +932,8 @@ class TradeXBinanceCrashBot:
             logger.debug("[%s] Risque global max atteint (%.1f%%), skip", symbol, current_risk * 100)
             return
 
-        # Sizing
-        risk_pct = config.BINANCE_CRASHBOT_RISK_PERCENT
+        # Sizing — momentum sizing : risk% dynamique
+        risk_pct = self._current_risk if self._momentum_sizing_enabled else config.BINANCE_CRASHBOT_RISK_PERCENT
         ticker = self._data.get_ticker(symbol)
         if ticker is None:
             return
@@ -1375,6 +1401,29 @@ class TradeXBinanceCrashBot:
         # Incrémenter le PnL cumulé en mémoire
         self._cumulative_pnl += pnl_net
 
+        # ── Momentum Sizing : ajuster le risk% pour le prochain trade ──
+        if self._momentum_sizing_enabled:
+            old_risk = self._current_risk
+            if pnl_net >= 0:
+                # WIN → boost risk
+                self._current_risk = min(
+                    self._current_risk * config.BINANCE_CRASHBOT_RISK_BOOST_MULT,
+                    config.BINANCE_CRASHBOT_MAX_RISK_PCT,
+                )
+            else:
+                # LOSS → shrink risk
+                self._current_risk = max(
+                    self._current_risk * config.BINANCE_CRASHBOT_RISK_SHRINK_MULT,
+                    config.BINANCE_CRASHBOT_MIN_RISK_PCT,
+                )
+            if self._current_risk != old_risk:
+                logger.info(
+                    "[%s] 📊 Momentum Sizing: risk %.1f%% → %.1f%% (%s)",
+                    symbol, old_risk * 100, self._current_risk * 100,
+                    "WIN ↑" if pnl_net >= 0 else "LOSS ↓",
+                )
+            self._save_momentum_state()
+
         # Firebase
         equity_after = self._calculate_allocated_equity()
 
@@ -1429,6 +1478,39 @@ class TradeXBinanceCrashBot:
 
     def _save_state(self) -> None:
         self._store.save(self._positions, {})
+
+    # ── Momentum Sizing persistance ────────────────────────────────────────────
+
+    def _save_momentum_state(self) -> None:
+        """Persiste le risk% dynamique sur disque pour survivre aux redémarrages."""
+        state = {"current_risk": self._current_risk}
+        path = os.path.abspath(_MOMENTUM_STATE_FILE)
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                _json.dump(state, f)
+        except Exception as e:
+            logger.warning("⚠️ Impossible de sauver momentum state: %s", e)
+
+    def _load_momentum_state(self) -> None:
+        """Restaure le risk% dynamique depuis le disque."""
+        path = os.path.abspath(_MOMENTUM_STATE_FILE)
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path) as f:
+                state = _json.load(f)
+            risk = state.get("current_risk", self._base_risk)
+            # Borner aux limites configurées
+            risk = max(config.BINANCE_CRASHBOT_MIN_RISK_PCT,
+                       min(risk, config.BINANCE_CRASHBOT_MAX_RISK_PCT))
+            self._current_risk = risk
+            logger.info(
+                "📊 Momentum Sizing restauré: risk=%.1f%% (base=%.1f%%)",
+                self._current_risk * 100, self._base_risk * 100,
+            )
+        except Exception as e:
+            logger.warning("⚠️ Impossible de charger momentum state: %s", e)
 
     def _maybe_heartbeat(self) -> None:
         """Heartbeat étendu — log + Telegram périodique."""
@@ -1497,16 +1579,20 @@ class TradeXBinanceCrashBot:
                 f"TP={_fmt(pd['tp'])} | steps={pd['steps']}"
             )
 
+        risk_info = ""
+        if self._momentum_sizing_enabled:
+            risk_info = f" | Risk: {self._current_risk*100:.1f}%"
+
         logger.info(
             "💓 CRASHBOT H4 | Equity: $%.0f | DD: %+.1f%% | "
             "Expo: %.0f%% | Pos: %d/%d | PnL jour: %+.2f$ (%+.1f%%) | Kill: %s | "
-            "Signaux: %d📡 | API: %.0fms | cycle #%d%s",
+            "Signaux: %d📡 | API: %.0fms%s | cycle #%d%s",
             allocated_equity, dd_pct,
             exposure_pct, len(open_pos), config.BINANCE_CRASHBOT_MAX_POSITIONS,
             self._daily_pnl, daily_pnl_pct,
             "🔴 ON" if self._kill_switch_active else "🟢 OFF",
             self._signals_detected,
-            avg_latency, self._cycle_count, pos_lines,
+            avg_latency, risk_info, self._cycle_count, pos_lines,
         )
 
         # Heartbeat Telegram (moins fréquent)
@@ -1525,6 +1611,7 @@ class TradeXBinanceCrashBot:
                 positions_detail=positions_detail,
                 signals_detected=self._signals_detected,
                 avg_api_latency_ms=avg_latency,
+                current_risk_pct=self._current_risk if self._momentum_sizing_enabled else None,
             )
 
         # Firebase heartbeat

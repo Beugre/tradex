@@ -104,6 +104,11 @@ Les bots **Infinity** et **London Breakout** partagent le même compte Revolut X
 - **Capital** : Portion dominante via `allocator.py` (60–90% selon PF Trail)
 - **Boucle** : Polling continu, détection de crash via `crashbot_detector.py`
 - **Heartbeat** : Toutes les 10 minutes (`CRASHBOT_HEARTBEAT_TELEGRAM_SECONDS=600`)
+- **Momentum Sizing** : Le risk% s'ajuste dynamiquement après chaque trade :
+  - WIN → `risk *= 1.2` (plafond 10%)
+  - LOSS → `risk *= 0.8` (plancher 2%)
+  - Base : 5%, persisté dans `crashbot_momentum_state.json`
+  - Désactivable via `BINANCE_CRASHBOT_MOMENTUM_SIZING=false`
 
 ## Bot 3 — Infinity (`bot_infinity.py`)
 
@@ -200,6 +205,11 @@ MAX_POSITION_PERCENT=0.50
 # ── CrashBot (bot_binance_crashbot.py) ──
 # (partage le même BINANCE_API_KEY, capital via allocator)
 CRASHBOT_HEARTBEAT_TELEGRAM_SECONDS=600
+BINANCE_CRASHBOT_MOMENTUM_SIZING=true
+BINANCE_CRASHBOT_RISK_BOOST_MULT=1.2
+BINANCE_CRASHBOT_RISK_SHRINK_MULT=0.8
+BINANCE_CRASHBOT_MIN_RISK_PCT=0.02
+BINANCE_CRASHBOT_MAX_RISK_PCT=0.10
 
 # ── Infinity (bot_infinity.py) ──
 INF_TRADING_PAIRS=BTC-USD,AAVE-USD,XLM-USD,ADA-USD,DOT-USD,LTC-USD

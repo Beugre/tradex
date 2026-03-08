@@ -127,6 +127,25 @@ BINANCE_CRASHBOT_KILL_SWITCH: bool = os.getenv(
 BINANCE_CRASHBOT_KILL_PCT: float = float(
     os.getenv("BINANCE_CRASHBOT_KILL_PCT", "-0.10")
 )
+# Momentum Sizing — ajuste le risk% dynamiquement selon W/L du trade précédent
+# Après un WIN  → risk *= BOOST (1.2)  → plafond MAX
+# Après un LOSS → risk *= SHRINK (0.8) → plancher MIN
+BINANCE_CRASHBOT_MOMENTUM_SIZING: bool = os.getenv(
+    "BINANCE_CRASHBOT_MOMENTUM_SIZING", "true"
+).lower() in ("true", "1", "yes")
+BINANCE_CRASHBOT_RISK_BOOST_MULT: float = float(
+    os.getenv("BINANCE_CRASHBOT_RISK_BOOST_MULT", "1.2")
+)
+BINANCE_CRASHBOT_RISK_SHRINK_MULT: float = float(
+    os.getenv("BINANCE_CRASHBOT_RISK_SHRINK_MULT", "0.8")
+)
+BINANCE_CRASHBOT_MIN_RISK_PCT: float = float(
+    os.getenv("BINANCE_CRASHBOT_MIN_RISK_PCT", "0.02")
+)
+BINANCE_CRASHBOT_MAX_RISK_PCT: float = float(
+    os.getenv("BINANCE_CRASHBOT_MAX_RISK_PCT", "0.10")
+)
+
 # Heartbeat Telegram CrashBot
 CRASHBOT_HEARTBEAT_TELEGRAM_SECONDS: int = int(
     os.getenv("CRASHBOT_HEARTBEAT_TELEGRAM_SECONDS", "600")

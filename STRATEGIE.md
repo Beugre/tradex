@@ -230,6 +230,38 @@ Equity actuelle : 1 780$ → perf = -11% < -10%
 → 🚨 KILL-SWITCH ! Pause jusqu'au 1er du mois prochain.
 ```
 
+### Momentum Sizing (taille dynamique)
+
+Le risk% par trade n'est pas fixe : il **augmente après un gain** et **diminue après une perte**.
+
+**Pourquoi ?** L'analyse de 1018 trades historiques a révélé que les résultats du CrashBot ne sont **pas aléatoires** : ils forment des **séries** (autocorrélation +0.24 à +0.55). Après un gain, la probabilité d'un autre gain est élevée → on augmente l'exposition. Après une perte, le risque de série perdante est fort → on réduit.
+
+| Événement | Action | Formule |
+|-----------|--------|---------|
+| **WIN** (PnL ≥ 0) | Boost | `risk = min(risk × 1.2, 10%)` |
+| **LOSS** (PnL < 0) | Shrink | `risk = max(risk × 0.8, 2%)` |
+
+```
+Exemple :
+  risk de base : 5%
+  Trade 1 → WIN  → risk = 5% × 1.2 = 6.0%
+  Trade 2 → WIN  → risk = 6.0% × 1.2 = 7.2%
+  Trade 3 → LOSS → risk = 7.2% × 0.8 = 5.76%
+  Trade 4 → LOSS → risk = 5.76% × 0.8 = 4.6%
+  Trade 5 → LOSS → risk = 4.6% × 0.8 = 3.7%
+  ...plancher à 2%, plafond à 10%
+```
+
+| Paramètre | Valeur | Variable d'environnement |
+|-----------|--------|--------------------------|
+| Activation | `true` | `BINANCE_CRASHBOT_MOMENTUM_SIZING` |
+| Boost (après WIN) | ×1.2 | `BINANCE_CRASHBOT_RISK_BOOST_MULT` |
+| Shrink (après LOSS) | ×0.8 | `BINANCE_CRASHBOT_RISK_SHRINK_MULT` |
+| Plancher | 2% | `BINANCE_CRASHBOT_MIN_RISK_PCT` |
+| Plafond | 10% | `BINANCE_CRASHBOT_MAX_RISK_PCT` |
+
+Le risk% actuel est persisté sur disque (`crashbot_momentum_state.json`) et restauré au redémarrage.
+
 ---
 
 ## Bot 3 — London Breakout (Revolut X)
@@ -937,6 +969,11 @@ Prix crash à 58 100$ → SL touché ❌
 | `atr_sl_mult`               | 1.5    | Multiplicateur ATR pour le SL             |
 | `trail_step_pct`            | 0.5%   | Extension du TP par step                  |
 | `BINANCE_CRASHBOT_KILL_PCT` | -10%   | Seuil du kill-switch mensuel              |
+| `MOMENTUM_SIZING`           | true   | Active le sizing dynamique (W/L)          |
+| `RISK_BOOST_MULT`           | ×1.2   | Multiplicateur risk après un WIN          |
+| `RISK_SHRINK_MULT`          | ×0.8   | Multiplicateur risk après un LOSS         |
+| `MIN_RISK_PCT`              | 2%     | Plancher du risk% dynamique               |
+| `MAX_RISK_PCT`              | 10%    | Plafond du risk% dynamique                |
 
 ### London Breakout 🇬🇧
 

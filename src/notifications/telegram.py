@@ -350,6 +350,7 @@ class TelegramNotifier:
         positions_detail: list[dict],
         signals_detected: int,
         avg_api_latency_ms: float = 0,
+        current_risk_pct: float | None = None,
     ) -> None:
         """Heartbeat périodique CrashBot."""
         kill_emoji = "🔴 ON" if kill_switch else "🟢 OFF"
@@ -362,6 +363,9 @@ class TelegramNotifier:
             f"  PnL jour: `${daily_pnl:+.2f}` (`{daily_pnl_pct:+.1f}%`)",
             f"  Kill: {kill_emoji} | Signaux: {signals_detected}📡",
         ]
+
+        if current_risk_pct is not None:
+            lines.append(f"  📊 Risk actuel: `{current_risk_pct*100:.1f}%` (momentum sizing)")
 
         if positions_detail:
             lines.append("")
