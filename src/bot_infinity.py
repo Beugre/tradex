@@ -98,9 +98,12 @@ INF_CAPITAL_PCT: float = config.INF_CAPITAL_PCT
 
 # ── Per-pair validated configs ────────────────────────────────────────────────
 # Walk-forward validated: train 2020→2024, test 2024→2026
-# BTC  : defaults (déjà live)
-# AAVE : TEST +47.20%, PF 4.92, DD 7.90%
-# XLM  : TEST +26.13%, PF 32.66, DD 4.54%
+# BTC  : defaults (déjà live) — backtest 6y: PF 4.07, +912$/333$
+# AAVE : OPT_C (sell×2, no BE) — backtest 6y: PF 5.84, +3975$/333$
+# XLM  : OPT_A (sell×1.25, BE TP2) — backtest 6y: PF 11.18, +1125$/333$
+# ADA  : scanner grid (6y) — Score 183, PF 3.02, +93%/333$, DD 10.3%
+# DOT  : scanner grid (6y) — Score 168, PF 3.02, +86%/333$, DD 12.5%
+# LTC  : scanner grid (6y) — Score 176, PF 3.57, +57%/333$, DD 7.5%
 
 PAIR_CONFIGS: dict[str, InfinityConfig] = {
     "BTC-USD": InfinityConfig(
@@ -123,11 +126,11 @@ PAIR_CONFIGS: dict[str, InfinityConfig] = {
         entry_drop_pct=0.12,             # -12%
         buy_levels=(-0.12, -0.20, -0.28, -0.35, -0.42),
         buy_pcts=(0.25, 0.20, 0.15, 0.10, 0.00),
-        sell_levels=(0.020, 0.040, 0.060, 0.080, 0.120),
+        sell_levels=(0.040, 0.080, 0.120, 0.160, 0.240),  # OPT_C: ×2 vs ancien
         stop_loss_pct=0.25,
         max_invested_pct=0.70,
         first_entry_rsi_max=50.0,
-        use_breakeven_stop=True,
+        use_breakeven_stop=False,        # OPT_C: pas de BE
         scale_with_equity=True,
         rsi_sell_min=0.0,
         maker_fee=0.0,
@@ -138,8 +141,54 @@ PAIR_CONFIGS: dict[str, InfinityConfig] = {
         entry_drop_pct=0.12,             # -12%
         buy_levels=(-0.12, -0.20, -0.28, -0.35, -0.42),
         buy_pcts=(0.25, 0.20, 0.15, 0.10, 0.00),
-        sell_levels=(0.008, 0.015, 0.022, 0.030, 0.040),
+        sell_levels=(0.010, 0.01875, 0.0275, 0.0375, 0.050),  # OPT_A: ×1.25 vs ancien
         stop_loss_pct=0.25,
+        max_invested_pct=0.70,
+        first_entry_rsi_max=50.0,
+        use_breakeven_stop=True,
+        breakeven_after_level=1,         # OPT_A: BE après TP2
+        scale_with_equity=True,
+        rsi_sell_min=0.0,
+        maker_fee=0.0,
+        taker_fee=0.0009,
+    ),
+    "ADA-USD": InfinityConfig(
+        trailing_high_period=72,         # 12 jours
+        entry_drop_pct=0.15,             # -15%
+        buy_levels=(-0.15, -0.22, -0.30, -0.38, -0.45),
+        buy_pcts=(0.25, 0.20, 0.15, 0.10, 0.00),
+        sell_levels=(0.010, 0.020, 0.030, 0.045, 0.060),  # s2
+        stop_loss_pct=0.20,
+        max_invested_pct=0.70,
+        first_entry_rsi_max=50.0,
+        use_breakeven_stop=True,
+        scale_with_equity=True,
+        rsi_sell_min=0.0,
+        maker_fee=0.0,
+        taker_fee=0.0009,
+    ),
+    "DOT-USD": InfinityConfig(
+        trailing_high_period=48,         # 8 jours
+        entry_drop_pct=0.15,             # -15%
+        buy_levels=(-0.15, -0.22, -0.30, -0.38, -0.45),
+        buy_pcts=(0.25, 0.20, 0.15, 0.10, 0.00),
+        sell_levels=(0.020, 0.040, 0.060, 0.080, 0.120),  # s4
+        stop_loss_pct=0.20,
+        max_invested_pct=0.70,
+        first_entry_rsi_max=50.0,
+        use_breakeven_stop=True,
+        scale_with_equity=True,
+        rsi_sell_min=0.0,
+        maker_fee=0.0,
+        taker_fee=0.0009,
+    ),
+    "LTC-USD": InfinityConfig(
+        trailing_high_period=48,         # 8 jours
+        entry_drop_pct=0.15,             # -15%
+        buy_levels=(-0.15, -0.22, -0.30, -0.38, -0.45),
+        buy_pcts=(0.25, 0.20, 0.15, 0.10, 0.00),
+        sell_levels=(0.010, 0.020, 0.030, 0.045, 0.060),  # s2
+        stop_loss_pct=0.15,
         max_invested_pct=0.70,
         first_entry_rsi_max=50.0,
         use_breakeven_stop=True,

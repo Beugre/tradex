@@ -100,6 +100,7 @@ def check_range_entry_signal(
     range_state: RangeState,
     ticker: TickerData,
     entry_buffer_pct: float,
+    tp_ratio: float = 0.75,
 ) -> Optional[dict]:
     """
     Vérifie si le prix est proche d'un extrême du range pour un signal.
@@ -111,6 +112,7 @@ def check_range_entry_signal(
         range_state: Le range actif.
         ticker: Données de prix temps réel.
         entry_buffer_pct: Zone d'entrée autour de l'extrême (ex: 0.002 = 0.2%).
+        tp_ratio: Ratio du TP dans le range (0.5 = mid, 0.75 = 3/4). Défaut: 0.75.
 
     Returns:
         Dict avec 'side', 'entry_price', 'sl_price', 'tp_price' si signal, None sinon.
@@ -122,12 +124,13 @@ def check_range_entry_signal(
         return None
 
     price = ticker.last_price
+    range_width = range_state.range_high - range_state.range_low
 
     # ── BUY au bas du range ──
     buy_zone = range_state.range_low * (1 + entry_buffer_pct)
     if price <= buy_zone:
         sl_price = range_state.range_low * (1 - entry_buffer_pct)
-        tp_price = range_state.range_mid
+        tp_price = range_state.range_low + range_width * tp_ratio
 
         # Vérification anti-breakout : SL doit être EN-DESSOUS de l'entrée pour un BUY
         if sl_price >= price:
@@ -157,7 +160,7 @@ def check_range_entry_signal(
     sell_zone = range_state.range_high * (1 - entry_buffer_pct)
     if price >= sell_zone:
         sl_price = range_state.range_high * (1 + entry_buffer_pct)
-        tp_price = range_state.range_mid
+        tp_price = range_state.range_high - range_width * tp_ratio
 
         # Vérification anti-breakout : SL doit être AU-DESSUS de l'entrée pour un SELL
         if sl_price <= price:

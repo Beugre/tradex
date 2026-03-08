@@ -551,7 +551,24 @@ class TradeXBinanceBot:
             ):
                 ticker = self._data.get_ticker(symbol)
                 if ticker:
-                    self._check_trail_swap(symbol, position, ticker)
+                    # Step-trail par paliers discrets (compatible mean-reversion)
+                    if config.RANGE_STEP_TRAIL_ENABLED:
+                        self._check_step_trail(symbol, position, ticker)
+                    # Trail classique (désactivé par défaut)
+                    elif config.RANGE_TRAIL_ENABLED:
+                        self._check_trail_swap(symbol, position, ticker)
+                    else:
+                        # Sans trail, vérifier l'invalidation de tendance pour sortie forcée
+                        trend = self._trends.get(symbol)
+                        if trend:
+                            old_direction = trend.direction
+                            trend = check_trend_invalidation(trend, ticker.last_price)
+                            if trend.direction != old_direction:
+                                self._trends[symbol] = trend
+                                if trend.direction in (TrendDirection.BULLISH, TrendDirection.BEARISH):
+                                    logger.warning("[%s] TREND EXIT (no trail) | %s", symbol, trend.direction.value)
+                                    self._close_position_market(symbol, ticker.last_price, "Tendance confirmée (sortie forcée)")
+                                    return
             return
 
         ticker = self._data.get_ticker(symbol)
@@ -673,6 +690,149 @@ class TradeXBinanceBot:
                 self._save_state()
             self._close_position_market(symbol, price, "SL atteint (manual breakout)")
             return
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # STEP-TRAIL – Paliers discrets basés sur le range (compatible mean-reversion)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _check_step_trail(
+        self, symbol: str, position: Position, ticker
+    ) -> None:
+        """Step-trail par paliers discrets dans le range.
+
+        Quand le prix atteint le TP :
+          Step 1: SL → range_low + width × initial_sl_ratio
+                  TP → range_low + width × initial_tp_ratio
+          Step N: SL/TP décalent de +step_size × range_width chacun
+
+        Compatible avec le mean-reversion : les paliers sont larges et espacés,
+        contrairement au trail continu qui se fait stopper par les oscillations.
+        """
+        price = ticker.last_price
+        tp = position.tp_price
+        if tp is None or tp <= 0:
+            return
+
+        # Vérifier l'invalidation de tendance
+        trend = self._trends.get(symbol)
+        if trend:
+            old_direction = trend.direction
+            trend = check_trend_invalidation(trend, price)
+            if trend.direction != old_direction:
+                self._trends[symbol] = trend
+                logger.warning(
+                    "[%s] ⚠️ INVALIDATION (step-trail) | %s → %s | prix=%s",
+                    symbol, old_direction.value, trend.direction.value, _fmt(price),
+                )
+                if trend.direction == TrendDirection.NEUTRAL:
+                    self._neutral_transitions += 1
+                if trend.direction in (TrendDirection.BULLISH, TrendDirection.BEARISH):
+                    logger.warning("[%s] STEP-TRAIL FORCED EXIT | tendance %s", symbol, trend.direction.value)
+                    self._close_position_market(symbol, price, "Tendance confirmée (step-trail forcé)")
+                    return
+
+        # Vérifier si le prix a atteint le TP
+        if position.side == OrderSide.BUY:
+            if price < tp:
+                return  # Pas encore au TP
+        else:
+            if price > tp:
+                return
+
+        # Récupérer le range figé au moment de l'entrée
+        rng_high = position.range_high
+        rng_low = position.range_low
+        if not rng_high or not rng_low or rng_high <= rng_low:
+            # Fallback : fermer au TP si pas de range stocké
+            logger.warning("[%s] Step-trail sans range stocké — close au TP", symbol)
+            return
+
+        rng_width = rng_high - rng_low
+        step = position.trailing_steps
+
+        # Calculer les nouveaux niveaux
+        sl_ratio = config.RANGE_STEP_TRAIL_INITIAL_SL_RATIO + step * config.RANGE_STEP_TRAIL_STEP_SIZE
+        tp_ratio = config.RANGE_STEP_TRAIL_INITIAL_TP_RATIO + step * config.RANGE_STEP_TRAIL_STEP_SIZE
+
+        if position.side == OrderSide.BUY:
+            new_sl = rng_low + rng_width * sl_ratio
+            new_tp = rng_low + rng_width * tp_ratio
+        else:
+            new_sl = rng_high - rng_width * sl_ratio
+            new_tp = rng_high - rng_width * tp_ratio
+
+        old_tp = tp
+        old_sl = position.sl_price
+
+        logger.info(
+            "[%s] 📶 Step-trail step %d→%d | SL: %s→%s (%.0f%%) | TP: %s→%s (%.0f%%)",
+            symbol, step, step + 1,
+            _fmt(old_sl), _fmt(new_sl), sl_ratio * 100,
+            _fmt(old_tp), _fmt(new_tp), tp_ratio * 100,
+        )
+
+        # 1. Cancel l'OCO actuel
+        oco_info = self._oco_orders.get(symbol)
+        if oco_info and not self.dry_run:
+            try:
+                self._client.cancel_order_list(
+                    symbol=symbol,
+                    order_list_id=oco_info.get("order_list_id"),
+                )
+                logger.info("[%s] OCO annulé pour step-trail", symbol)
+            except Exception as e:
+                logger.warning("[%s] Cancel OCO pour step-trail échoué: %s", symbol, e)
+                return
+        self._oco_orders.pop(symbol, None)
+
+        # 2. Mettre à jour la position
+        position.tp_price = new_tp
+        position.sl_price = new_sl
+        position.trailing_active = True
+        position.trailing_steps = step + 1
+        position.trailing_sl = new_sl
+        position.status = PositionStatus.ZERO_RISK
+        self._positions[symbol] = position
+        self._save_state()
+
+        # 3. Placer le nouvel OCO
+        if not self.dry_run:
+            success = self._place_oco(symbol, position)
+            if not success:
+                logger.warning("[%s] Nouvel OCO step-trail échoué — retry prochain cycle", symbol)
+        else:
+            logger.info(
+                "[DRY-RUN] Step-trail OCO | SL=%s → %s | TP=%s → %s",
+                _fmt(old_sl), _fmt(new_sl), _fmt(old_tp), _fmt(new_tp),
+            )
+
+        # 4. Notifications
+        self._telegram.send_raw(
+            f"📶 Step-trail step {position.trailing_steps} – {symbol}\n"
+            f"  SL: {_fmt(old_sl)} → {_fmt(new_sl)} ({sl_ratio*100:.0f}% du range)\n"
+            f"  TP: {_fmt(old_tp)} → {_fmt(new_tp)} ({tp_ratio*100:.0f}% du range)\n"
+            f"  Prix: {_fmt(price)}"
+        )
+        try:
+            fb_log_event(
+                event_type="step_trail_swap",
+                data={
+                    "step": position.trailing_steps,
+                    "sl_ratio_pct": sl_ratio * 100,
+                    "tp_ratio_pct": tp_ratio * 100,
+                    "old_tp": old_tp,
+                    "new_tp": new_tp,
+                    "old_sl": old_sl,
+                    "new_sl": new_sl,
+                    "price": price,
+                    "range_high": rng_high,
+                    "range_low": rng_low,
+                },
+                symbol=symbol,
+                exchange=EXCHANGE_NAME,
+            )
+        except Exception:
+            pass
 
     # ═══════════════════════════════════════════════════════════════════════════
     # TRAIL@TP – Swap d'OCO quand le prix approche du TP
@@ -871,8 +1031,9 @@ class TradeXBinanceBot:
                 # Vérifier si le close est dans la buy zone
                 buy_zone = rs.range_low * (1 + config.RANGE_ENTRY_BUFFER_PERCENT)
                 if last_close <= buy_zone:
-                    sl_price = rs.range_low * (1 - config.RANGE_ENTRY_BUFFER_PERCENT)
-                    tp_price = rs.range_mid
+                    sl_price = rs.range_low * (1 - config.RANGE_SL_BUFFER_PERCENT)
+                    range_width = rs.range_high - rs.range_low
+                    tp_price = rs.range_low + range_width * config.RANGE_TP_RATIO
 
                     # Anti-breakout : si le close est déjà sous le SL → pas de signal
                     if sl_price >= last_close:
@@ -887,6 +1048,8 @@ class TradeXBinanceBot:
                         "entry_price": last_close,  # prix indicatif, l'entrée sera au market
                         "sl_price": sl_price,
                         "tp_price": tp_price,
+                        "range_high": rs.range_high,
+                        "range_low": rs.range_low,
                     }
                     self._pending_range_entries[symbol] = signal
 
@@ -1080,6 +1243,8 @@ class TradeXBinanceBot:
             status=PositionStatus.OPEN,
             strategy=StrategyType.RANGE,
             tp_price=tp_price,
+            range_high=signal.get("range_high"),
+            range_low=signal.get("range_low"),
         )
         self._positions[symbol] = position
         self._save_state()

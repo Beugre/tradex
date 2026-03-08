@@ -63,52 +63,6 @@ BINANCE_RANGE_ALLOCATED_BALANCE: float = float(
     os.getenv("BINANCE_RANGE_ALLOCATED_BALANCE", "0")
 )
 
-# ── Binance Breakout Bot ───────────────────────────────────────────────────────
-BINANCE_BREAKOUT_ALLOCATED_BALANCE: float = float(
-    os.getenv("BINANCE_BREAKOUT_ALLOCATED_BALANCE", "0")
-)
-BINANCE_BREAKOUT_RISK_PERCENT: float = float(
-    os.getenv("BINANCE_BREAKOUT_RISK_PERCENT", "0.02")
-)
-BINANCE_BREAKOUT_MAX_POSITIONS: int = int(
-    os.getenv("BINANCE_BREAKOUT_MAX_POSITIONS", "3")
-)
-BINANCE_BREAKOUT_POLLING_SECONDS: int = int(
-    os.getenv("BINANCE_BREAKOUT_POLLING_SECONDS", "30")
-)
-# Paires Breakout (si vide → auto-discovery des USDC pairs)
-BINANCE_BREAKOUT_PAIRS: list[str] = [
-    p.strip() for p in
-    os.getenv("BINANCE_BREAKOUT_PAIRS", "").split(",")
-    if p.strip()
-]
-# Breakout detector params
-BINANCE_BREAKOUT_BB_PERIOD: int = int(os.getenv("BINANCE_BREAKOUT_BB_PERIOD", "20"))
-BINANCE_BREAKOUT_BB_STD: float = float(os.getenv("BINANCE_BREAKOUT_BB_STD", "2.0"))
-BINANCE_BREAKOUT_BB_EXPANSION: float = float(os.getenv("BINANCE_BREAKOUT_BB_EXPANSION", "1.2"))
-BINANCE_BREAKOUT_DONCHIAN_PERIOD: int = int(os.getenv("BINANCE_BREAKOUT_DONCHIAN_PERIOD", "20"))
-BINANCE_BREAKOUT_ADX_THRESHOLD: float = float(os.getenv("BINANCE_BREAKOUT_ADX_THRESHOLD", "25.0"))
-BINANCE_BREAKOUT_VOL_MULT: float = float(os.getenv("BINANCE_BREAKOUT_VOL_MULT", "1.2"))
-BINANCE_BREAKOUT_SL_ATR_MULT: float = float(os.getenv("BINANCE_BREAKOUT_SL_ATR_MULT", "1.5"))
-BINANCE_BREAKOUT_TRAIL_ATR_MULT: float = float(os.getenv("BINANCE_BREAKOUT_TRAIL_ATR_MULT", "2.0"))
-# Adaptive trailing (paliers)
-BINANCE_BREAKOUT_ADAPTIVE_TRAIL: bool = os.getenv(
-    "BINANCE_BREAKOUT_ADAPTIVE_TRAIL", "true"
-).lower() in ("true", "1", "yes")
-BINANCE_BREAKOUT_TRAIL_STEP1_PCT: float = float(os.getenv("BINANCE_BREAKOUT_TRAIL_STEP1_PCT", "0.02"))
-BINANCE_BREAKOUT_TRAIL_STEP2_PCT: float = float(os.getenv("BINANCE_BREAKOUT_TRAIL_STEP2_PCT", "0.05"))
-BINANCE_BREAKOUT_TRAIL_LOCK1_PCT: float = float(os.getenv("BINANCE_BREAKOUT_TRAIL_LOCK1_PCT", "0.002"))
-BINANCE_BREAKOUT_TRAIL_LOCK2_PCT: float = float(os.getenv("BINANCE_BREAKOUT_TRAIL_LOCK2_PCT", "0.02"))
-# Kill-switch mensuel
-BINANCE_BREAKOUT_KILL_SWITCH: bool = os.getenv(
-    "BINANCE_BREAKOUT_KILL_SWITCH", "true"
-).lower() in ("true", "1", "yes")
-BINANCE_BREAKOUT_KILL_PCT: float = float(os.getenv("BINANCE_BREAKOUT_KILL_PCT", "-0.10"))
-
-# ── Monitoring & Alertes (Breakout) ────────────────────────────────────────────
-BREAKOUT_HEARTBEAT_TELEGRAM_SECONDS: int = int(
-    os.getenv("BREAKOUT_HEARTBEAT_TELEGRAM_SECONDS", "3600")  # Heartbeat Telegram 1x/heure
-)
 API_SLOW_THRESHOLD_MS: float = float(os.getenv("API_SLOW_THRESHOLD_MS", "5000"))
 DATA_STALE_THRESHOLD_SECONDS: int = int(
     os.getenv("DATA_STALE_THRESHOLD_SECONDS", "18000")  # 5h (H4 + 1h marge)
@@ -175,7 +129,7 @@ BINANCE_CRASHBOT_KILL_PCT: float = float(
 )
 # Heartbeat Telegram CrashBot
 CRASHBOT_HEARTBEAT_TELEGRAM_SECONDS: int = int(
-    os.getenv("CRASHBOT_HEARTBEAT_TELEGRAM_SECONDS", "3600")
+    os.getenv("CRASHBOT_HEARTBEAT_TELEGRAM_SECONDS", "600")
 )
 
 # ── Telegram ───────────────────────────────────────────────────────────────────
@@ -216,14 +170,37 @@ SWING_LOOKBACK: int = int(os.getenv("SWING_LOOKBACK", "3"))
 
 # ── Paramètres Mean-Reversion (Range) ──────────────────────────────────────────
 RANGE_ENTRY_BUFFER_PERCENT: float = float(
-    os.getenv("RANGE_ENTRY_BUFFER_PERCENT", "0.002")
+    os.getenv("RANGE_ENTRY_BUFFER_PERCENT", "0.003")
 )
 RANGE_SL_BUFFER_PERCENT: float = float(
-    os.getenv("RANGE_SL_BUFFER_PERCENT", "0.003")
+    os.getenv("RANGE_SL_BUFFER_PERCENT", "0.008")
 )
-RANGE_WIDTH_MIN: float = float(os.getenv("RANGE_WIDTH_MIN", "0.02"))
+RANGE_WIDTH_MIN: float = float(os.getenv("RANGE_WIDTH_MIN", "0.03"))
 RANGE_COOLDOWN_BARS: int = int(os.getenv("RANGE_COOLDOWN_BARS", "3"))
+# TP ratio : 0.5 = mid, 0.75 = 3/4 du range (optimisé via backtest)
+RANGE_TP_RATIO: float = float(os.getenv("RANGE_TP_RATIO", "0.75"))
 
+# Trail@TP : désactivé par défaut (backtest montre que le trail nuit au mean-reversion)
+RANGE_TRAIL_ENABLED: bool = os.getenv(
+    "RANGE_TRAIL_ENABLED", "false"
+).lower() in ("true", "1", "yes")
+
+# Step-trail : paliers discrets basés sur le range (compatible mean-reversion)
+# Quand prix atteint TP (75%), on ne ferme pas : on décale SL/TP par paliers
+# Step 1 : SL → ratio_sl du range, TP → ratio_tp du range
+# Step N : SL et TP décalent de +step_size chacun
+RANGE_STEP_TRAIL_ENABLED: bool = os.getenv(
+    "RANGE_STEP_TRAIL_ENABLED", "false"
+).lower() in ("true", "1", "yes")
+RANGE_STEP_TRAIL_INITIAL_SL_RATIO: float = float(
+    os.getenv("RANGE_STEP_TRAIL_INITIAL_SL_RATIO", "0.60")
+)
+RANGE_STEP_TRAIL_INITIAL_TP_RATIO: float = float(
+    os.getenv("RANGE_STEP_TRAIL_INITIAL_TP_RATIO", "0.85")
+)
+RANGE_STEP_TRAIL_STEP_SIZE: float = float(
+    os.getenv("RANGE_STEP_TRAIL_STEP_SIZE", "0.05")
+)
 # Trail@TP : avant que le TP OCO ne fill, on swap vers un nouvel OCO
 # avec SL = TP_actuel × (1 - SL_LOCK) et TP = TP_actuel × (1 + STEP)
 BINANCE_RANGE_TRAIL_STEP_PCT: float = float(
@@ -249,7 +226,7 @@ INF_TRADING_PAIRS: list[str] = [
 INF_POLLING_SECONDS: int = int(os.getenv("INF_POLLING_SECONDS", "30"))
 INF_HEARTBEAT_SECONDS: int = int(os.getenv("INF_HEARTBEAT_SECONDS", "600"))
 INF_MAKER_WAIT_SECONDS: int = int(os.getenv("INF_MAKER_WAIT_SECONDS", "60"))
-INF_CAPITAL_PCT: float = float(os.getenv("INF_CAPITAL_PCT", "0.65"))  # 65% du capital Revolut X
+INF_CAPITAL_PCT: float = float(os.getenv("INF_CAPITAL_PCT", "0.80"))  # 80% du capital Revolut X
 
 # Paramètres de stratégie
 INF_ENTRY_DROP_PCT: float = float(os.getenv("INF_ENTRY_DROP_PCT", "0.05"))
@@ -289,3 +266,34 @@ FIREBASE_ENABLED: bool = os.getenv(
 FIREBASE_EVENTS_RETENTION_DAYS: int = int(
     os.getenv("FIREBASE_EVENTS_RETENTION_DAYS", "2")
 )
+
+# ── London Breakout Bot (bot_london.py) ────────────────────────────────────────
+LON_TRADING_PAIRS: list[str] = [
+    p.strip() for p in os.getenv(
+        "LON_TRADING_PAIRS",
+        "BTC-USD,ETH-USD,SOL-USD,BNB-USD,LINK-USD,ADA-USD,DOT-USD,AVAX-USD"
+    ).split(",") if p.strip()
+]
+LON_POLLING_SECONDS: int = int(os.getenv("LON_POLLING_SECONDS", "30"))
+LON_HEARTBEAT_SECONDS: int = int(os.getenv("LON_HEARTBEAT_SECONDS", "600"))
+LON_MAKER_WAIT_SECONDS: int = int(os.getenv("LON_MAKER_WAIT_SECONDS", "60"))
+LON_CAPITAL_PCT: float = float(os.getenv("LON_CAPITAL_PCT", "0.20"))  # 20% du capital Revolut X
+
+# Stratégie London Breakout
+LON_SESSION_START_HOUR: int = int(os.getenv("LON_SESSION_START_HOUR", "8"))   # UTC
+LON_SESSION_END_HOUR: int = int(os.getenv("LON_SESSION_END_HOUR", "16"))      # UTC
+LON_SL_ATR_MULT: float = float(os.getenv("LON_SL_ATR_MULT", "2.0"))
+LON_TP1_PCT: float = float(os.getenv("LON_TP1_PCT", "0.02"))                 # +2%
+LON_TP2_PCT: float = float(os.getenv("LON_TP2_PCT", "0.05"))                 # +5%
+LON_TP1_SHARE: float = float(os.getenv("LON_TP1_SHARE", "0.50"))             # 50% au TP1
+LON_VOL_MULT: float = float(os.getenv("LON_VOL_MULT", "2.0"))               # volume ≥ 2×MA20
+LON_MIN_RANGE_PCT: float = float(os.getenv("LON_MIN_RANGE_PCT", "0.015"))    # 1.5%
+LON_RISK_PERCENT: float = float(os.getenv("LON_RISK_PERCENT", "0.05"))       # 5% par trade
+LON_MAX_POSITIONS: int = int(os.getenv("LON_MAX_POSITIONS", "1"))
+LON_COOLDOWN_BARS: int = int(os.getenv("LON_COOLDOWN_BARS", "2"))            # 2 bougies H4 (8h)
+LON_ATR_PERIOD: int = int(os.getenv("LON_ATR_PERIOD", "14"))
+LON_VOL_MA_PERIOD: int = int(os.getenv("LON_VOL_MA_PERIOD", "20"))
+LON_BREAKEVEN_AFTER_TP1: bool = os.getenv(
+    "LON_BREAKEVEN_AFTER_TP1", "true"
+).lower() in ("true", "1", "yes")
+

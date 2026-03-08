@@ -1,5 +1,5 @@
 """
-TradeX Unified Dashboard — Overview + 3 onglets (Binance Range · Binance CrashBot · Revolut Momentum).
+TradeX Unified Dashboard — Overview + 4 onglets (Binance Range · Binance CrashBot · Revolut Infinity · Revolut London).
 Un seul processus Streamlit, port 8502.
 Lit les données depuis Firebase Firestore.
 """
@@ -380,8 +380,8 @@ if auto_refresh:
 BOTS = {
     "binance": {"label": "Binance Range", "icon": "🟡", "exchange": "binance", "color": "#f0b90b", "max_pos": 3},
     "crashbot": {"label": "Binance CrashBot", "icon": "💥", "exchange": "binance-crashbot", "color": "#7c4dff", "max_pos": 5},
-    "momentum": {"label": "Revolut Momentum", "icon": "🚀", "exchange": "revolut", "color": "#00c853", "max_pos": 3},
-    "infinity": {"label": "Revolut Infinity", "icon": "♾️", "exchange": "revolut-infinity", "color": "#ff6d00", "max_pos": 3},
+    "infinity": {"label": "Revolut Infinity", "icon": "♾️", "exchange": "revolut-infinity", "color": "#ff6d00", "max_pos": 6},
+    "london": {"label": "Revolut London", "icon": "🇬🇧", "exchange": "revolut-london", "color": "#2196f3", "max_pos": 1},
 }
 
 
@@ -403,7 +403,7 @@ def _load_all(days: int):
     return data
 
 
-INF_PAIRS = ["BTC-USD", "AAVE-USD", "XLM-USD"]
+INF_PAIRS = ["BTC-USD", "AAVE-USD", "XLM-USD", "ADA-USD", "DOT-USD", "LTC-USD"]
 
 
 @st.cache_data(ttl=55)
@@ -958,7 +958,7 @@ def _render_advanced_stats(closed: pd.DataFrame):
 
 def render_overview():
     st.title("🏠 Overview")
-    st.caption("Vue consolidée des 3 bots de trading")
+    st.caption("Vue consolidée des 4 bots de trading")
 
     # ── Allocation (source de vérité pour l'equity par bot) ──────────────
     alloc = _fetch_current_allocation()
@@ -968,7 +968,8 @@ def render_overview():
     if alloc:
         alloc_equity["binance"] = alloc.get("trail_balance")
         alloc_equity["crashbot"] = alloc.get("crash_balance")
-        alloc_equity["momentum"] = None  # Momentum est sur Revolut, pas dans l'allocation Binance
+        alloc_equity["infinity"] = None  # Infinity est sur Revolut, pas dans l'allocation Binance
+        alloc_equity["london"] = None    # London est sur Revolut, pas dans l'allocation Binance
 
     # ── Summary cards ──────────────────────────────────────────────────────
     cols = st.columns(len(BOTS))
@@ -1179,7 +1180,7 @@ def render_overview():
         })
         st.dataframe(show, use_container_width=True, hide_index=True)
     else:
-        st.info("Aucune position ouverte sur les 3 bots")
+        st.info("Aucune position ouverte sur les 4 bots")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1247,18 +1248,19 @@ def render_binance_crashbot():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB: Revolut Momentum
+#  TAB: Revolut London Breakout
 # ══════════════════════════════════════════════════════════════════════════════
 
-def render_revolut_momentum():
-    d = all_data["momentum"]
-    cfg = BOTS["momentum"]
+def render_revolut_london():
+    d = all_data["london"]
+    cfg = BOTS["london"]
 
-    st.title(f"{cfg['icon']} Revolut Momentum")
+    st.title(f"{cfg['icon']} Revolut London Breakout")
+    st.caption("Session breakout (08-16 UTC) — H4, maker-only, 20% du capital Revolut X")
     _render_kpis(d["stats"], len(d["open"]), cfg["max_pos"])
     st.divider()
 
-    _render_positions(d["open"], bot_type="momentum", exchange="revolut")
+    _render_positions(d["open"], bot_type="london", exchange="revolut")
     _render_alerts(d["open"], cfg["exchange"])
     st.divider()
 
@@ -1566,7 +1568,7 @@ def render_revolut_infinity():
     cfg = BOTS["infinity"]
 
     st.title(f"{cfg['icon']} Revolut Infinity")
-    st.caption("DCA inversé multi-paires (BTC, AAVE, XLM) — H4, maker-only, 65% du capital Revolut X")
+    st.caption("DCA inversé multi-paires (BTC, AAVE, XLM, ADA, DOT, LTC) — H4, maker-only, 80% du capital Revolut X")
 
     _render_kpis(d["stats"], len(d["open"]), cfg["max_pos"])
     st.divider()
@@ -1608,12 +1610,12 @@ def render_revolut_infinity():
 #  Main — Tabs
 # ══════════════════════════════════════════════════════════════════════════════
 
-tab_overview, tab_binance, tab_crashbot, tab_momentum, tab_infinity = st.tabs([
+tab_overview, tab_binance, tab_crashbot, tab_infinity, tab_london = st.tabs([
     "🏠 Overview",
     "🟡 Binance Range",
     "💥 Binance CrashBot",
-    "🚀 Revolut Momentum",
     "♾️ Revolut Infinity",
+    "🇬🇧 Revolut London",
 ])
 
 with tab_overview:
@@ -1625,11 +1627,11 @@ with tab_binance:
 with tab_crashbot:
     render_binance_crashbot()
 
-with tab_momentum:
-    render_revolut_momentum()
-
 with tab_infinity:
     render_revolut_infinity()
+
+with tab_london:
+    render_revolut_london()
 
 # ── Footer ─────────────────────────────────────────────────────────────────────
 

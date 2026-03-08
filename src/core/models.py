@@ -52,10 +52,10 @@ class StrategyType(Enum):
     """Type de stratégie ayant ouvert la position."""
     TREND = "TREND"            # Trend following (Dow Theory)
     RANGE = "RANGE"            # Mean reversion (range)
-    BREAKOUT = "BREAKOUT"      # Breakout Volatility Expansion
     CRASHBOT = "CRASHBOT"      # Dip Buy (crash recovery)
     MOMENTUM = "MOMENTUM"      # Intraday Momentum Continuation
     INFINITY = "INFINITY"      # DCA inversé + vente paliers (Infinity Bot)
+    LONDON = "LONDON"          # London Breakout (session 08-16 UTC)
 
 
 # ── Structures de données ──────────────────────────────────────────────────────
@@ -199,6 +199,8 @@ class Position:
     trailing_active: bool = False            # Trail@TP actif (après TP OCO rempli)
     trailing_steps: int = 0                  # Nombre de paliers franchis
     trailing_sl: Optional[float] = None      # SL trailing courant
+    range_high: Optional[float] = None       # Borne haute du range (pour step-trail)
+    range_low: Optional[float] = None        # Borne basse du range (pour step-trail)
 
     def to_dict(self) -> dict:
         """Sérialise la position en dictionnaire JSON-compatible."""
@@ -220,6 +222,8 @@ class Position:
             "trailing_active": self.trailing_active,
             "trailing_steps": self.trailing_steps,
             "trailing_sl": self.trailing_sl,
+            "range_high": self.range_high,
+            "range_low": self.range_low,
         }
 
     @classmethod
@@ -243,6 +247,8 @@ class Position:
             trailing_active=data.get("trailing_active", False),
             trailing_steps=data.get("trailing_steps", 0),
             trailing_sl=data.get("trailing_sl"),
+            range_high=data.get("range_high"),
+            range_low=data.get("range_low"),
         )
 
 

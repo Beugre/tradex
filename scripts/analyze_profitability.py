@@ -24,7 +24,6 @@ print(f"Total trades en base : {len(all_trades)}")
 EXCHANGE_LABELS = {
     "binance": "Trail Range",
     "binance-crashbot": "CrashBot (DipBuy)",
-    "binance-breakout": "Breakout",
     "revolut": "Momentum (Revolut X)",
 }
 

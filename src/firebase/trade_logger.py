@@ -35,9 +35,6 @@ def _effective_sl(sl_price: float, side: str, strategy: str) -> Optional[float]:
     """Calcule le SL effectif (avec buffer) = le vrai seuil de déclenchement."""
     if not sl_price or sl_price <= 0:
         return sl_price
-    # BREAKOUT : le SL est basé sur ATR, pas de buffer additionnel
-    if strategy == "BREAKOUT":
-        return sl_price
     buf = (
         config.RANGE_SL_BUFFER_PERCENT
         if strategy == "RANGE"

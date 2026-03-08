@@ -87,7 +87,7 @@ class TestBuildRangeFromTrend:
         assert rs.range_high == 110
         assert rs.range_low == 90
         assert rs.range_mid == pytest.approx(100.0)
-        assert rs.range_width_pct == pytest.approx(0.20)  # 20/100
+        assert rs.range_width_pct == pytest.approx(20 / 90)  # (110-90)/90
 
     def test_returns_none_for_bullish_trend(self):
         """Tendance BULLISH → pas de range."""
@@ -131,7 +131,7 @@ class TestCheckRangeEntrySignal:
         assert signal is not None
         assert signal["side"] == OrderSide.BUY
         assert signal["entry_price"] == 90.0
-        assert signal["tp_price"] == pytest.approx(100.0)
+        assert signal["tp_price"] == pytest.approx(105.0)  # 90 + 20*0.75
 
     def test_sell_signal_at_range_high(self):
         """Prix au haut du range → signal SELL."""
@@ -142,7 +142,7 @@ class TestCheckRangeEntrySignal:
         assert signal is not None
         assert signal["side"] == OrderSide.SELL
         assert signal["entry_price"] == 110.0
-        assert signal["tp_price"] == pytest.approx(100.0)
+        assert signal["tp_price"] == pytest.approx(95.0)  # 110 - 20*0.75
 
     def test_no_signal_in_middle_of_range(self):
         """Prix au milieu du range → pas de signal."""

@@ -7,7 +7,6 @@
 #
 # Déploie le code + redémarre le service tradex-binance-crashbot
 # Le bot RANGE (tradex-binance) est aussi redémarré (car le code est partagé)
-# Stoppe le bot Breakout (décommissionné, remplacé par CrashBot)
 # ──────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -17,9 +16,6 @@ APP_DIR="/opt/tradex"
 SERVICE_RANGE="tradex-binance"
 SERVICE_CRASHBOT="tradex-binance-crashbot"
 SERVICE_CRASHBOT_DASH="tradex-binance-crashbot-dashboard"
-# Breakout décommissionné
-SERVICE_BREAKOUT="tradex-binance-breakout"
-SERVICE_BREAKOUT_DASH="tradex-binance-breakout-dashboard"
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -58,15 +54,6 @@ ssh "$VPS_HOST" << 'REMOTE'
 
     # Installer les dépendances
     .venv/bin/pip install -r requirements.txt -q 2>/dev/null
-
-    # ── Décommissionner le bot Breakout ──
-    echo ""
-    echo "── 🛑 Arrêt du bot Breakout (décommissionné) ──"
-    sudo systemctl stop tradex-binance-breakout 2>/dev/null || true
-    sudo systemctl stop tradex-binance-breakout-dashboard 2>/dev/null || true
-    sudo systemctl disable tradex-binance-breakout 2>/dev/null || true
-    sudo systemctl disable tradex-binance-breakout-dashboard 2>/dev/null || true
-    echo "   Breakout arrêté et désactivé ✅"
 
     # ── Installer les services CrashBot ──
     echo ""
@@ -128,19 +115,11 @@ ssh "$VPS_HOST" << 'REMOTE'
             echo "   ⚪ $svc (inactif)"
         fi
     done
-
-    # Vérifier que Breakout est bien arrêté
-    if sudo systemctl is-active --quiet tradex-binance-breakout; then
-        echo "   ⚠️  tradex-binance-breakout ENCORE ACTIF (devrait être arrêté)"
-    else
-        echo "   🗑️  tradex-binance-breakout : arrêté (décommissionné)"
-    fi
 REMOTE
 
 echo ""
 echo "══════════════════════════════════════════════════"
 echo "  ✅ Déploiement Binance CrashBot terminé !"
-echo "  🛑 Breakout décommissionné"
 echo "══════════════════════════════════════════════════"
 echo ""
 echo "  Logs RANGE    : ssh $VPS_HOST 'sudo journalctl -u tradex-binance -f'"
