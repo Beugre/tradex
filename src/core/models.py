@@ -53,7 +53,6 @@ class StrategyType(Enum):
     TREND = "TREND"            # Trend following (Dow Theory)
     RANGE = "RANGE"            # Mean reversion (range)
     CRASHBOT = "CRASHBOT"      # Dip Buy (crash recovery)
-    MOMENTUM = "MOMENTUM"      # Intraday Momentum Continuation
     INFINITY = "INFINITY"      # DCA inversé + vente paliers (Infinity Bot)
     LONDON = "LONDON"          # London Breakout (session 08-16 UTC)
 

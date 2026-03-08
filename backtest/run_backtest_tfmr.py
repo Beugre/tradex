@@ -36,7 +36,7 @@ import matplotlib.pyplot as plt
 
 from backtest.data_loader import download_candles
 from src.core.models import Candle
-from src.core.momentum_engine import ema, sma, atr_series, rsi_series, rolling_max
+from src.core.indicators import ema, sma, atr_series, rsi_series, rolling_max
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 logger = logging.getLogger(__name__)

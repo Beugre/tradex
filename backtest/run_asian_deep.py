@@ -33,7 +33,7 @@ import matplotlib.pyplot as plt
 
 from backtest.data_loader import download_candles
 from src.core.models import Candle
-from src.core.momentum_engine import sma, atr_series
+from src.core.indicators import sma, atr_series
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 logger = logging.getLogger(__name__)

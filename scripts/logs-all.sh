@@ -28,10 +28,10 @@ tmux new-session -d -s "$SESSION" -n logs \
 tmux split-window -h -t "$SESSION:logs" \
     "echo -ne '\033]2;📉 CrashBot\033\\'; ssh $VPS 'sudo journalctl -u tradex-binance-crashbot -f --no-pager -n 30'"
 
-# Revenir pane top-left (0) et split vertical → bottom-left : Momentum
+# Revenir pane top-left (0) et split vertical → bottom-left : London
 tmux select-pane -t "$SESSION:logs.0"
 tmux split-window -v -t "$SESSION:logs.0" \
-    "echo -ne '\033]2;🚀 Momentum\033\\'; ssh $VPS 'sudo journalctl -u tradex-momentum -f --no-pager -n 30'"
+    "echo -ne '\033]2;🇬🇧 London\033\\'; ssh $VPS 'sudo journalctl -u tradex-london -f --no-pager -n 30'"
 
 # Aller au pane top-right (maintenant index 2 après insert) et split vertical → bottom-right : Infinity
 tmux select-pane -t "$SESSION:logs.2"

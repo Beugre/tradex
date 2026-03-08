@@ -11,8 +11,6 @@
 | **Infinity** | Revolut X (USD) | DCA inversé multi-paires (trailing high → achat → vente paliers) | H4 | BTC, AAVE, XLM, ADA, DOT, LTC |
 | **London Breakout** | Revolut X (USD) | Session breakout (range 08-16 UTC → breakout LONG) | H4 | BTC, ETH, SOL, BNB, LINK, ADA, DOT, AVAX |
 
-**Note** : Le bot **Momentum** (`bot_momentum.py`) est **déprécié** — remplacé par **London Breakout** après validation complète (PF 1.98, walk-forward stable).
-
 - **Langage** : Python 3.10+ (VPS), Python 3.12+ (dev local)
 - **Notifications** : Telegram Bot API (entrée, SL, TP, clôture, heartbeat)
 - **Persistance** : Firebase Firestore (trades, positions, heartbeats, allocation, snapshots)
@@ -28,8 +26,8 @@ src/
 │   ├── crashbot_detector.py    # Détection de dip / crash pour CrashBot
 │   ├── flow_detector.py        # Analyse de flux pour aide à la décision
 │   ├── infinity_engine.py      # Logique DCA inversé (paliers achat/vente, RSI gate, trailing high)
+│   ├── indicators.py           # Indicateurs techniques réutilisables (EMA, SMA, ATR, RSI, rolling min/max)
 │   ├── models.py               # Modèles de données partagés (dataclass/Pydantic)
-│   ├── momentum_engine.py      # (déprécié) Stratégie Momentum Continuation
 │   ├── position_store.py       # Gestion en mémoire des positions ouvertes
 │   ├── risk_manager.py         # Money management (% risque, sizing, fiat balance, equity)
 │   ├── strategy_mean_rev.py    # Stratégie mean-reversion (Trail Range)
@@ -49,7 +47,6 @@ src/
 ├── bot_binance_crashbot.py     # Bot CrashBot — Binance (dip-buy, step-trail, long only)
 ├── bot_infinity.py             # Bot Infinity — Revolut X (DCA inversé multi-paires, maker-only)
 ├── bot_london.py               # Bot London Breakout — Revolut X (session breakout H4, maker-only)
-├── bot_momentum.py             # (déprécié) Bot Momentum — Revolut X
 ├── bot.py                      # (legacy) Bot Dow Theory Revolut X
 └── config.py                   # Chargement .env (clés API, paramètres de risque)
 dashboard/
@@ -151,7 +148,7 @@ position_size = risk_amount / sl_distance      # en unités de base (ex: ETH)
 
 - **Séparation stricte I/O / logique** : `src/core/` ne fait AUCUN appel réseau. Les tests de `core/` doivent tourner sans mock d'API.
 - **Types** : utiliser des `dataclass` ou `Pydantic BaseModel` pour toutes les structures de données.
-- **Enums** pour les états : `AllocationRegime(Enum): DEFENSIVE, NEUTRAL, AGGRESSIVE`, `StrategyType(Enum): TREND, RANGE, CRASHBOT, MOMENTUM, INFINITY, LONDON`
+- **Enums** pour les états : `AllocationRegime(Enum): DEFENSIVE, NEUTRAL, AGGRESSIVE`, `StrategyType(Enum): TREND, RANGE, CRASHBOT, INFINITY, LONDON`
 - **Logging** : module `logging` standard avec le format `[%(asctime)s] %(levelname)s %(name)s: %(message)s`.
 - **Config** : toutes les valeurs sensibles et paramètres dans `.env`, chargés via `python-dotenv`. Ne jamais hardcoder de clé API ou de paramètre de risque.
 - **Firebase** : Toute persistance passe par `src/firebase/`. Les trades, heartbeats, allocations, et snapshots sont stockés dans Firestore.

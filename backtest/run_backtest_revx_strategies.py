@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Backtest comparatif : RSI Oversold Bounce vs Bollinger Bounce
-pour remplacer le bot Momentum sur Revolut X (7 paires).
+sur Revolut X (7 paires).
 
 Stratégies :
   B) RSI Oversold Bounce — Achat RSI < seuil sur H1/H4, sortie RSI > seuil ou TP/SL
@@ -28,7 +28,7 @@ import matplotlib.pyplot as plt
 
 from backtest.data_loader import download_candles
 from src.core.models import Candle
-from src.core.momentum_engine import ema, sma, atr_series, rsi_series, rolling_min
+from src.core.indicators import ema, sma, atr_series, rsi_series, rolling_min
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 logger = logging.getLogger(__name__)
