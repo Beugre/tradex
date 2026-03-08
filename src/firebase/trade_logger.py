@@ -467,6 +467,41 @@ def get_cumulative_pnl(exchange: str) -> float:
     return total
 
 
+def get_daily_pnl(exchange: str, date: str | None = None) -> tuple[float, int]:
+    """PnL et nombre de trades fermés aujourd'hui pour un exchange.
+
+    Args:
+        exchange: nom de l'exchange (ex: 'binance-crashbot')
+        date: date ISO (ex: '2026-03-08'), default today UTC
+
+    Returns:
+        (daily_pnl, daily_trades)
+    """
+    if date is None:
+        date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    trades = get_documents(
+        "trades",
+        filters=[
+            ("exchange", "==", exchange),
+            ("status", "==", "CLOSED"),
+        ],
+    )
+    daily_pnl = 0.0
+    daily_trades = 0
+    for t in trades:
+        closed_at = t.get("closed_at", "")
+        if closed_at.startswith(date):
+            pnl = t.get("pnl_net_usd")
+            if pnl is not None:
+                daily_pnl += float(pnl)
+            daily_trades += 1
+    logger.info(
+        "🔥 Daily PnL [%s] %s = $%+.2f (%d trades)",
+        exchange, date, daily_pnl, daily_trades,
+    )
+    return daily_pnl, daily_trades
+
+
 def get_trail_range_pnl_list(days: int = 90) -> list[float]:
     """Retourne la liste des PnL nets du bot Trail Range (Binance) sur N jours.
 

@@ -66,6 +66,7 @@ from src.firebase.trade_logger import (
     get_cumulative_pnl as fb_get_cumulative_pnl,
     get_trail_range_pnl_list as fb_get_trail_range_pnl_list,
     log_allocation as fb_log_allocation,
+    get_daily_pnl as fb_get_daily_pnl,
 )
 from src.core.allocator import compute_allocation, compute_profit_factor
 
@@ -235,10 +236,10 @@ class TradeXBinanceCrashBot:
         self._discover_pairs()
         self._load_state()
         self._init_cumulative_pnl()
+        self._init_daily_pnl()
         self._init_allocation()
+        self._load_bot_state()  # restaure momentum + kill-switch (avant _init_kill_switch)
         self._init_kill_switch()
-        if self._momentum_sizing_enabled:
-            self._load_momentum_state()
 
         logger.info("═" * 60)
         logger.info("🚀 TradeX BINANCE CRASHBOT démarré — Dip Buy, Long Only")
@@ -433,6 +434,20 @@ class TradeXBinanceCrashBot:
             logger.warning("⚠️ Impossible de charger le PnL cumulé: %s", e)
             self._cumulative_pnl = 0.0
 
+    def _init_daily_pnl(self) -> None:
+        """Recharge le PnL du jour depuis Firebase (survit aux redémarrages)."""
+        try:
+            pnl, trades = fb_get_daily_pnl(EXCHANGE_NAME)
+            self._daily_pnl = pnl
+            self._daily_trades = trades
+            if pnl != 0 or trades > 0:
+                logger.info(
+                    "📊 PnL jour restauré depuis Firebase: $%+.2f (%d trades)",
+                    pnl, trades,
+                )
+        except Exception as e:
+            logger.warning("⚠️ Impossible de charger le PnL du jour: %s", e)
+
     # ── Dynamic allocation ─────────────────────────────────────────────────────
 
     def _init_allocation(self) -> None:
@@ -541,14 +556,29 @@ class TradeXBinanceCrashBot:
         return max(equity, 0.0)
 
     def _init_kill_switch(self) -> None:
-        """Initialise l'equity du début de mois pour le kill-switch."""
+        """Initialise l'equity du début de mois pour le kill-switch.
+
+        Si _load_bot_state() a déjà restauré une valeur pour le mois courant,
+        on la conserve au lieu de la recalculer (évite le reset à 0 au restart).
+        """
         now = datetime.now(timezone.utc)
-        self._current_month = now.strftime("%Y-%m")
+        now_month = now.strftime("%Y-%m")
+
+        # Si le mois a déjà été restauré par _load_bot_state, ne pas écraser
+        if self._current_month == now_month and self._month_start_equity > 0:
+            logger.info(
+                "Kill-switch: equity début mois = $%.2f (restaurée depuis état persisté)",
+                self._month_start_equity,
+            )
+            return
+
+        self._current_month = now_month
         try:
             self._month_start_equity = self._calculate_allocated_equity()
         except Exception:
             self._month_start_equity = 0
-        logger.info("Kill-switch: equity début mois = $%.2f", self._month_start_equity)
+        logger.info("Kill-switch: equity début mois = $%.2f (calculée)", self._month_start_equity)
+        self._save_bot_state()
 
     # ═══════════════════════════════════════════════════════════════════════════
     # CANDLE INITIALIZATION
@@ -703,6 +733,7 @@ class TradeXBinanceCrashBot:
                 self._month_start_equity = self._calculate_allocated_equity()
             except Exception:
                 pass
+            self._save_bot_state()  # persister la nouvelle equity de début de mois
             logger.info("📅 Nouveau mois %s | Equity reset = $%.2f | Kill-switch: OFF",
                         month_key, self._month_start_equity)
 
@@ -1440,7 +1471,7 @@ class TradeXBinanceCrashBot:
                     symbol, old_risk * 100, self._current_risk * 100,
                     "WIN ↑" if pnl_net >= 0 else "LOSS ↓",
                 )
-            self._save_momentum_state()
+            self._save_bot_state()
 
         # Firebase
         equity_after = self._calculate_allocated_equity()
@@ -1499,36 +1530,63 @@ class TradeXBinanceCrashBot:
 
     # ── Momentum Sizing persistance ────────────────────────────────────────────
 
-    def _save_momentum_state(self) -> None:
-        """Persiste le risk% dynamique sur disque pour survivre aux redémarrages."""
-        state = {"current_risk": self._current_risk}
+    def _save_bot_state(self) -> None:
+        """Persiste l'état du bot sur disque pour survivre aux redémarrages.
+
+        Contient : momentum sizing (risk%), kill-switch (month_start_equity), mois courant.
+        """
+        state = {
+            "current_risk": self._current_risk,
+            "month_start_equity": self._month_start_equity,
+            "current_month": self._current_month,
+        }
         path = os.path.abspath(_MOMENTUM_STATE_FILE)
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w") as f:
                 _json.dump(state, f)
         except Exception as e:
-            logger.warning("⚠️ Impossible de sauver momentum state: %s", e)
+            logger.warning("⚠️ Impossible de sauver bot state: %s", e)
 
-    def _load_momentum_state(self) -> None:
-        """Restaure le risk% dynamique depuis le disque."""
+    def _load_bot_state(self) -> None:
+        """Restaure l'état persisté depuis le disque (momentum + kill-switch)."""
         path = os.path.abspath(_MOMENTUM_STATE_FILE)
         if not os.path.exists(path):
             return
         try:
             with open(path) as f:
                 state = _json.load(f)
-            risk = state.get("current_risk", self._base_risk)
-            # Borner aux limites configurées
-            risk = max(config.BINANCE_CRASHBOT_MIN_RISK_PCT,
-                       min(risk, config.BINANCE_CRASHBOT_MAX_RISK_PCT))
-            self._current_risk = risk
-            logger.info(
-                "📊 Momentum Sizing restauré: risk=%.1f%% (base=%.1f%%)",
-                self._current_risk * 100, self._base_risk * 100,
-            )
+
+            # ── Momentum sizing ──
+            if self._momentum_sizing_enabled:
+                risk = state.get("current_risk", self._base_risk)
+                risk = max(config.BINANCE_CRASHBOT_MIN_RISK_PCT,
+                           min(risk, config.BINANCE_CRASHBOT_MAX_RISK_PCT))
+                self._current_risk = risk
+                logger.info(
+                    "📊 Momentum Sizing restauré: risk=%.1f%% (base=%.1f%%)",
+                    self._current_risk * 100, self._base_risk * 100,
+                )
+
+            # ── Kill-switch : equity début de mois ──
+            saved_month = state.get("current_month", "")
+            now_month = datetime.now(timezone.utc).strftime("%Y-%m")
+            if saved_month == now_month:
+                saved_equity = state.get("month_start_equity", 0.0)
+                if saved_equity > 0:
+                    self._month_start_equity = saved_equity
+                    self._current_month = saved_month
+                    logger.info(
+                        "📊 Kill-switch restauré: equity début mois = $%.2f (mois %s)",
+                        self._month_start_equity, saved_month,
+                    )
+            else:
+                logger.info(
+                    "📅 Mois changé (%s → %s), equity début mois sera recalculée",
+                    saved_month, now_month,
+                )
         except Exception as e:
-            logger.warning("⚠️ Impossible de charger momentum state: %s", e)
+            logger.warning("⚠️ Impossible de charger bot state: %s", e)
 
     def _maybe_heartbeat(self) -> None:
         """Heartbeat étendu — log + Telegram périodique."""
