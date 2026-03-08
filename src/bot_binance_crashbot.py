@@ -968,8 +968,8 @@ class TradeXBinanceCrashBot:
         if size <= 0:
             return
 
-        # Format + checks Binance
-        quantity_str = self._client.format_quantity(symbol, size)
+        # Format + checks Binance (MARKET_LOT_SIZE pour ordres MARKET)
+        quantity_str = self._client.format_quantity(symbol, size, market=True)
         quantity = float(quantity_str)
 
         if not self._client.check_min_notional(symbol, quantity, current_price):
@@ -1318,7 +1318,7 @@ class TradeXBinanceCrashBot:
             if base_bal and base_bal.available < close_qty:
                 close_qty = base_bal.available
 
-        qty_str = self._client.format_quantity(symbol, close_qty)
+        qty_str = self._client.format_quantity(symbol, close_qty, market=True)
         actual_price = exit_price
 
         if not self.dry_run:

@@ -422,16 +422,29 @@ class BinanceClient:
     # HELPERS : formatage des quantités / prix selon les filtres Binance
     # ═══════════════════════════════════════════════════════════════════════════
 
-    def format_quantity(self, symbol: str, quantity: float) -> str:
-        """Arrondit la quantité selon le filtre LOT_SIZE du symbole."""
+    def format_quantity(self, symbol: str, quantity: float, *, market: bool = False) -> str:
+        """Arrondit la quantité selon le filtre LOT_SIZE (ou MARKET_LOT_SIZE) du symbole.
+
+        Args:
+            market: Si True, utilise MARKET_LOT_SIZE (pour les ordres MARKET).
+                    Fallback sur LOT_SIZE si MARKET_LOT_SIZE absent.
+        """
         filters = self.get_symbol_filters(symbol)
-        lot_size = filters.get("LOT_SIZE", {})
+
+        # Pour les ordres MARKET, Binance valide avec MARKET_LOT_SIZE
+        if market and "MARKET_LOT_SIZE" in filters:
+            lot_size = filters["MARKET_LOT_SIZE"]
+        else:
+            lot_size = filters.get("LOT_SIZE", {})
+
         step_size = float(lot_size.get("stepSize", "0.00000001"))
         min_qty = float(lot_size.get("minQty", "0.00000001"))
+        max_qty = float(lot_size.get("maxQty", "99999999"))
 
         # Arrondir au step_size inférieur
         precision = self._step_to_precision(step_size)
         qty = max(min_qty, self._truncate(quantity, precision))
+        qty = min(qty, max_qty)
         return f"{qty:.{precision}f}"
 
     def format_price(self, symbol: str, price: float) -> str:
