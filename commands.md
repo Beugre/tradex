@@ -19,8 +19,8 @@ ssh BOT-VPS 'sudo journalctl -u tradex-binance -f'
 # CrashBot (Binance)
 ssh BOT-VPS 'sudo journalctl -u tradex-binance-crashbot -f'
 
-# Momentum (Revolut X)
-ssh BOT-VPS 'sudo journalctl -u tradex-momentum -f'
+# London Breakout (Revolut X)
+ssh BOT-VPS 'sudo journalctl -u tradex-london -f'
 
 # Infinity (Revolut X)
 ssh BOT-VPS 'sudo journalctl -u tradex-infinity -f'
@@ -46,7 +46,7 @@ ssh BOT-VPS 'sudo journalctl -u tradex-dashboard-unified -f'
 ```bash
 ssh BOT-VPS 'sudo journalctl -u tradex-binance -n 50 --no-pager'
 ssh BOT-VPS 'sudo journalctl -u tradex-binance-crashbot -n 50 --no-pager'
-ssh BOT-VPS 'sudo journalctl -u tradex-momentum -n 50 --no-pager'
+ssh BOT-VPS 'sudo journalctl -u tradex-london -n 50 --no-pager'
 ssh BOT-VPS 'sudo journalctl -u tradex-infinity -n 50 --no-pager'
 ```
 
@@ -69,13 +69,13 @@ ssh BOT-VPS 'sudo journalctl -u tradex-binance -p err -n 30 --no-pager'
 ### Statut de tous les services
 
 ```bash
-ssh BOT-VPS 'sudo systemctl status tradex-binance tradex-binance-crashbot tradex-momentum tradex-infinity tradex-dashboard-unified --no-pager'
+ssh BOT-VPS 'sudo systemctl status tradex-binance tradex-binance-crashbot tradex-london tradex-infinity tradex-dashboard-unified --no-pager'
 ```
 
 ### Vérifier si tous les bots tournent
 
 ```bash
-ssh BOT-VPS 'for s in tradex-binance tradex-binance-crashbot tradex-momentum tradex-infinity tradex-dashboard-unified; do echo -n "$s: "; sudo systemctl is-active $s; done'
+ssh BOT-VPS 'for s in tradex-binance tradex-binance-crashbot tradex-london tradex-infinity tradex-dashboard-unified; do echo -n "$s: "; sudo systemctl is-active $s; done'
 ```
 
 ### Uptime + mémoire + CPU
@@ -89,14 +89,14 @@ ssh BOT-VPS 'uptime && echo "---" && free -h && echo "---" && ps aux --sort=-%me
 ```bash
 ssh BOT-VPS 'sudo journalctl -u tradex-binance -n 200 --no-pager | grep "💓" | tail -3'
 ssh BOT-VPS 'sudo journalctl -u tradex-binance-crashbot -n 200 --no-pager | grep "💓" | tail -3'
-ssh BOT-VPS 'sudo journalctl -u tradex-momentum -n 200 --no-pager | grep "💓" | tail -3'
+ssh BOT-VPS 'sudo journalctl -u tradex-london -n 200 --no-pager | grep "💓" | tail -3'
 ssh BOT-VPS 'sudo journalctl -u tradex-infinity -n 200 --no-pager | grep "💓" | tail -3'
 ```
 
 ### Dernier crash / restart
 
 ```bash
-ssh BOT-VPS 'for s in tradex-binance tradex-binance-crashbot tradex-momentum tradex-infinity; do echo "=== $s ==="; sudo journalctl -u $s --no-pager | grep -E "Started|Stopped|error|Error|ERREUR|traceback" | tail -5; echo; done'
+ssh BOT-VPS 'for s in tradex-binance tradex-binance-crashbot tradex-london tradex-infinity; do echo "=== $s ==="; sudo journalctl -u $s --no-pager | grep -E "Started|Stopped|error|Error|ERREUR|traceback" | tail -5; echo; done'
 ```
 
 ---
@@ -108,7 +108,7 @@ ssh BOT-VPS 'for s in tradex-binance tradex-binance-crashbot tradex-momentum tra
 ```bash
 ssh BOT-VPS 'sudo systemctl restart tradex-binance'
 ssh BOT-VPS 'sudo systemctl restart tradex-binance-crashbot'
-ssh BOT-VPS 'sudo systemctl restart tradex-momentum'
+ssh BOT-VPS 'sudo systemctl restart tradex-london'
 ssh BOT-VPS 'sudo systemctl restart tradex-infinity'
 ssh BOT-VPS 'sudo systemctl restart tradex-dashboard-unified'
 ```
@@ -116,7 +116,7 @@ ssh BOT-VPS 'sudo systemctl restart tradex-dashboard-unified'
 ### Redémarrer tous les bots
 
 ```bash
-ssh BOT-VPS 'sudo systemctl restart tradex-binance tradex-binance-crashbot tradex-momentum tradex-infinity tradex-dashboard-unified'
+ssh BOT-VPS 'sudo systemctl restart tradex-binance tradex-binance-crashbot tradex-london tradex-infinity tradex-dashboard-unified'
 ```
 
 ### Arrêter / démarrer un bot
@@ -151,7 +151,7 @@ ssh BOT-VPS 'sudo systemctl disable tradex-infinity'
 # Dashboard
 ./deploy/deploy-dashboard.sh
 
-# Momentum (Revolut X)
+# London Breakout (Revolut X)
 ./deploy/deploy.sh
 ```
 
@@ -192,7 +192,7 @@ git log --oneline -10
 # Dry-run d'un bot
 .venv/bin/python -m src.bot_binance --dry-run
 .venv/bin/python -m src.bot_binance_crashbot --dry-run
-.venv/bin/python -m src.bot_momentum --dry-run
+.venv/bin/python -m src.bot_london --dry-run
 .venv/bin/python -m src.bot_infinity --dry-run
 
 # Dashboard local
@@ -215,7 +215,7 @@ http://213.199.41.168:8502
 # Voir l'état persisté de chaque bot
 ssh BOT-VPS 'cat /opt/tradex/data/state_binance.json | python3 -m json.tool | head -30'
 ssh BOT-VPS 'cat /opt/tradex/data/state_binance_crashbot.json | python3 -m json.tool | head -30'
-ssh BOT-VPS 'cat /opt/tradex/data/state_momentum.json | python3 -m json.tool | head -30'
+ssh BOT-VPS 'cat /opt/tradex/data/state_london.json | python3 -m json.tool | head -30'
 ssh BOT-VPS 'cat /opt/tradex/data/state_infinity.json | python3 -m json.tool | head -30'
 ```
 
@@ -225,5 +225,5 @@ ssh BOT-VPS 'cat /opt/tradex/data/state_infinity.json | python3 -m json.tool | h
 
 ```bash
 # One-liner : statut + dernier heartbeat de chaque bot
-ssh BOT-VPS 'echo "══════ STATUT ══════"; for s in tradex-binance tradex-binance-crashbot tradex-momentum tradex-infinity; do printf "%-30s %s\n" "$s" "$(sudo systemctl is-active $s)"; done; echo ""; echo "══════ HEARTBEATS ══════"; for s in tradex-binance tradex-binance-crashbot tradex-momentum tradex-infinity; do echo "── $s ──"; sudo journalctl -u $s -n 100 --no-pager 2>/dev/null | grep "💓" | tail -1; done'
+ssh BOT-VPS 'echo "══════ STATUT ══════"; for s in tradex-binance tradex-binance-crashbot tradex-london tradex-infinity; do printf "%-30s %s\n" "$s" "$(sudo systemctl is-active $s)"; done; echo ""; echo "══════ HEARTBEATS ══════"; for s in tradex-binance tradex-binance-crashbot tradex-london tradex-infinity; do echo "── $s ──"; sudo journalctl -u $s -n 100 --no-pager 2>/dev/null | grep "💓" | tail -1; done'
 ```

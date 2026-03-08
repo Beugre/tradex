@@ -153,6 +153,27 @@ position_size = risk_amount / sl_distance      # en unités de base (ex: ETH)
 - **Config** : toutes les valeurs sensibles et paramètres dans `.env`, chargés via `python-dotenv`. Ne jamais hardcoder de clé API ou de paramètre de risque.
 - **Firebase** : Toute persistance passe par `src/firebase/`. Les trades, heartbeats, allocations, et snapshots sont stockés dans Firestore.
 
+## Checklist — Ajout / suppression / modification d'une stratégie
+
+Quand une stratégie (bot) est **ajoutée, supprimée ou modifiée**, **TOUS** les fichiers suivants doivent être mis à jour systématiquement :
+
+| # | Fichier / lieu | Ce qu'il faut modifier |
+|---|----------------|------------------------|
+| 1 | `src/core/models.py` | Ajouter/retirer la valeur dans `StrategyType(Enum)` |
+| 2 | `src/config.py` | Ajouter/retirer les variables d'environnement du bot |
+| 3 | `.env` | Ajouter/retirer les clés de config du bot |
+| 4 | `STRATEGIE.md` | Mettre à jour TOUTES les sections : table des matières, tableau des bots, section dédiée du bot, exemples concrets, table des fichiers, paramètres, services, commandes, allocation du capital, table de risque |
+| 5 | `.github/copilot-instructions.md` | Mettre à jour : aperçu, architecture, section bot, enums, variables d'environnement, services systemd, dashboard |
+| 6 | `dashboard/app_unified.py` | Ajouter/retirer l'onglet du bot |
+| 7 | `scripts/logs-all.sh` | Ajouter/retirer le pane tmux du bot |
+| 8 | `scripts/analyze_profitability.py` | Mettre à jour `EXCHANGE_LABELS` |
+| 9 | `deploy/tradex-<bot>.service` | Créer/supprimer le fichier service systemd |
+| 10 | `src/notifications/telegram.py` | Ajouter/retirer les templates de notification |
+| 11 | VPS `/etc/systemd/system/` | Déployer/supprimer le service, `daemon-reload` |
+| 12 | Imports backtest (`backtest/`) | Mettre à jour si des utilitaires sont déplacés |
+
+> **Règle** : ne jamais considérer un ajout/suppression de bot comme terminé tant que TOUS ces fichiers n'ont pas été vérifiés et mis à jour.
+
 ## Variables d'environnement (`.env`)
 
 ```env

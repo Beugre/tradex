@@ -16,13 +16,12 @@
    - [Entrée et Stop Loss](#entrée-et-stop-loss-crashbot)
    - [Step Trailing : le TP qui monte par paliers](#step-trailing--le-tp-qui-monte-par-paliers)
    - [Kill-Switch mensuel](#kill-switch-mensuel)
-5. [Bot 3 — Momentum Continuation (Revolut X)](#bot-3--momentum-continuation-revolut-x)
-   - [L&#39;idée](#lidée-momentum)
-   - [Phase 1 : Filtre macro M15](#phase-1--filtre-macro-m15)
-   - [Phase 2 : Détecter l&#39;impulsion M5](#phase-2--détecter-limpulsion-m5)
-   - [Phase 3 : Attendre le pullback](#phase-3--attendre-le-pullback)
-   - [Phase 4 : Entrée sur reprise](#phase-4--entrée-sur-reprise)
-6. [Exécution des ordres Revolut X](#exécution-des-ordres-revolut-x-momentum--infinity)
+5. [Bot 3 — London Breakout (Revolut X)](#bot-3--london-breakout-revolut-x)
+   - [L&#39;idée](#lidée-london)
+   - [Phase 1 : Accumuler le range de session](#phase-1--accumuler-le-range-de-session)
+   - [Phase 2 : Détecter le breakout](#phase-2--détecter-le-breakout)
+   - [Phase 3 : Entrée et gestion](#phase-3--entrée-et-gestion)
+6. [Exécution des ordres Revolut X](#exécution-des-ordres-revolut-x-london--infinity)
 7. [Bot 4 — Infinity Bot (Revolut X)](#bot-4--infinity-bot-revolut-x)
    - [L&#39;idée](#lidée-infinity)
    - [Trailing High](#trailing-high--le-prix-de-référence-dynamique)
@@ -37,7 +36,7 @@
 11. [Les fichiers et qui fait quoi](#les-fichiers-et-qui-fait-quoi)
 12. [Exemple concret — Trade RANGE](#exemple-concret--trade-range)
 13. [Exemple concret — Trade CRASH](#exemple-concret--trade-crash)
-14. [Exemple concret — Trade MOMENTUM](#exemple-concret--trade-momentum)
+14. [Exemple concret — Trade LONDON BREAKOUT](#exemple-concret--trade-london-breakout)
 15. [Exemple concret — Trade INFINITY](#exemple-concret--trade-infinity)
 16. [Ce que les bots ne font PAS](#ce-que-les-bots-ne-font-pas)
 17. [Les paramètres importants](#les-paramètres-importants-fichier-env)
@@ -53,7 +52,7 @@ Les bots fonctionnent sur **2 exchanges** avec **4 stratégies complémentaires*
 
 > **🔄 Trail Range** (Binance) : "Quand le prix oscille dans un couloir, je joue les rebonds entre le plafond et le plancher."
 > **💥 CrashBot** (Binance) : "Quand une crypto s'effondre brutalement, j'achète le dip et je laisse remonter."
-> **🚀 Momentum** (Revolut X) : "Quand une bougie M5 explose avec du volume, j'attends le pullback puis j'entre dans la direction."
+> **🇬🇧 London Breakout** (Revolut X) : "Quand le prix casse le range de la session de Londres (08-16 UTC), j'entre long avec un SL basé sur l'ATR."
 > **♾️ Infinity** (Revolut X) : "Quand une crypto baisse de X% par rapport à son plus haut récent, j'accumule par paliers DCA puis je revends progressivement."
 
 Aucun bot ne prédit l'avenir. Chacun **constate** un pattern spécifique et agit en conséquence.
@@ -66,7 +65,7 @@ Aucun bot ne prédit l'avenir. Chacun **constate** un pattern spécifique et agi
 | ----------------------- | --------------- | -------------------------------------- | ------------------------------------ | ------------------- | --------------------------- |
 | 🔄**Trail Range** | Binance (USDC)  | ~284 (auto-discovery)                  | Rebonds dans le range + trailing OCO | Long Only           | 10–40% Binance (dynamique) |
 | 💥**CrashBot**    | Binance (USDC)  | ~284 (auto-discovery)                  | Dip-buy + step-trail                 | **Long Only** | 60–90% Binance (dynamique) |
-| 🚀**Momentum**    | Revolut X (USD) | 7 (ETH, SOL, BNB, XRP, LINK, ADA, LTC) | Impulsion M5 → pullback → entrée  | **Long Only** | 35% Revolut X               |
+| 🇬🇧**London Breakout** | Revolut X (USD) | 8 (BTC, ETH, SOL, BNB, LINK, ADA, DOT, AVAX) | Session breakout (08-16 UTC) → long | **Long Only** | 20% Revolut X |
 | ♾️**Infinity**  | Revolut X (USD) | BTC, AAVE, XLM (configs optimisées) | DCA inversé + vente paliers         | **Long Only** | 65% Revolut X (~22% par paire) |
 
 ---
@@ -233,86 +232,65 @@ Equity actuelle : 1 780$ → perf = -11% < -10%
 
 ---
 
-## Bot 3 — Momentum Continuation (Revolut X)
+## Bot 3 — London Breakout (Revolut X)
 
-### L'idée (Momentum)
+### L'idée (London)
 
-> Quand une bougie M5 explose avec beaucoup de volume (impulsion), le prix fait souvent un petit repli (pullback) avant de continuer dans la même direction. Le bot entre sur le pullback.
+> La session de Londres (08h–16h UTC) génère souvent un range consolidé. Quand le prix casse au-dessus de ce range après 16h UTC, avec du volume et un range suffisamment large, le bot entre long.
 
-C'est un signal en **4 phases** :
+C'est un signal en **3 phases** :
 
-### Phase 1 : Filtre macro M15
+### Phase 1 : Accumuler le range de session
 
-📄 **Fichier : `momentum_engine.py`**
+📄 **Fichier : `bot_london.py`**
 
-Le bot vérifie d'abord que le marché est **actif** sur M15 :
-
-- ATR(14) > moyenne mobile de l'ATR → la volatilité est au-dessus de la normale
-- Volume > moyenne mobile du volume → le marché est liquide
-
-Si le marché est "mort" (faible volatilité, faible volume), le bot ne cherche pas de signal.
-
-### Phase 2 : Détecter l'impulsion M5
-
-Le bot cherche une bougie M5 exceptionnelle qui réunit **4 critères** :
-
-| # | Critère                          | Condition                          | Pourquoi                                      |
-| - | --------------------------------- | ---------------------------------- | --------------------------------------------- |
-| 1 | **Body important**          | Body ≥ 0.4% du prix               | Bougie avec du contenu, pas juste une mèche  |
-| 2 | **Volume explosif**         | Volume ≥ 2× MA20                 | Beaucoup plus d'échanges que la normale      |
-| 3 | **Close dans le top**       | Close dans le top 20% de la bougie | Le prix a clôturé dans la direction du move |
-| 4 | **Tendance directionnelle** | ADX(14) > 15                       | Le mouvement a de la force, pas du bruit      |
+Le bot accumule le **high/low** des bougies H4 entre 08:00 et 16:00 UTC (bougies 08:00 et 12:00) :
 
 ```
-Exemple ETH-USD, bougie M5 :
-  Open: 2 100$ → Close: 2 112$ (body +0.57%) ✅
-  Volume: 15M (moy 20: 6M → 2.5×) ✅
-  Close dans top 20% de la bougie ✅
-  ADX = 22 > 15 ✅
-  → 🚀 IMPULSION HAUSSIÈRE détectée !
+Bougie H4 08:00 : High = 3 520$ | Low = 3 480$
+Bougie H4 12:00 : High = 3 540$ | Low = 3 475$
+
+→ Session range : High = 3 540$ | Low = 3 475$
+→ Largeur = (3540 - 3475) / 3475 = 1.87% ≥ 1.5% ✅
 ```
 
-### Phase 3 : Attendre le pullback
+### Phase 2 : Détecter le breakout
 
-Après l'impulsion, le bot attend un **retracement sain** :
+Après 16:00 UTC, le bot vérifie si le prix a cassé le haut du range avec **3 filtres** :
 
-| Critère          | Condition                   | Pourquoi                                          |
-| ----------------- | --------------------------- | ------------------------------------------------- |
-| Retracement       | 25–55% du move d'impulsion | Ni trop peu (pas de pullback), ni trop (reversal) |
-| RSI(14)           | Entre 40 et 65              | Pas suracheté, pas survendu                      |
-| Prix touche EMA20 | ± tolérance               | Le prix revient sur la moyenne rapide             |
-
-Le bot attend **max 35 bougies M5** (~3h) après l'impulsion. Si aucun pullback valide → signal annulé.
+| # | Critère                    | Condition                  | Pourquoi                                      |
+| - | --------------------------- | -------------------------- | --------------------------------------------- |
+| 1 | **Breakout haussier** | Close > session_high       | Le prix a cassé au-dessus du range           |
+| 2 | **Volume explosif**   | Volume ≥ 2.0× MA20       | Confirmation par la liquidité                |
+| 3 | **Range suffisant**   | Range ≥ 1.5% du prix     | Éviter les micro-ranges sans potentiel       |
 
 ```
-Impulsion haussière de 2 100$ à 2 112$ (move = 12$)
-
-  Pullback à 2 108$ → retracement = 4/12 = 33% ✅
-  RSI = 52 (entre 40-65) ✅
-  Prix proche de EMA20 ✅
-  → Pullback validé !
+Bougie H4 16:00 :
+  Close: 3 560$ > session_high 3 540$ ✅
+  Volume: 12M (moy 20: 5M → 2.4×) ✅
+  Range: 1.87% ≥ 1.5% ✅
+  → 🇬🇧 BREAKOUT HAUSSIER détecté !
 ```
 
-### Phase 4 : Entrée sur reprise
+### Phase 3 : Entrée et gestion
 
-Le bot attend une **bougie de reprise** dans la direction de l'impulsion :
-
-- Volume > MA10
-- La bougie confirme la direction (close > open pour un long)
-
-|                   | Valeur                            | Logique                     |
-| ----------------- | --------------------------------- | --------------------------- |
-| **Entrée** | Ordre limit maker                 | 0% de frais sur Revolut X   |
-| **SL**      | Sous le creux du pullback + marge | Si le pullback n'a pas tenu |
-| **Risque**  | 4% du capital                     | MC_RISK_PERCENT             |
+|                   | Valeur                                | Logique                        |
+| ----------------- | ------------------------------------- | ------------------------------ |
+| **Entrée** | Ordre limit maker (0% frais)          | Revolut X maker = 0% fee       |
+| **SL**      | Entry - 2.0 × ATR(14)               | Basé sur la volatilité récente |
+| **TP1**     | Entry × 1.02 (+2%) → vend 50%       | Sécuriser rapidement          |
+| **TP2**     | Entry × 1.05 (+5%) → vend le reste  | Laisser courir le profit       |
+| **Breakeven** | SL ramené à l'entrée après TP1   | Protection du capital          |
+| **Risque**  | 5% du capital (`LON_RISK_PERCENT`)   | Par trade                      |
+| **Cooldown** | 2 bougies H4 (8h) entre trades     | Éviter le surtrading           |
 
 ---
 
-## Exécution des ordres Revolut X (Momentum + Infinity)
+## Exécution des ordres Revolut X (London + Infinity)
 
 📄 **Fichier : `revolut_client.py`**
 
-Revolut X facture **0% en maker** et 0.09% en taker. Les deux bots Revolut X (Momentum et Infinity) utilisent le même mécanisme d'exécution.
+Revolut X facture **0% en maker** et 0.09% en taker. Les deux bots Revolut X (London et Infinity) utilisent le même mécanisme d'exécution.
 
 ### Infinity Bot (BUY) — retry maker 2× + taker fallback
 
@@ -330,9 +308,9 @@ Taker fallback              → fill immédiat ✅ (0.09% fee)
 
 1 tentative maker, puis taker fallback immédiat (ne pas rater la sortie).
 
-### Momentum Bot — maker + taker fallback
+### London Bot — maker + taker fallback
 
-1 tentative maker (60s via `MC_MAKER_WAIT_SECONDS`), puis fallback en taker (0.09%).
+1 tentative maker (60s via `LON_MAKER_WAIT_SECONDS`), puis fallback en taker (0.09%).
 
 ---
 
@@ -431,12 +409,12 @@ Quand le prix remonte au-dessus du **PMP (Prix Moyen Pondéré)**, le bot vend 2
 
 ### Capital et allocation
 
-Le capital Revolut X est partagé entre **Infinity** (3 paires) et **Momentum** :
+Le capital Revolut X est partagé entre **Infinity** (3 paires) et **London Breakout** :
 
 | Bot           | % du capital Revolut X |
 | ------------- | ---------------------- |
-| ♾️ Infinity | **65%** (≈22% par paire × 3) |
-| 🚀 Momentum   | **35%**          |
+| ♾️ Infinity | **80%** (≈27% par paire × 3) |
+| 🇬🇧 London Breakout | **20%** |
 
 ### Résultats backtest & walk-forward (6 ans, 2020-2026)
 
@@ -505,9 +483,9 @@ Exemple : Capital Binance = 3 226 USDC, PF Trail = 0.47
 - Quand le Trail Range **prouve** qu'il gagne (PF > 1.1), on lui donne plus de capital
 - Quand il perd, on réduit son exposition et CrashBot prend le relais
 
-### Les bots Revolut X (Momentum + Infinity)
+### Les bots Revolut X (London + Infinity)
 
-Les bots Momentum et Infinity partagent le capital Revolut X avec une allocation fixe : **65% Infinity** / **35% Momentum**. Ils sont **indépendants** de l'allocation Binance — les deux exchanges sont complètement séparés.
+Les bots London et Infinity partagent le capital Revolut X avec une allocation fixe : **80% Infinity** / **20% London Breakout**. Ils sont **indépendants** de l'allocation Binance — les deux exchanges sont complètement séparés.
 
 ---
 
@@ -531,7 +509,7 @@ position_size = risk_amount / sl_distance # ex: 150 / 5 = 30 unités
 | -------------- | --------- | ------------ | ------------- | ---------------------- |
 | 🔄 Trail Range | Binance   | 5%           | 3             | 30%                    |
 | 💥 CrashBot    | Binance   | 2%           | 3             | 30%                    |
-| 🚀 Momentum    | Revolut X | 4%           | 3             | 90%                    |
+| 🇬🇧 London Breakout | Revolut X | 5%           | 1             | 50%                    |
 | ♾️ Infinity  | Revolut X | 15-25% (SL)  | 3 cycles max  | 70% (max investi/paire) |
 
 ### Calcul d'equity
@@ -587,23 +565,29 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 └──────────────────────────────────────────────────────────┘
 ```
 
-### 🚀 Momentum (`bot_momentum.py`)
+### 🇬🇧 London Breakout (`bot_london.py`)
 
 ```
 ┌──────────────────────────────────────────────────────────┐
 │ TOUTES LES 30 SECONDES                                  │
 │                                                          │
-│  Pour chaque paire (7) :                                 │
-│    ├─ Récupérer bougies M5 + M15                         │
-│    ├─ Filtre macro M15 actif ? → Continuer               │
-│    ├─ Impulsion M5 détectée ? → Attendre pullback        │
-│    ├─ Pullback valide ? → Attendre reprise               │
-│    ├─ Reprise confirmée ? → 🚀 SIGNAL MOMENTUM          │
-│    │   └─ Placer ordre limit maker (0% frais)            │
-│    └─ Position ouverte ? → Gérer SL/trailing             │
+│  Pour chaque paire (8) :                                 │
+│    ├─ 08:00-16:00 UTC ? → Accumuler le range de session  │
+│    │   └─ Mise à jour session_high / session_low          │
+│    ├─ Après 16:00 UTC ? → Vérifier breakout              │
+│    │   ├─ Close > session_high ? ✅                       │
+│    │   ├─ Volume ≥ 2× MA20 ? ✅                          │
+│    │   ├─ Range ≥ 1.5% ? ✅                              │
+│    │   └─ Tout OK → 🇬🇧 SIGNAL LONDON BREAKOUT          │
+│    │       └─ Placer ordre limit maker (0% frais)         │
+│    └─ Position ouverte ? → Gérer TP1/TP2/BE/SL           │
+│        ├─ TP1 (+2%) → vend 50% + breakeven SL            │
+│        └─ TP2 (+5%) → vend le reste                      │
 │                                                          │
 │ TOUTES LES 10 MINUTES                                    │
 │    └─ Heartbeat Firebase + calcul equity                 │
+│                                                          │
+│ COOLDOWN : 8h (2 bougies H4) entre trades/paire          │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -670,13 +654,13 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 | `strategy_mean_rev.py`    | 🔄 Stratégie Mean Reversion : signaux BUY/SELL dans le range           |
 | `strategy_trend.py`       | Stratégie Trend Following : signaux BUY/SELL en tendance               |
 | `crashbot_detector.py`    | 💥 Détecte les crashes (drop ≥ 20%) + step trailing                   |
-| `momentum_engine.py`      | 🚀 Détecte les impulsions M5, pullbacks et reprises                    |
+| `indicators.py`           | 📐 Indicateurs techniques réutilisables (EMA, SMA, ATR, RSI)         |
 | `allocator.py`            | Répartit le capital Binance entre Trail Range et CrashBot              |
 | `risk_manager.py`         | Calcul de taille de position, zero-risk, trailing, equity               |
 | `position_store.py`       | Sérialisation/désérialisation des positions en JSON                  |
 | `bot_binance.py`          | 🔄 Boucle principale Trail Range (Binance, ~284 paires, OCO)            |
 | `bot_binance_crashbot.py` | 💥 Boucle principale CrashBot (Binance, dip-buy, step-trail)            |
-| `bot_momentum.py`         | 🚀 Boucle principale Momentum (Revolut X, 7 paires, maker-only)         |
+| `bot_london.py`           | 🇬🇧 Boucle principale London Breakout (Revolut X, 8 paires, maker-only)  |
 | `bot_infinity.py`         | ♾️ Boucle principale Infinity (Revolut X, BTC+AAVE+XLM, DCA inversé) |
 | `infinity_engine.py`      | ♾️ Logique DCA inversé : check_first_entry, paliers, trailing high   |
 | `bot.py`                  | (legacy) Ancien bot Dow Theory Revolut X                                |
@@ -691,7 +675,7 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 
 | Dashboard            | Port | Description                                           |
 | -------------------- | ---- | ----------------------------------------------------- |
-| 📊 Dashboard unifié | 8502 | 4 onglets : Overview, Trail Range, CrashBot, Momentum |
+| 📊 Dashboard unifié | 8502 | 5 onglets : Overview, Trail Range, CrashBot, Infinity, London |
 
 ---
 
@@ -777,45 +761,58 @@ Prix redescend → SL₃ touché à 24.20$
 
 ---
 
-## Exemple concret — Trade MOMENTUM
+## Exemple concret — Trade LONDON BREAKOUT
 
 Imaginons ETH-USD sur Revolut X :
 
-### 1️⃣ Filtre macro M15 OK
+### 1️⃣ Accumulation du range de session (08-16 UTC)
 
 ```
-ATR(14) M15 = 18.5 > MA(ATR) 14.2 ✅ Volatilité active
-Volume M15 = 12.3M > MA(Vol) 8.1M ✅ Marché liquide
-→ Filtre macro passé
+Bougie H4 08:00 : High = 3 520$ | Low = 3 480$
+Bougie H4 12:00 : High = 3 545$ | Low = 3 490$
+
+→ Session range : High = 3 545$ | Low = 3 480$
+→ Largeur = (3545 - 3480) / 3480 = 1.87% ≥ 1.5% ✅
 ```
 
-### 2️⃣ Impulsion M5 détectée
+### 2️⃣ Breakout détecté (bougie H4 16:00)
 
 ```
-Bougie M5 : Open 2 100$ → Close 2 112.40$ (+0.59%)
-  Body ≥ 0.4% ✅ | Volume 2.8× MA20 ✅ | Close top 20% ✅ | ADX 24 > 15 ✅
-→ 🚀 IMPULSION HAUSSIÈRE | Move = +12.40$
+Bougie H4 16:00 :
+  Close: 3 560$ > session_high 3 545$ ✅
+  Volume: 14.2M (moy 20: 5.8M → 2.45×) ✅
+  Range session: 1.87% ≥ 1.5% ✅
+→ 🇬🇧 BREAKOUT HAUSSIER détecté !
 ```
 
-### 3️⃣ Pullback validé
+### 3️⃣ Entrée et gestion
 
 ```
-5 bougies plus tard : prix redescend à 2 108.30$
-  Retracement = 4.10 / 12.40 = 33% (entre 25-55%) ✅
-  RSI(14) = 51 (entre 40-65) ✅
-  Prix proche de EMA20 ✅
-→ Pullback valide
+→ 🇬🇧 SIGNAL LONDON BREAKOUT BUY !
+  Ordre limit maker @ 3 560$ (0% frais)
+  ATR(14) = 55$
+  SL = 3 560 - 2.0 × 55 = 3 450$ (-3.1%)
+  TP1 = 3 560 × 1.02 = 3 631$ (+2%) → vend 50%
+  TP2 = 3 560 × 1.05 = 3 738$ (+5%) → vend le reste
+  Risque 5% de 263$ = 13.15$
+  Taille = 13.15 / (3560 - 3450) = 0.1195 ETH → cappé à 50%
 ```
 
-### 4️⃣ Entrée sur reprise
+### 4️⃣ TP1 touché → breakeven
 
 ```
-Bougie de reprise : Close 2 110.50$ > Open 2 108.30$, volume > MA10
-→ 🚀 SIGNAL MOMENTUM BUY !
-  Ordre limit maker @ 2 110.50$ (0% frais)
-  SL = 2 106.20$ (sous le creux du pullback)
-  Risque 4% de 500$ = 20$
-  Taille = 20 / (2110.50 - 2106.20) = 4.65 ETH... cappé à 90% = 0.213 ETH
+Prix monte à 3 631$ → TP1 ✅
+  → Vend 50% (0.0598 ETH) @ 3 631$ (+2%)
+  → SL remonté à 3 560$ (breakeven)
+```
+
+### 5️⃣ TP2 touché → clôture complète
+
+```
+Prix monte à 3 738$ → TP2 ✅
+  → Vend le reste (0.0597 ETH) @ 3 738$ (+5%)
+  → ✅ Trade terminé ! PnL ≈ +4.63$ 🎉
+  → Cooldown 8h sur ETH-USD
 ```
 
 ---
@@ -911,7 +908,7 @@ Prix crash à 58 100$ → SL touché ❌
 | --------------------- | ------------------------------------------------------------ |
 | Prédire l'avenir     | Constater des patterns (range, crash, impulsion) et réagir  |
 | Miser tout le capital | Risk 2–5% par trade, allocation dynamique                   |
-| Shorter en spot       | CrashBot et Momentum = long only. Trail Range = long & short |
+| Shorter en spot       | CrashBot et London = long only. Trail Range = long & short |
 | Trader en permanence  | Chaque bot attend SES conditions spécifiques                |
 | Ignorer les pertes    | Kill-switch mensuel, SL sur chaque trade, trailing lock      |
 
@@ -941,26 +938,28 @@ Prix crash à 58 100$ → SL touché ❌
 | `trail_step_pct`            | 0.5%   | Extension du TP par step                  |
 | `BINANCE_CRASHBOT_KILL_PCT` | -10%   | Seuil du kill-switch mensuel              |
 
-### Momentum 🚀
+### London Breakout 🇬🇧
 
 | Paramètre                   | Valeur  | Ce que ça fait                         |
 | ---------------------------- | ------- | --------------------------------------- |
-| `MC_RISK_PERCENT`          | 4%      | Risque par trade                        |
-| `MC_MAX_POSITIONS`         | 3       | Nombre max de trades ouverts            |
-| `MC_MAX_POSITION_PCT`      | 90%     | Part max du capital par position        |
-| `MC_POLLING_SECONDS`       | 30s     | Fréquence de vérification             |
-| `MC_MAKER_WAIT_SECONDS`    | 60s     | Temps d'attente pour un fill maker      |
-| `impulse_body_min_pct`     | 0.4%    | Body minimum de l'impulsion             |
-| `impulse_vol_mult`         | 2×     | Volume minimum (vs MA20)                |
-| `pullback_retrace_min/max` | 25–55% | Fenêtre de retracement valide          |
-| `adx_min`                  | 15      | ADX minimum pour confirmer la direction |
+| `LON_RISK_PERCENT`         | 5%      | Risque par trade                        |
+| `LON_MAX_POSITIONS`        | 1       | Max 1 position simultanée              |
+| `LON_SESSION_START_HOUR`   | 8       | Début session Londres (UTC)              |
+| `LON_SESSION_END_HOUR`     | 16      | Fin session Londres (UTC)               |
+| `LON_SL_ATR_MULT`          | 2.0     | Multiplicateur ATR pour le SL           |
+| `LON_TP1_PCT`              | 2%      | TP1 : vente 50%                        |
+| `LON_TP2_PCT`              | 5%      | TP2 : vente du reste                   |
+| `LON_VOL_MULT`             | 2.0×   | Volume minimum (vs MA20)                |
+| `LON_MIN_RANGE_PCT`        | 1.5%    | Largeur minimum du range de session     |
+| `LON_POLLING_SECONDS`      | 30s     | Fréquence de vérification             |
+| `LON_MAKER_WAIT_SECONDS`   | 60s     | Temps d'attente pour un fill maker      |
 
 ### Infinity ♾️
 
 | Paramètre                   | Valeur                        | Ce que ça fait                                 |
 | ---------------------------- | ----------------------------- | ----------------------------------------------- |
 | `INF_TRADING_PAIRS`        | BTC-USD,AAVE-USD,XLM-USD     | Paires tradées (configs validées par paire)   |
-| `INF_CAPITAL_PCT`          | 65%                           | Part du capital Revolut X allouée (÷3 paires) |
+| `INF_CAPITAL_PCT`          | 80%                           | Part du capital Revolut X allouée (÷3 paires) |
 | `INF_POLLING_SECONDS`      | 30s                           | Fréquence de polling prix                      |
 | `INF_MAKER_WAIT_SECONDS`   | 60s                           | Attente max pour fill maker                     |
 | `INF_HEARTBEAT_SECONDS`    | 600s                          | Fréquence heartbeat (10 min)                   |
@@ -1002,7 +1001,7 @@ Prix crash à 58 100$ → SL touché ❌
 | ---------------------------- | ----------------------------------------------- | ---- |
 | `tradex-binance`           | Bot Trail Range (284 paires USDC, OCO)          | —   |
 | `tradex-binance-crashbot`  | Bot CrashBot (284 paires USDC, dip-buy)         | —   |
-| `tradex-momentum`          | Bot Momentum (7 paires USD, Revolut X)          | —   |
+| `tradex-london`          | Bot London Breakout (8 paires USD, Revolut X)   | —   |
 | `tradex-infinity`          | Bot Infinity (BTC+AAVE+XLM, DCA inversé, Revolut X)   | —   |
 | `tradex-dashboard-unified` | Dashboard Streamlit unifié                     | 8502 |
 
@@ -1012,11 +1011,11 @@ Prix crash à 58 100$ → SL touché ❌
 # Logs en direct
 ssh BOT-VPS 'sudo journalctl -u tradex-binance -f'
 ssh BOT-VPS 'sudo journalctl -u tradex-binance-crashbot -f'
-ssh BOT-VPS 'sudo journalctl -u tradex-momentum -f'
+ssh BOT-VPS 'sudo journalctl -u tradex-london -f'
 ssh BOT-VPS 'sudo journalctl -u tradex-infinity -f'
 
 # État de tous les services
-ssh BOT-VPS 'for svc in tradex-binance tradex-binance-crashbot tradex-momentum tradex-infinity tradex-dashboard-unified; do echo -n "$svc: "; sudo systemctl is-active $svc; done'
+ssh BOT-VPS 'for svc in tradex-binance tradex-binance-crashbot tradex-london tradex-infinity tradex-dashboard-unified; do echo -n "$svc: "; sudo systemctl is-active $svc; done'
 
 # Redémarrer un bot
 ssh BOT-VPS 'sudo systemctl restart tradex-binance'
