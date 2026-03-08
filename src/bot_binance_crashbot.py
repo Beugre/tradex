@@ -160,6 +160,7 @@ class TradeXBinanceCrashBot:
         self._candles_cache: dict[str, list[Candle]] = {}
         self._last_signal: dict[str, Optional[CrashSignal]] = {}
         self._atr_cache: dict[str, float] = {}
+        self._entry_attempts: dict[str, int] = {}  # tentatives d'entrée échouées
 
         # Step trailing state par paire
         self._trail_sl: dict[str, float] = {}      # trailing SL actuel
@@ -892,6 +893,16 @@ class TradeXBinanceCrashBot:
                 logger.debug("[%s] Signal ignoré : cooldown (%d bars)", symbol, self._crash_cfg.cooldown_bars)
                 return
 
+        # Max retry : après 3 tentatives échouées, invalider le signal
+        if self._entry_attempts.get(symbol, 0) >= 3:
+            logger.warning(
+                "[%s] ⚠️ Signal CRASH abandonné après %d tentatives échouées",
+                symbol, self._entry_attempts[symbol],
+            )
+            self._last_signal[symbol] = None
+            self._entry_attempts.pop(symbol, None)
+            return
+
         # Max positions
         open_count = sum(
             1 for p in self._positions.values()
@@ -1023,11 +1034,18 @@ class TradeXBinanceCrashBot:
                         f"Slippage {slippage_pct*100:.2f}% (expected={_fmt(current_price)}, fill={_fmt(fill_price)})",
                     )
             except Exception as e:
-                logger.error("[%s] ❌ MARKET BUY échoué: %s", symbol, e)
-                self._telegram.notify_error(f"CrashBot {symbol} BUY échoué: {e}")
+                self._entry_attempts[symbol] = self._entry_attempts.get(symbol, 0) + 1
+                logger.error(
+                    "[%s] ❌ MARKET BUY échoué (tentative %d/3): %s",
+                    symbol, self._entry_attempts[symbol], e,
+                )
+                self._telegram.notify_error(f"CrashBot {symbol} BUY échoué ({self._entry_attempts[symbol]}/3): {e}")
                 return
         else:
             logger.info("[DRY-RUN] MARKET BUY %s qty=%s @ %s", symbol, quantity_str, _fmt(fill_price))
+
+        # Entrée réussie → reset compteur
+        self._entry_attempts.pop(symbol, None)
 
         # Recalculer SL et TP avec le vrai fill price
         if self._crash_cfg.atr_sl_mult > 0 and sig.atr_value > 0:
