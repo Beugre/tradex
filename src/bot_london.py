@@ -1373,14 +1373,40 @@ class LondonBreakoutBot:
 
         # Session states summary
         session_info: list[str] = []
+        breakouts_ready = 0
+        near_breakout_alerts: list[str] = []
         for sym in LON_TRADING_PAIRS:
             ss = self._session_states.get(sym)
             if ss and ss.session_bars > 0:
                 range_pct = (ss.session_high - ss.session_low) / ss.session_low * 100 if ss.session_low > 0 else 0
                 consumed = "✅" if ss.breakout_consumed else "⏳"
+                if not ss.breakout_consumed:
+                    breakouts_ready += 1
                 session_info.append(
                     f"  {consumed} `{sym}` H=`{_fmt(ss.session_high)}` L=`{_fmt(ss.session_low)}` R=`{range_pct:.2f}%`"
                 )
+                # Near-breakout proximity alert
+                if not ss.breakout_consumed and ss.session_high > 0:
+                    try:
+                        ticker = self._data.get_ticker(sym)
+                        if ticker and ticker.last_price > 0:
+                            dist_pct = (ticker.last_price - ss.session_high) / ss.session_high * 100
+                            if -2.0 <= dist_pct <= 0:
+                                near_breakout_alerts.append(
+                                    f"  ⚠️ `{sym}` near breakout `{dist_pct:+.1f}%`"
+                                )
+                    except Exception:
+                        pass
+
+        # Unrealized PnL total
+        total_unrealized = 0.0
+        for sym, pos in self._positions.items():
+            try:
+                ticker = self._data.get_ticker(sym)
+                if ticker:
+                    total_unrealized += (ticker.last_price - pos.entry_price) * pos.remaining_size
+            except Exception:
+                pass
 
         logger.info(
             "💓 LONDON Alive | tick=%d | pos=%d/%d | equity=$%.2f | alloc=$%.2f\n"
@@ -1392,20 +1418,37 @@ class LondonBreakoutBot:
 
         # Telegram
         try:
+            # System status
+            if total_unrealized < -allocated * 0.05:
+                sys_emoji, sys_label = "🔴", "risk mode"
+            elif total_unrealized < 0 and len(self._positions) > 0:
+                sys_emoji, sys_label = "🟡", "watching"
+            else:
+                sys_emoji, sys_label = "🟢", "stable"
+
+            last_update = datetime.now(timezone.utc).strftime("%H:%M UTC")
+            unr_emoji = "🟢" if total_unrealized >= 0 else "🔴"
+
             tg_lines = [
-                f"💓 *LONDON BREAKOUT* 🇬🇧 ({len(LON_TRADING_PAIRS)} paires)",
-                f"  Equity: `${total_equity:,.0f}` | Alloué: `${allocated:,.0f}`",
+                f"{sys_emoji} *LONDON BREAKOUT* 🇬🇧 ({len(LON_TRADING_PAIRS)} paires) — {sys_label}",
+                f"  💰 Equity: `${total_equity:,.0f}` | Alloué: `${allocated:,.0f}`",
                 f"  Session: {session_status}",
-                f"  Pos: `{len(self._positions)}/{LON_MAX_POSITIONS}`",
-                f"  ⏳ Prochaine H4: `{countdown_str}`",
+                f"  📊 Pos: `{len(self._positions)}/{LON_MAX_POSITIONS}` | Breakouts prêts: `{breakouts_ready}`",
             ]
+            if self._positions:
+                tg_lines.append(f"  {unr_emoji} PnL open: `${total_unrealized:+.2f}`")
+            if near_breakout_alerts:
+                tg_lines.append("")
+                tg_lines.extend(near_breakout_alerts)
+            tg_lines.append(f"  ⏳ Prochaine H4: `{countdown_str}`")
             if pos_lines:
                 tg_lines.append("")
                 tg_lines.extend(pos_lines)
             if session_info:
                 tg_lines.append("\n  📊 *Sessions actives:*")
                 tg_lines.extend(session_info)
-            tg_lines.append(f"\n[Dashboard]({DASHBOARD_URL})")
+            tg_lines.append(f"\n  🕐 `{last_update}`")
+            tg_lines.append(f"[Dashboard]({DASHBOARD_URL})")
             self._telegram.send_raw("\n".join(tg_lines))
         except Exception:
             logger.warning("Telegram heartbeat failed", exc_info=True)

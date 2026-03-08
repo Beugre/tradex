@@ -143,15 +143,37 @@ class TelegramNotifier:
         total_pairs: int,
         neutral_transitions: int,
         cycle_count: int,
+        avg_range_width_pct: float = 0.0,
+        exposure_usd: float = 0.0,
+        exposure_pct: float = 0.0,
+        unrealized_pnl: float = 0.0,
     ) -> None:
         """Heartbeat Range avec positions en cours et compteur NEUTRAL."""
+        from datetime import datetime, timezone
+        now_utc = datetime.now(timezone.utc)
+        last_update = now_utc.strftime("%H:%M UTC")
+
+        # System status basé sur PnL open
+        n_losing = sum(1 for p in open_positions if p.get("pnl_pct", 0) < -5)
+        if n_losing >= 2 or unrealized_pnl < -equity * 0.05:
+            sys_emoji, sys_label = "🔴", "risk mode"
+        elif unrealized_pnl < 0:
+            sys_emoji, sys_label = "🟡", "watching"
+        else:
+            sys_emoji, sys_label = "🟢", "stable"
+
         lines = [
-            f"💓 *RANGE Heartbeat* — cycle #{cycle_count}",
-            f"💰 Equity: `${equity:,.2f}`",
-            f"📊 Positions: {len(open_positions)}/{max_positions}",
+            f"{sys_emoji} *RANGE Heartbeat* — {sys_label} (cycle #{cycle_count})",
+            f"  💰 Equity: `${equity:,.2f}`",
+            f"  📊 Pos: {len(open_positions)}/{max_positions} | "
+            f"Expo: `${exposure_usd:,.0f}` (`{exposure_pct:.0f}%`)",
         ]
 
+        if avg_range_width_pct > 0:
+            lines.append(f"  📐 Range moyen: `{avg_range_width_pct:.1f}%`")
+
         if open_positions:
+            lines.append(f"  💵 PnL open: `${unrealized_pnl:+.2f}`")
             lines.append("")
             for p in open_positions:
                 emoji = "🟢" if p["pnl_pct"] >= 0 else "🔴"
@@ -162,9 +184,10 @@ class TelegramNotifier:
 
         lines.append("")
         lines.append(
-            f"⚪ Neutrals: {neutral_count}/{total_pairs} "
-            f"(transitions → neutral: {neutral_transitions})"
+            f"  ⚪ Neutrals: {neutral_count}/{total_pairs} "
+            f"(→ neutral: {neutral_transitions})"
         )
+        lines.append(f"  🕐 `{last_update}`")
         lines.append(f"[Dashboard]({DASHBOARD_URL})")
 
         self._send("\n".join(lines))
@@ -351,34 +374,66 @@ class TelegramNotifier:
         signals_detected: int,
         avg_api_latency_ms: float = 0,
         current_risk_pct: float | None = None,
+        risk_engaged_pct: float = 0.0,
+        unrealized_pnl: float = 0.0,
+        unrealized_pnl_pct: float = 0.0,
     ) -> None:
         """Heartbeat périodique CrashBot."""
+        from datetime import datetime, timezone
+        now_utc = datetime.now(timezone.utc)
+        last_update = now_utc.strftime("%H:%M UTC")
+
+        # System status
+        if drawdown_pct < -5:
+            sys_emoji, sys_label = "🔴", "risk mode"
+        elif drawdown_pct < -3:
+            sys_emoji, sys_label = "🟡", "drawdown"
+        else:
+            sys_emoji, sys_label = "🟢", "stable"
+
         kill_emoji = "🔴 ON" if kill_switch else "🟢 OFF"
         dd_emoji = "⚠️" if drawdown_pct < -3 else ""
+
         lines = [
-            f"💓 *CRASHBOT H4*",
-            f"  Equity: `${equity:,.0f}` (alloué: `${allocated_equity:,.0f}`)",
-            f"  DD mois: `{drawdown_pct:+.1f}%` {dd_emoji}",
-            f"  Expo: `{exposure_pct:.0f}%` | Pos: `{open_positions}/{max_positions}`",
-            f"  PnL jour: `${daily_pnl:+.2f}` (`{daily_pnl_pct:+.1f}%`)",
-            f"  Kill: {kill_emoji} | Signaux: {signals_detected}📡",
+            f"{sys_emoji} *CRASHBOT H4* — {sys_label}",
+            f"  💰 Equity: `${equity:,.0f}` (alloué: `${allocated_equity:,.0f}`)",
+            f"  📉 DD mois: `{drawdown_pct:+.1f}%` {dd_emoji}",
+            f"  📊 Expo: `{exposure_pct:.0f}%` | Pos: `{open_positions}/{max_positions}`",
         ]
 
         if current_risk_pct is not None:
-            lines.append(f"  📊 Risk actuel: `{current_risk_pct*100:.1f}%` (momentum sizing)")
+            lines.append(
+                f"  🎯 Risk: `{current_risk_pct*100:.1f}%`/trade | "
+                f"Engagé: `{risk_engaged_pct*100:.1f}%` ({open_positions} pos)"
+            )
+
+        # PnL réalisé vs open
+        lines.append(
+            f"  💵 PnL jour: `${daily_pnl:+.2f}` | "
+            f"Open: `${unrealized_pnl:+.2f}` (`{unrealized_pnl_pct:+.1f}%`)"
+        )
+        lines.append(f"  Kill: {kill_emoji} | Signaux: {signals_detected}📡")
 
         if positions_detail:
             lines.append("")
             for p in positions_detail:
                 gain = p.get("gain_pct", 0)
                 emoji = "🟢" if gain >= 0 else "🔴"
+                sl_dist = p.get("sl_dist_pct", 0)
+                tp_dist = p.get("tp_dist_pct", 0)
+                steps = p.get("steps", 0)
+                steps_tag = f" ×{steps}" if steps > 0 else ""
                 lines.append(
-                    f"  {emoji} `{p['symbol']}` @ `{_fp(p['entry'])}` | "
-                    f"SL=`{_fp(p['sl'])}` | TP=`{_fp(p.get('tp', 0))}` (`{gain:+.1f}%`)"
+                    f"  {emoji} `{p['symbol']}`{steps_tag} (`{gain:+.1f}%`)"
+                )
+                lines.append(
+                    f"    SL `{_fp(p['sl'])}` (`{sl_dist:+.1f}%`) | "
+                    f"TP `{_fp(p.get('tp', 0))}` (`{tp_dist:+.1f}%`)"
                 )
 
         if avg_api_latency_ms > 0:
-            lines.append(f"  ⏱️ API: `{avg_api_latency_ms:.0f}ms` moy")
+            lines.append(f"  ⏱️ API: `{avg_api_latency_ms:.0f}ms`")
+        lines.append(f"  🕐 `{last_update}`")
         lines.append(f"[Dashboard]({CRASHBOT_DASHBOARD_URL})")
         self._send("\n".join(lines))
 

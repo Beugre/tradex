@@ -1616,6 +1616,7 @@ class TradeXBinanceCrashBot:
 
         # Exposition courante
         exposure_notional = 0.0
+        unrealized_pnl = 0.0
         positions_detail = []
         for pos in open_pos:
             ticker = self._data.get_ticker(pos.symbol)
@@ -1627,6 +1628,11 @@ class TradeXBinanceCrashBot:
             steps = self._trail_steps.get(pos.symbol, 0)
             peak = self._peak_prices.get(pos.symbol, pos.entry_price)
             gain = (price - pos.entry_price) / pos.entry_price * 100 if pos.entry_price > 0 else 0
+            pnl_usd = (price - pos.entry_price) * pos.size
+            unrealized_pnl += pnl_usd
+            # Distance au SL/TP depuis le prix actuel
+            sl_dist_pct = (sl - price) / price * 100 if price > 0 else 0
+            tp_dist_pct = (tp - price) / price * 100 if price > 0 and tp > 0 else 0
             positions_detail.append({
                 "symbol": pos.symbol,
                 "entry": pos.entry_price,
@@ -1637,10 +1643,14 @@ class TradeXBinanceCrashBot:
                 "notional": notional,
                 "steps": steps,
                 "price": price,
+                "sl_dist_pct": sl_dist_pct,
+                "tp_dist_pct": tp_dist_pct,
             })
 
         exposure_pct = (exposure_notional / allocated_equity * 100) if allocated_equity > 0 else 0
         daily_pnl_pct = (self._daily_pnl / allocated_equity * 100) if allocated_equity > 0 else 0
+        unrealized_pnl_pct = (unrealized_pnl / allocated_equity * 100) if allocated_equity > 0 else 0
+        risk_engaged_pct = self._current_risk * len(open_pos) if self._momentum_sizing_enabled else 0.0
 
         avg_latency = (sum(self._api_latencies) / len(self._api_latencies)) if self._api_latencies else 0
         self._check_data_freshness()
@@ -1688,6 +1698,9 @@ class TradeXBinanceCrashBot:
                 signals_detected=self._signals_detected,
                 avg_api_latency_ms=avg_latency,
                 current_risk_pct=self._current_risk if self._momentum_sizing_enabled else None,
+                risk_engaged_pct=risk_engaged_pct,
+                unrealized_pnl=unrealized_pnl,
+                unrealized_pnl_pct=unrealized_pnl_pct,
             )
 
         # Firebase heartbeat

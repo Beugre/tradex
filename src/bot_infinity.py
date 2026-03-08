@@ -1529,6 +1529,7 @@ class InfinityBot:
         # Per-pair status
         active_pairs = 0
         total_allocated = 0.0
+        total_unrealized = 0.0
         tg_pair_lines = []  # for Telegram multi-pair heartbeat
 
         for symbol, ctx in self._pairs.items():
@@ -1560,6 +1561,7 @@ class InfinityBot:
                 current_value = cycle.size_remaining * current_price + cycle.total_proceeds
                 pnl_latent = current_value - cycle.total_cost
                 pnl_latent_pct = pnl_latent / cycle.total_cost * 100 if cycle.total_cost > 0 else 0
+                total_unrealized += pnl_latent
 
             # Console log per pair
             if cycle.phase == "WAITING":
@@ -1627,19 +1629,27 @@ class InfinityBot:
                 n_buys = len(cycle.buys)
                 n_sells = len(cycle.sells)
                 next_buy_str = "—"
+                next_buy_dist = ""
                 if n_buys < len(cfg.buy_levels):
                     nb_price = cycle.reference_price * (1 + cfg.buy_levels[n_buys])
                     next_buy_str = f"L{n_buys + 1}@`{_fmt(nb_price)}`"
+                    if current_price > 0:
+                        dist_pct = (nb_price - current_price) / current_price * 100
+                        next_buy_dist = f" (`{dist_pct:+.1f}%`)"
                 next_tp_str = "—"
+                next_tp_dist = ""
                 if n_sells < len(cfg.sell_levels) and cycle.pmp > 0:
                     nt_price = cycle.pmp * (1 + cfg.sell_levels[n_sells])
                     next_tp_str = f"TP{n_sells + 1}@`{_fmt(nt_price)}`"
+                    if current_price > 0:
+                        dist_pct = (nt_price - current_price) / current_price * 100
+                        next_tp_dist = f" (`{dist_pct:+.1f}%`)"
                 tg_pair_lines.append(
                     f"  📊 Prix: `{_fmt(current_price)}` | PMP: `{_fmt(cycle.pmp)}` | Inv: `${cycle.total_cost:,.2f}` | "
                     f"B: `{len(cycle.buys)}/5` S: `{len(cycle.sells)}/5`{be_tag}"
                 )
                 tg_pair_lines.append(
-                    f"  ⬇️ {next_buy_str} | ⬆️ {next_tp_str}"
+                    f"  ⬇️ {next_buy_str}{next_buy_dist} | ⬆️ {next_tp_str}{next_tp_dist}"
                 )
                 tg_pair_lines.append(
                     f"  {pnl_emoji} Latent: `{pnl_latent:+.2f}$` (`{pnl_latent_pct:+.1f}%`)"
@@ -1663,14 +1673,27 @@ class InfinityBot:
 
         # Telegram multi-pair heartbeat
         try:
+            # System status
+            if total_unrealized < -total_allocated * 0.05:
+                sys_emoji, sys_label = "🔴", "risk mode"
+            elif total_unrealized < 0:
+                sys_emoji, sys_label = "🟡", "watching"
+            else:
+                sys_emoji, sys_label = "🟢", "stable"
+
+            unr_emoji = "🟢" if total_unrealized >= 0 else "🔴"
+            last_update = now_utc.strftime("%H:%M UTC")
+
             tg_lines = [
-                f"💓 *INFINITY* ♾️ ({len(self._pairs)} paires)",
-                f"  Equity: `${total_equity:,.0f}` | Alloué: `${total_allocated:,.0f}`",
+                f"{sys_emoji} *INFINITY* ♾️ ({len(self._pairs)} paires) — {sys_label}",
+                f"  💰 Equity: `${total_equity:,.0f}` | Alloué: `${total_allocated:,.0f}`",
+                f"  {unr_emoji} PnL open: `${total_unrealized:+.2f}`",
                 f"  ⏳ Prochaine H4: `{countdown_str}`",
             ]
             tg_lines.extend(tg_pair_lines)
             from src.notifications.telegram import DASHBOARD_URL
-            tg_lines.append(f"\n[Dashboard]({DASHBOARD_URL})")
+            tg_lines.append(f"\n  🕐 `{last_update}`")
+            tg_lines.append(f"[Dashboard]({DASHBOARD_URL})")
             self._telegram.send_raw("\n".join(tg_lines))
         except Exception:
             logger.warning("Telegram heartbeat failed", exc_info=True)

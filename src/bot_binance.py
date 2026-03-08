@@ -1705,8 +1705,10 @@ class TradeXBinanceBot:
 
         allocated_equity = self._calculate_allocated_equity()
 
-        # Calculer le P&L latent de chaque position
+        # Calculer le P&L latent et l'exposition de chaque position
         pos_details: list[dict] = []
+        exposure_usd = 0.0
+        unrealized_pnl = 0.0
         for pos in open_pos:
             try:
                 ticker = self._data.get_ticker(pos.symbol)
@@ -1714,8 +1716,13 @@ class TradeXBinanceBot:
                     price = ticker.last_price
                     if pos.side == OrderSide.BUY:
                         pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
+                        pnl_usd = (price - pos.entry_price) * pos.size
                     else:
                         pnl_pct = (pos.entry_price - price) / pos.entry_price * 100
+                        pnl_usd = (pos.entry_price - price) * pos.size
+                    notional = pos.size * price
+                    exposure_usd += notional
+                    unrealized_pnl += pnl_usd
                     pos_details.append({
                         "symbol": pos.symbol.replace("USDC", ""),
                         "pnl_pct": pnl_pct,
@@ -1729,6 +1736,15 @@ class TradeXBinanceBot:
                     "side": pos.side.value,
                     "status": pos.status.value,
                 })
+
+        # Range width moyen
+        avg_range_width_pct = 0.0
+        if self._ranges:
+            widths = [rs.range_width_pct * 100 for rs in self._ranges.values() if rs.range_width_pct > 0]
+            if widths:
+                avg_range_width_pct = sum(widths) / len(widths)
+
+        exposure_pct = (exposure_usd / allocated_equity * 100) if allocated_equity > 0 else 0
 
         # Compter les NEUTRAL actifs
         neutral_count = sum(
@@ -1764,6 +1780,10 @@ class TradeXBinanceBot:
                 total_pairs=len(self._trends),
                 neutral_transitions=self._neutral_transitions,
                 cycle_count=self._cycle_count,
+                avg_range_width_pct=avg_range_width_pct,
+                exposure_usd=exposure_usd,
+                exposure_pct=exposure_pct,
+                unrealized_pnl=unrealized_pnl,
             )
         except Exception:
             logger.warning("Telegram range heartbeat failed", exc_info=True)
