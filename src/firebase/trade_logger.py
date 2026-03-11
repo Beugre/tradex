@@ -31,6 +31,68 @@ from src.firebase.client import add_document, update_document, get_documents
 logger = logging.getLogger("tradex.firebase.trades")
 
 
+_BOT_META_BY_STRATEGY: dict[str, dict[str, str]] = {
+    "RANGE": {
+        "bot_id": "trail-range",
+        "bot_label": "Trail Range",
+        "exchange_venue": "binance",
+        "exchange_key": "binance",
+    },
+    "CRASHBOT": {
+        "bot_id": "crashbot",
+        "bot_label": "CrashBot",
+        "exchange_venue": "binance",
+        "exchange_key": "binance-crashbot",
+    },
+    "INFINITY": {
+        "bot_id": "infinity",
+        "bot_label": "Infinity",
+        "exchange_venue": "revolut",
+        "exchange_key": "revolut-infinity",
+    },
+    "LONDON": {
+        "bot_id": "london-breakout",
+        "bot_label": "London Breakout",
+        "exchange_venue": "revolut",
+        "exchange_key": "revolut-london",
+    },
+    "TREND": {
+        "bot_id": "trend-legacy",
+        "bot_label": "Trend Legacy",
+        "exchange_venue": "revolut",
+        "exchange_key": "revolut",
+    },
+}
+
+
+def _build_trade_tags(position: Position, exchange: str) -> dict[str, str]:
+    """Construit des tags canoniques pour un trade (bot/venue/strategy)."""
+    strategy_key = position.strategy.value.upper()
+    meta = _BOT_META_BY_STRATEGY.get(strategy_key)
+
+    if meta is None:
+        return {
+            "strategy_type": strategy_key,
+            "bot_id": "unknown",
+            "bot_label": "Unknown",
+            "exchange_venue": exchange,
+            "exchange": exchange,
+            "exchange_raw": exchange,
+        }
+
+    # On conserve le champ `exchange` existant si déjà explicite côté bot,
+    # mais on ajoute une clé canonique via les tags.
+    exchange_value = exchange if exchange else meta["exchange_key"]
+    return {
+        "strategy_type": strategy_key,
+        "bot_id": meta["bot_id"],
+        "bot_label": meta["bot_label"],
+        "exchange_venue": meta["exchange_venue"],
+        "exchange": exchange_value,
+        "exchange_raw": exchange,
+    }
+
+
 def _effective_sl(sl_price: float, side: str, strategy: str) -> Optional[float]:
     """Calcule le SL effectif (avec buffer) = le vrai seuil de déclenchement."""
     if not sl_price or sl_price <= 0:
@@ -76,15 +138,22 @@ def log_trade_opened(
     )
     signal_hash = hashlib.sha256(signal_context.encode()).hexdigest()[:16]
 
+    tags = _build_trade_tags(position, exchange)
+
     doc = {
         # Identité
         "trade_id": trade_id,
         "symbol": position.symbol,
         "venue_order_id": position.venue_order_id,
-        "exchange": exchange,
+        "exchange": tags["exchange"],
+        "exchange_raw": tags["exchange_raw"],
+        "exchange_venue": tags["exchange_venue"],
+        "bot_id": tags["bot_id"],
+        "bot_label": tags["bot_label"],
 
         # Signal
         "signal_type": position.strategy.value,              # TREND ou RANGE
+        "strategy_type": tags["strategy_type"],
         "signal_timestamp": now.isoformat(),
         "signal_context_hash": signal_hash,
 

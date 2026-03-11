@@ -10,9 +10,55 @@ Lit Firebase Firestore et produit un rapport complet :
 - Cycle Infinity : état DCA inversé
 """
 from datetime import datetime, timezone
+from typing import Any, cast
 from google.cloud import firestore
 
 db = firestore.Client()
+
+
+BOT_LABELS = {
+    "trail-range": "Trail Range",
+    "crashbot": "CrashBot (DipBuy)",
+    "infinity": "Infinity",
+    "london-breakout": "London Breakout",
+    "trend-legacy": "Trend Legacy",
+    "unknown": "UNKNOWN",
+}
+
+
+def classify_bot(trade: dict) -> str:
+    """Retourne un bot_id canonique pour éviter les KPI biaisés."""
+    bot_id = (trade.get("bot_id") or "").strip().lower()
+    if bot_id:
+        return bot_id
+
+    strategy = (trade.get("strategy_type") or trade.get("signal_type") or "").strip().upper()
+    exchange = (trade.get("exchange") or "").strip().lower()
+    symbol = (trade.get("symbol") or "").strip().upper()
+
+    if strategy == "CRASHBOT" or exchange == "binance-crashbot":
+        return "crashbot"
+    if strategy == "INFINITY" or exchange == "revolut-infinity":
+        return "infinity"
+    if strategy == "LONDON" or exchange == "revolut-london":
+        return "london-breakout"
+    if strategy == "RANGE":
+        if symbol.endswith("USDC"):
+            return "trail-range"
+        if symbol.endswith("-USD"):
+            return "london-breakout"
+    if strategy == "TREND":
+        return "trend-legacy"
+
+    # Fallback basé sur exchange historique
+    if exchange == "binance":
+        return "trail-range"
+    if exchange == "revolut":
+        return "trend-legacy"
+    if symbol.endswith("USDC"):
+        return "trail-range"
+
+    return "unknown"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. TRADES
@@ -20,21 +66,14 @@ db = firestore.Client()
 all_trades = list(db.collection("trades").stream())
 print(f"Total trades en base : {len(all_trades)}")
 
-# Bot label mapping
-EXCHANGE_LABELS = {
-    "binance": "Trail Range",
-    "binance-crashbot": "CrashBot (DipBuy)",
-    "revolut": "London Breakout (Revolut X)",
-}
-
-by_exchange: dict = {}
+by_bot: dict = {}
 for t in all_trades:
-    d = t.to_dict()
-    exch = d.get("exchange", "unknown")
+    d = t.to_dict() or {}
+    bot = classify_bot(d)
     status = (d.get("status") or "OPEN").upper()
 
-    if exch not in by_exchange:
-        by_exchange[exch] = {
+    if bot not in by_bot:
+        by_bot[bot] = {
             "closed": [], "open": [], "trailing": [],
         }
 
@@ -68,25 +107,25 @@ for t in all_trades:
         rec["closed_at"] = raw_closed.isoformat() if hasattr(raw_closed, "isoformat") else str(raw_closed)
         rec["holding_h"] = d.get("holding_time_hours") or 0
         rec["fees"] = d.get("fees_total") or 0
-        by_exchange[exch]["closed"].append(rec)
+        by_bot[bot]["closed"].append(rec)
     elif status == "TRAILING":
         rec["trailing_steps"] = d.get("trailing_steps", 0)
-        by_exchange[exch]["trailing"].append(rec)
+        by_bot[bot]["trailing"].append(rec)
     else:
-        by_exchange[exch]["open"].append(rec)
+        by_bot[bot]["open"].append(rec)
 
 now = datetime.now(timezone.utc)
 
 print("=" * 70)
-for exch in sorted(by_exchange.keys()):
-    data = by_exchange[exch]
-    label = EXCHANGE_LABELS.get(exch, exch.upper())
+for bot in sorted(by_bot.keys()):
+    data = by_bot[bot]
+    label = BOT_LABELS.get(bot, bot.upper())
     closed = data["closed"]
     opens = data["open"]
     trails = data["trailing"]
 
     print(f"\n{'─' * 70}")
-    print(f"  {label}  ({exch})")
+    print(f"  {label}  ({bot})")
     print(f"{'─' * 70}")
 
     # — Trades clôturés —
@@ -180,14 +219,24 @@ snaps = list(
 )
 snap_by_exch: dict = {}
 for s in snaps:
-    d = s.to_dict()
+    d = s.to_dict() or {}
     exch = d.get("exchange", "?")
     if exch not in snap_by_exch:
         snap_by_exch[exch] = []
     snap_by_exch[exch].append(d)
 
 for exch in sorted(snap_by_exch.keys()):
-    label = EXCHANGE_LABELS.get(exch, exch.upper())
+    # Snapshots restent indexés par `exchange`
+    if exch == "binance":
+        label = "Trail Range"
+    elif exch == "binance-crashbot":
+        label = "CrashBot (DipBuy)"
+    elif exch == "revolut-infinity":
+        label = "Infinity"
+    elif exch == "revolut-london":
+        label = "London Breakout"
+    else:
+        label = exch.upper()
     print(f"\n  {label} :")
     for d in snap_by_exch[exch][:10]:
         dt = d.get("date", "?")
@@ -204,8 +253,9 @@ for exch in sorted(snap_by_exch.keys()):
 print(f"\n{'=' * 70}")
 print("ALLOCATION BINANCE :")
 alloc = db.collection("allocation").document("current").get()
+alloc = cast(Any, alloc)
 if alloc.exists:
-    a = alloc.to_dict()
+    a = alloc.to_dict() or {}
     total = a.get("total_balance", 0)
     print(f"  Régime    : {a.get('regime', '?')}")
     print(f"  Total     : ${total:,.2f}")
@@ -225,8 +275,9 @@ else:
 print(f"\n{'=' * 70}")
 print("CYCLE INFINITY (DCA inversé BTC) :")
 cycle = db.collection("infinity_cycles").document("current").get()
+cycle = cast(Any, cycle)
 if cycle.exists:
-    c = cycle.to_dict()
+    c = cycle.to_dict() or {}
     phase = c.get("phase", "?")
     ref = c.get("reference_price", 0)
     pmp = c.get("pmp", 0)
@@ -257,8 +308,8 @@ total_all_pnl = 0.0
 total_all_open = 0
 total_all_trailing = 0
 total_all_notional = 0.0
-for exch, data in by_exchange.items():
-    label = EXCHANGE_LABELS.get(exch, exch)
+for bot, data in by_bot.items():
+    label = BOT_LABELS.get(bot, bot)
     n_c = len(data["closed"])
     n_o = len(data["open"])
     n_t = len(data["trailing"])

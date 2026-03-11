@@ -12,7 +12,8 @@ Stratégie par paire :
   5. Breakeven stop après TP1
   6. Stop-loss configurable par paire
 
-Capital : 65% du solde Revolut X, réparti également entre les paires actives.
+Capital : pool global (INF_CAPITAL_PCT du solde Revolut X), réparti dynamiquement
+entre paires actives pour éviter le capital bloqué sur les paires inactives.
 
 Usage :
     python -m src.bot_infinity              # Production
@@ -308,7 +309,6 @@ class PairContext:
     cycle_count: int = 0
     consecutive_stops: int = 0
     last_eval: dict = field(default_factory=dict)
-    capital_pct: float = 0.0
 
 
 # ── State store ────────────────────────────────────────────────────────────────
@@ -383,9 +383,6 @@ class InfinityBot:
         )
 
         # Build per-pair contexts
-        n_pairs = len(INF_TRADING_PAIRS)
-        per_pair_pct = INF_CAPITAL_PCT / n_pairs if n_pairs > 0 else INF_CAPITAL_PCT
-
         self._pairs: dict[str, PairContext] = {}
         data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
         for symbol in INF_TRADING_PAIRS:
@@ -400,7 +397,6 @@ class InfinityBot:
                 config=cfg,
                 cycle=InfLiveCycle(),
                 store=InfinityStateStore(state_file),
-                capital_pct=per_pair_pct,
             )
 
         # Migrate old single-pair state file → BTC-USD per-pair file
@@ -436,9 +432,7 @@ class InfinityBot:
         logger.info("═" * 60)
         logger.info("♾️  InfinityBot démarré — DCA inversé multi-paires")
         logger.info("   Paires    : %s", ", ".join(self._pairs.keys()))
-        logger.info("   Capital   : %.0f%% du solde Revolut X (%.0f%% par paire)",
-                     INF_CAPITAL_PCT * 100,
-                     INF_CAPITAL_PCT / len(self._pairs) * 100 if self._pairs else 0)
+        logger.info("   Capital   : %.0f%% du solde Revolut X (pool dynamique)", INF_CAPITAL_PCT * 100)
         logger.info("   Polling   : %ds | Maker wait: %ds",
                      INF_POLLING_SECONDS, INF_MAKER_WAIT_SECONDS)
         for symbol, ctx in self._pairs.items():
@@ -642,13 +636,33 @@ class InfinityBot:
 
     # ── Allocated capital ──────────────────────────────────────────────────────
 
+    def _is_pair_active(self, ctx: PairContext) -> bool:
+        """Une paire est active si un cycle est en cours avec position restante."""
+        return ctx.cycle.phase != "WAITING" and ctx.cycle.size_remaining > 0
+
+    def _get_dynamic_pair_capital_pct(self, ctx: PairContext) -> float:
+        """Part dynamique du pool de capital allouée à une paire.
+
+        - Paires actives: partage entre toutes les paires actives.
+        - Paires inactives: partage prospectif (actives + cette paire) pour autoriser une entrée.
+        """
+        active_count = sum(1 for pair_ctx in self._pairs.values() if self._is_pair_active(pair_ctx))
+
+        if self._is_pair_active(ctx):
+            effective_count = max(1, active_count)
+        else:
+            effective_count = max(1, active_count + 1)
+
+        return INF_CAPITAL_PCT / effective_count
+
     def _get_allocated_balance(self, ctx: PairContext) -> float:
-        """Retourne le capital alloué à cette paire (capital_pct du solde total)."""
+        """Retourne le capital alloué à cette paire (part dynamique du pool global)."""
         try:
             balances = self._client.get_balances()
             quote = ctx.symbol.split("-")[1]  # USD
             usd_bal = next((b for b in balances if b.currency == quote), None)
             available = usd_bal.available if usd_bal else 0.0
+            capital_pct = self._get_dynamic_pair_capital_pct(ctx)
 
             # Si cycle actif, l'equity = cash dispo + valeur position
             if ctx.cycle.phase != "WAITING" and ctx.cycle.size_remaining > 0:
@@ -658,19 +672,20 @@ class InfinityBot:
             else:
                 total = available
 
-            return total * ctx.capital_pct
+            return total * capital_pct
         except Exception as e:
             logger.warning("[%s] ⚠️ Impossible de calculer le solde alloué: %s", ctx.symbol, e)
             return 0.0
 
     def _get_cash_available(self, ctx: PairContext) -> float:
-        """Retourne le cash USD disponible × capital_pct de la paire."""
+        """Retourne le cash USD disponible × part dynamique de la paire."""
         try:
             balances = self._client.get_balances()
             quote = ctx.symbol.split("-")[1]
             usd_bal = next((b for b in balances if b.currency == quote), None)
             available = usd_bal.available if usd_bal else 0.0
-            return available * ctx.capital_pct
+            capital_pct = self._get_dynamic_pair_capital_pct(ctx)
+            return available * capital_pct
         except Exception:
             return 0.0
 
