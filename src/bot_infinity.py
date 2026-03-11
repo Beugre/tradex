@@ -689,6 +689,36 @@ class InfinityBot:
         except Exception:
             return 0.0
 
+    def _get_scoped_equity(self) -> float:
+        """Equity scope Infinity: USD + actifs des paires Infinity uniquement.
+
+        Exclut explicitement les actifs hors univers Infinity (ex: ETH staking).
+        """
+        try:
+            balances = self._client.get_balances()
+            tracked_bases = {symbol.split("-")[0] for symbol in self._pairs.keys()}
+
+            total = 0.0
+            for balance in balances:
+                if balance.total <= 0:
+                    continue
+
+                if balance.currency == "USD":
+                    total += balance.total
+                    continue
+
+                if balance.currency in tracked_bases:
+                    try:
+                        ticker = self._data.get_ticker(f"{balance.currency}-USD")
+                        if ticker:
+                            total += balance.total * ticker.last_price
+                    except Exception:
+                        continue
+
+            return total
+        except Exception:
+            return 0.0
+
     # ── First entry ────────────────────────────────────────────────────────────
 
     def _try_first_entry(self, ctx: PairContext, price: float) -> None:
@@ -1510,24 +1540,9 @@ class InfinityBot:
             return
         self._last_heartbeat = now
 
-        # Equity totale sur Revolut X
-        total_equity = 0.0
-        try:
-            balances = self._client.get_balances()
-            fiat_set = {"USD", "EUR", "GBP"}
-            for b in balances:
-                if b.total > 0:
-                    if b.currency in fiat_set:
-                        total_equity += b.total
-                    else:
-                        try:
-                            t = self._data.get_ticker(f"{b.currency}-USD")
-                            if t:
-                                total_equity += b.total * t.last_price
-                        except Exception:
-                            pass
-        except Exception:
-            pass
+        # Equity scope Infinity (exclut assets non Infinity, ex: staking)
+        total_equity = self._get_scoped_equity()
+        infinity_pool = total_equity * INF_CAPITAL_PCT
 
         # Countdown prochaine bougie H4
         now_utc = datetime.now(timezone.utc)
@@ -1543,15 +1558,15 @@ class InfinityBot:
 
         # Per-pair status
         active_pairs = 0
-        total_allocated = 0.0
+        total_exposure = 0.0
         total_unrealized = 0.0
-        tg_pair_lines = []  # for Telegram multi-pair heartbeat
+        tg_active_lines: list[str] = []
+        near_targets: list[tuple[str, float, float, float]] = []  # (symbol, ecart_pct, price, target)
 
         for symbol, ctx in self._pairs.items():
             cycle = ctx.cycle
             cfg = ctx.config
             allocated = self._get_allocated_balance(ctx)
-            total_allocated += allocated
 
             trailing_high = self._get_trailing_high(ctx)
 
@@ -1577,6 +1592,7 @@ class InfinityBot:
                 pnl_latent = current_value - cycle.total_cost
                 pnl_latent_pct = pnl_latent / cycle.total_cost * 100 if cycle.total_cost > 0 else 0
                 total_unrealized += pnl_latent
+                total_exposure += cycle.size_remaining * current_price
 
             # Console log per pair
             if cycle.phase == "WAITING":
@@ -1628,68 +1644,35 @@ class InfinityBot:
             except Exception:
                 logger.debug("[%s] Firebase cycle sync failed", symbol, exc_info=True)
 
-            # Build Telegram lines for this pair
-            base = symbol.split("-")[0]
-            ecart_fire = "🔥" if abs(ecart_pct) < 1.0 else ""
-            tg_pair_lines.append(f"\n  ── *{symbol}* ──")
-            tg_pair_lines.append(f"  Phase: `{cycle.phase}` | Cycle: `{ctx.cycle_count}`")
-            if cycle.phase == "WAITING":
-                tg_pair_lines.append(
-                    f"  📊 Trail: `{_fmt(trailing_high)}` → Cible: `{_fmt(target_entry)}` | Écart: `{ecart_pct:+.1f}%` {ecart_fire}"
-                )
-            else:
+            # Build Telegram sections: actives + near target only
+            if cycle.phase != "WAITING":
                 pnl_emoji = "🟢" if pnl_latent >= 0 else "🔴"
                 be_tag = " 🔒BE" if cycle.breakeven_active else ""
-                # Prochains paliers
-                n_buys = len(cycle.buys)
                 n_sells = len(cycle.sells)
-                next_buy_str = "—"
-                next_buy_dist = ""
-                if n_buys < len(cfg.buy_levels):
-                    nb_price = cycle.reference_price * (1 + cfg.buy_levels[n_buys])
-                    next_buy_str = f"L{n_buys + 1}@`{_fmt(nb_price)}`"
-                    if current_price > 0:
-                        dist_pct = (nb_price - current_price) / current_price * 100
-                        next_buy_dist = f" (`{dist_pct:+.1f}%`)"
                 next_tp_str = "—"
-                next_tp_dist = ""
                 if n_sells < len(cfg.sell_levels) and cycle.pmp > 0:
                     nt_price = cycle.pmp * (1 + cfg.sell_levels[n_sells])
-                    next_tp_str = f"TP{n_sells + 1}@`{_fmt(nt_price)}`"
-                    if current_price > 0:
-                        dist_pct = (nt_price - current_price) / current_price * 100
-                        next_tp_dist = f" (`{dist_pct:+.1f}%`)"
-                tg_pair_lines.append(
-                    f"  📊 Prix: `{_fmt(current_price)}` | PMP: `{_fmt(cycle.pmp)}` | Inv: `${cycle.total_cost:,.2f}` | "
-                    f"B: `{len(cycle.buys)}/5` S: `{len(cycle.sells)}/5`{be_tag}"
+                    next_tp_str = f"TP{n_sells + 1}@{_fmt(nt_price)}"
+                tg_active_lines.append(
+                    f"  {pnl_emoji} `{symbol}` prix `{_fmt(current_price)}` | PMP `{_fmt(cycle.pmp)}` | "
+                    f"Latent `{pnl_latent:+.2f}$` (`{pnl_latent_pct:+.1f}%`) | {next_tp_str}{be_tag}"
                 )
-                tg_pair_lines.append(
-                    f"  ⬇️ {next_buy_str}{next_buy_dist} | ⬆️ {next_tp_str}{next_tp_dist}"
-                )
-                tg_pair_lines.append(
-                    f"  {pnl_emoji} Latent: `{pnl_latent:+.2f}$` (`{pnl_latent_pct:+.1f}%`)"
-                )
-            if cycle.phase == "WAITING" and ctx.last_eval:
-                ev = ctx.last_eval
-                d_i = "✅" if ev.get("drop_ok") else "❌"
-                r_i = "✅" if ev.get("rsi_ok") else "❌"
-                tg_pair_lines.append(
-                    f"  🔎 {d_i} Drop `{ev.get('drop_pct', 0):.1f}%` | {r_i} RSI `{ev.get('rsi', 0):.1f}`"
-                )
+            elif abs(ecart_pct) <= 1.0:
+                near_targets.append((symbol, ecart_pct, current_price, target_entry))
 
         # Console summary
         logger.info(
             "💓 INFINITY Alive | tick=%d | paires=%d/%d actives | equity=$%.2f | alloc=$%.2f\n"
             "   ⏳ Prochaine H4: %s",
             self._tick_count, active_pairs, len(self._pairs),
-            total_equity, total_allocated,
+            total_equity, infinity_pool,
             countdown_str,
         )
 
         # Telegram multi-pair heartbeat
         try:
             # System status
-            if total_unrealized < -total_allocated * 0.05:
+            if total_unrealized < -infinity_pool * 0.05:
                 sys_emoji, sys_label = "🔴", "risk mode"
             elif total_unrealized < 0:
                 sys_emoji, sys_label = "🟡", "watching"
@@ -1701,11 +1684,24 @@ class InfinityBot:
 
             tg_lines = [
                 f"{sys_emoji} *INFINITY* ♾️ ({len(self._pairs)} paires) — {sys_label}",
-                f"  💰 Equity: `${total_equity:,.0f}` | Alloué: `${total_allocated:,.0f}`",
+                f"  💰 Equity scope: `${total_equity:,.0f}` | Pool (80%): `${infinity_pool:,.0f}`",
+                f"  🧩 Allocation dynamique: actives=`{active_pairs}` | part active=`{(INF_CAPITAL_PCT / max(1, active_pairs) * 100) if active_pairs else 0:.1f}%` | part nouvelle=`{INF_CAPITAL_PCT / max(1, active_pairs + 1) * 100:.1f}%`",
+                f"  📦 Exposition active: `${total_exposure:,.0f}`",
                 f"  {unr_emoji} PnL open: `${total_unrealized:+.2f}`",
                 f"  ⏳ Prochaine H4: `{countdown_str}`",
             ]
-            tg_lines.extend(tg_pair_lines)
+
+            if tg_active_lines:
+                tg_lines.append("\n  *Paires actives*:")
+                tg_lines.extend(tg_active_lines[:6])
+
+            if near_targets:
+                tg_lines.append("\n  *Proches cible entrée (±1%)*:")
+                for symbol, ecart_pct, current_price, target_entry in sorted(near_targets, key=lambda x: abs(x[1]))[:5]:
+                    tg_lines.append(
+                        f"  🎯 `{symbol}` prix `{_fmt(current_price)}` | cible `{_fmt(target_entry)}` | écart `{ecart_pct:+.1f}%`"
+                    )
+
             from src.notifications.telegram import DASHBOARD_URL
             tg_lines.append(f"\n  🕐 `{last_update}`")
             tg_lines.append(f"[Dashboard]({DASHBOARD_URL})")
@@ -1717,7 +1713,7 @@ class InfinityBot:
         try:
             fb_log_heartbeat(
                 open_positions=active_pairs,
-                total_equity=total_equity,
+                total_equity=infinity_pool,
                 total_risk_pct=0.0,
                 pairs_count=len(self._pairs),
                 exchange="revolut-infinity",

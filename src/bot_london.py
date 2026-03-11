@@ -1301,24 +1301,8 @@ class LondonBreakoutBot:
             return
         self._last_heartbeat = now
 
-        # Equity totale Revolut X
-        total_equity = 0.0
-        try:
-            balances = self._client.get_balances()
-            fiat_set = {"USD", "EUR", "GBP"}
-            for b in balances:
-                if b.total > 0:
-                    if b.currency in fiat_set:
-                        total_equity += b.total
-                    else:
-                        try:
-                            t = self._data.get_ticker(f"{b.currency}-USD")
-                            if t:
-                                total_equity += b.total * t.last_price
-                        except Exception:
-                            pass
-        except Exception:
-            pass
+        # Equity scope London (USD + actifs des paires London uniquement)
+        total_equity = self._get_london_scoped_equity()
 
         allocated = total_equity * LON_CAPITAL_PCT
 
@@ -1371,32 +1355,40 @@ class LondonBreakoutBot:
             except Exception:
                 pass
 
-        # Session states summary
-        session_info: list[str] = []
+        # Session states summary (readable)
         breakouts_ready = 0
-        near_breakout_alerts: list[str] = []
+        near_breakout_alerts: list[tuple[str, float, float, float]] = []
+        completed_sessions = 0
+        consumed_sessions = 0
+        cooldown_sessions = 0
+        below_breakout = 0
         for sym in LON_TRADING_PAIRS:
             ss = self._session_states.get(sym)
             if ss and ss.session_bars > 0:
-                range_pct = (ss.session_high - ss.session_low) / ss.session_low * 100 if ss.session_low > 0 else 0
-                consumed = "✅" if ss.breakout_consumed else "⏳"
-                if not ss.breakout_consumed:
+                if ss.session_complete:
+                    completed_sessions += 1
+
+                    if ss.breakout_consumed:
+                        consumed_sessions += 1
+                        continue
+
+                    if now_utc.timestamp() * 1000 <= ss.cooldown_until:
+                        cooldown_sessions += 1
+                        continue
+
                     breakouts_ready += 1
-                session_info.append(
-                    f"  {consumed} `{sym}` H=`{_fmt(ss.session_high)}` L=`{_fmt(ss.session_low)}` R=`{range_pct:.2f}%`"
-                )
-                # Near-breakout proximity alert
-                if not ss.breakout_consumed and ss.session_high > 0:
-                    try:
-                        ticker = self._data.get_ticker(sym)
-                        if ticker and ticker.last_price > 0:
-                            dist_pct = (ticker.last_price - ss.session_high) / ss.session_high * 100
-                            if -2.0 <= dist_pct <= 0:
-                                near_breakout_alerts.append(
-                                    f"  ⚠️ `{sym}` near breakout `{dist_pct:+.1f}%`"
-                                )
-                    except Exception:
-                        pass
+
+                    if ss.session_high > 0:
+                        try:
+                            ticker = self._data.get_ticker(sym)
+                            if ticker and ticker.last_price > 0:
+                                dist_pct = (ticker.last_price - ss.session_high) / ss.session_high * 100
+                                if -1.0 <= dist_pct <= 1.0:
+                                    near_breakout_alerts.append((sym, dist_pct, ticker.last_price, ss.session_high))
+                                elif dist_pct < -1.0:
+                                    below_breakout += 1
+                        except Exception:
+                            pass
 
         # Unrealized PnL total
         total_unrealized = 0.0
@@ -1431,22 +1423,32 @@ class LondonBreakoutBot:
 
             tg_lines = [
                 f"{sys_emoji} *LONDON BREAKOUT* 🇬🇧 ({len(LON_TRADING_PAIRS)} paires) — {sys_label}",
-                f"  💰 Equity: `${total_equity:,.0f}` | Alloué: `${allocated:,.0f}`",
+                f"  💰 Equity scope: `${total_equity:,.0f}` | Alloué (20%): `${allocated:,.0f}`",
                 f"  Session: {session_status}",
-                f"  📊 Pos: `{len(self._positions)}/{LON_MAX_POSITIONS}` | Breakouts prêts: `{breakouts_ready}`",
+                f"  📊 Pos: `{len(self._positions)}/{LON_MAX_POSITIONS}` | Sessions complètes: `{completed_sessions}` | Candidats: `{breakouts_ready}`",
             ]
             if self._positions:
                 tg_lines.append(f"  {unr_emoji} PnL open: `${total_unrealized:+.2f}`")
+            tg_lines.append(
+                f"  🔎 Filtres: close>H_session | vol>={LON_VOL_MULT:.1f}×MA{LON_VOL_MA_PERIOD} | range>={LON_MIN_RANGE*100:.1f}%"
+            )
+
             if near_breakout_alerts:
-                tg_lines.append("")
-                tg_lines.extend(near_breakout_alerts)
+                tg_lines.append("\n  *Proches breakout (±1%)*:")
+                for sym, dist_pct, price, high in sorted(near_breakout_alerts, key=lambda x: abs(x[1]))[:4]:
+                    tg_lines.append(
+                        f"  ⚠️ `{sym}` prix `{_fmt(price)}` | H_session `{_fmt(high)}` | écart `{dist_pct:+.1f}%`"
+                    )
+
+            if not self._positions and breakouts_ready == 0:
+                tg_lines.append(
+                    f"  ℹ️ Aucun setup immédiat (consumed={consumed_sessions}, cooldown={cooldown_sessions}, sous breakout={below_breakout})"
+                )
+
             tg_lines.append(f"  ⏳ Prochaine H4: `{countdown_str}`")
             if pos_lines:
                 tg_lines.append("")
                 tg_lines.extend(pos_lines)
-            if session_info:
-                tg_lines.append("\n  📊 *Sessions actives:*")
-                tg_lines.extend(session_info)
             tg_lines.append(f"\n  🕐 `{last_update}`")
             tg_lines.append(f"[Dashboard]({DASHBOARD_URL})")
             self._telegram.send_raw("\n".join(tg_lines))
@@ -1457,13 +1459,40 @@ class LondonBreakoutBot:
         try:
             fb_log_heartbeat(
                 open_positions=len(self._positions),
-                total_equity=total_equity,
+                total_equity=allocated,
                 total_risk_pct=0.0,
                 pairs_count=len(LON_TRADING_PAIRS),
                 exchange="revolut-london",
             )
         except Exception:
             pass
+
+    def _get_london_scoped_equity(self) -> float:
+        """Equity scope London: USD + actifs des paires London uniquement."""
+        try:
+            balances = self._client.get_balances()
+            tracked_bases = {symbol.split("-")[0] for symbol in LON_TRADING_PAIRS}
+
+            total = 0.0
+            for balance in balances:
+                if balance.total <= 0:
+                    continue
+
+                if balance.currency == "USD":
+                    total += balance.total
+                    continue
+
+                if balance.currency in tracked_bases:
+                    try:
+                        ticker = self._data.get_ticker(f"{balance.currency}-USD")
+                        if ticker:
+                            total += balance.total * ticker.last_price
+                    except Exception:
+                        continue
+
+            return total
+        except Exception:
+            return 0.0
 
     # ── Daily tasks ────────────────────────────────────────────────────────
 
@@ -1482,23 +1511,7 @@ class LondonBreakoutBot:
         if today != self._last_snapshot_date:
             self._last_snapshot_date = today
             try:
-                total_equity = 0.0
-                try:
-                    balances = self._client.get_balances()
-                    fiat_set = {"USD", "EUR", "GBP"}
-                    for b in balances:
-                        if b.total > 0:
-                            if b.currency in fiat_set:
-                                total_equity += b.total
-                            else:
-                                try:
-                                    t = self._data.get_ticker(f"{b.currency}-USD")
-                                    if t:
-                                        total_equity += b.total * t.last_price
-                                except Exception:
-                                    pass
-                except Exception:
-                    pass
+                total_equity = self._get_london_scoped_equity()
 
                 positions = []
                 for sym, pos in self._positions.items():
