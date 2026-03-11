@@ -1430,14 +1430,14 @@ class LondonBreakoutBot:
             if self._positions:
                 tg_lines.append(f"  {unr_emoji} PnL open: `${total_unrealized:+.2f}`")
             tg_lines.append(
-                f"  🔎 Filtres: close>H_session | vol>={LON_VOL_MULT:.1f}×MA{LON_VOL_MA_PERIOD} | range>={LON_MIN_RANGE*100:.1f}%"
+                f"  🔎 Filtres: close>H-session | vol>={LON_VOL_MULT:.1f}×MA{LON_VOL_MA_PERIOD} | range>={LON_MIN_RANGE*100:.1f}%"
             )
 
             if near_breakout_alerts:
                 tg_lines.append("\n  *Proches breakout (±1%)*:")
                 for sym, dist_pct, price, high in sorted(near_breakout_alerts, key=lambda x: abs(x[1]))[:4]:
                     tg_lines.append(
-                        f"  ⚠️ `{sym}` prix `{_fmt(price)}` | H_session `{_fmt(high)}` | écart `{dist_pct:+.1f}%`"
+                        f"  ⚠️ `{sym}` prix `{_fmt(price)}` | H-session `{_fmt(high)}` | écart `{dist_pct:+.1f}%`"
                     )
 
             if not self._positions and breakouts_ready == 0:
