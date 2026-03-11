@@ -197,6 +197,7 @@ class TradeXBinanceBot:
         # Equity allouée
         self._cumulative_pnl: float = 0.0  # PnL cumulé (chargé depuis Firebase au démarrage)
         self._allocated_balance: float = config.BINANCE_RANGE_ALLOCATED_BALANCE
+        self._allocation_pct: float = 1.0
         self._last_allocation_date: str = ""
 
         # Compteur de transitions vers NEUTRAL (depuis le démarrage)
@@ -1464,7 +1465,7 @@ class TradeXBinanceBot:
         self._save_state()
 
         # Telegram
-        self._telegram.notify_sl_hit(position, exit_price)
+        self._telegram.notify_sl_hit(position, exit_price, pnl_usd=pnl_net)
 
         # Incrémenter le PnL cumulé en mémoire
         self._cumulative_pnl += pnl_net
@@ -1535,6 +1536,7 @@ class TradeXBinanceBot:
             )
 
             self._allocated_balance = result.trail_balance
+            self._allocation_pct = result.trail_pct
             self._last_allocation_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
             # Persister dans Firebase pour le dashboard
@@ -1582,8 +1584,17 @@ class TradeXBinanceBot:
     def _calculate_allocated_equity(self) -> float:
         """Calcule l'equity allouée au bot Range.
 
-        Formule : ALLOCATED_BALANCE + cumulative_realized_pnl + unrealized_pnl
+        - Allocation dynamique: equity Binance live × ratio d'allocation Trail
+        - Allocation statique: base allouée + PnL net cumulé + PnL latent
         """
+        if config.DYNAMIC_ALLOCATION_ENABLED:
+            try:
+                total_equity = self._calculate_equity()
+                pct = min(max(self._allocation_pct, 0.0), 1.0)
+                return max(total_equity * pct, 0.0)
+            except Exception:
+                pass
+
         allocated = self._allocated_balance
         if allocated <= 0:
             return self._calculate_equity()

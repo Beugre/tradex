@@ -177,10 +177,12 @@ class TradeXBinanceCrashBot:
 
         # Kill-switch mensuel
         self._month_start_equity: float = 0.0
+        self._month_peak_equity: float = 0.0
         self._current_month: str = ""
 
         # Dynamic allocation
         self._allocated_balance: float = config.BINANCE_CRASHBOT_ALLOCATED_BALANCE
+        self._allocation_pct: float = 1.0
         self._last_allocation_date: str = ""
         self._kill_switch_active: bool = False
 
@@ -480,6 +482,7 @@ class TradeXBinanceCrashBot:
             )
 
             self._allocated_balance = result.crash_balance
+            self._allocation_pct = result.crash_pct
             self._last_allocation_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
             # Persister dans Firebase pour le dashboard
@@ -527,10 +530,17 @@ class TradeXBinanceCrashBot:
     def _calculate_allocated_equity(self) -> float:
         """Calcule l'equity allouée au CrashBot.
 
-        Formule : ALLOCATED_BALANCE + cumulative_realized_pnl + unrealized_pnl
-        - cumulative_realized_pnl : somme des PnL nets de tous les trades CLOSED (Firebase, caché en mémoire)
-        - unrealized_pnl : somme des gains/pertes latentes des positions ouvertes aux prix actuels
+        - Allocation dynamique: equity Binance live × ratio d'allocation CrashBot
+        - Allocation statique: base allouée + PnL net cumulé + PnL latent
         """
+        if config.DYNAMIC_ALLOCATION_ENABLED:
+            try:
+                total_equity = self._calculate_equity()
+                pct = min(max(self._allocation_pct, 0.0), 1.0)
+                return max(total_equity * pct, 0.0)
+            except Exception:
+                pass
+
         allocated = self._allocated_balance
         if allocated <= 0:
             # Pas d'allocation → fallback sur l'equity totale Binance
@@ -555,6 +565,24 @@ class TradeXBinanceCrashBot:
         equity = allocated + self._cumulative_pnl + unrealized_pnl
         return max(equity, 0.0)
 
+    def _compute_month_metrics(self, equity: float) -> tuple[float, float]:
+        """Retourne (perf_mois_pct, drawdown_pct) à partir du pic mensuel."""
+        if self._month_start_equity <= 0:
+            return 0.0, 0.0
+
+        if self._month_peak_equity <= 0:
+            self._month_peak_equity = max(self._month_start_equity, equity)
+        if equity > self._month_peak_equity:
+            self._month_peak_equity = equity
+
+        month_return_pct = (equity - self._month_start_equity) / self._month_start_equity * 100
+        drawdown_pct = (
+            (equity - self._month_peak_equity) / self._month_peak_equity * 100
+            if self._month_peak_equity > 0
+            else 0.0
+        )
+        return month_return_pct, drawdown_pct
+
     def _init_kill_switch(self) -> None:
         """Initialise l'equity du début de mois pour le kill-switch.
 
@@ -577,6 +605,8 @@ class TradeXBinanceCrashBot:
             self._month_start_equity = self._calculate_allocated_equity()
         except Exception:
             self._month_start_equity = 0
+        self._month_peak_equity = self._month_start_equity
+        self._dd_warning_sent = False
         logger.info("Kill-switch: equity début mois = $%.2f (calculée)", self._month_start_equity)
         self._save_bot_state()
 
@@ -733,6 +763,8 @@ class TradeXBinanceCrashBot:
                 self._month_start_equity = self._calculate_allocated_equity()
             except Exception:
                 pass
+            self._month_peak_equity = self._month_start_equity
+            self._dd_warning_sent = False
             self._save_bot_state()  # persister la nouvelle equity de début de mois
             logger.info("📅 Nouveau mois %s | Equity reset = $%.2f | Kill-switch: OFF",
                         month_key, self._month_start_equity)
@@ -1297,18 +1329,20 @@ class TradeXBinanceCrashBot:
         if config.BINANCE_CRASHBOT_KILL_SWITCH and self._month_start_equity > 0:
             try:
                 equity = self._calculate_allocated_equity()
-                month_return = (equity - self._month_start_equity) / self._month_start_equity
+                month_return_pct, drawdown_pct = self._compute_month_metrics(equity)
+                month_return = month_return_pct / 100
+                drawdown = drawdown_pct / 100
 
                 # DD Warning
-                if month_return <= config.DD_WARNING_PCT and not self._dd_warning_sent:
+                if drawdown <= config.DD_WARNING_PCT and not self._dd_warning_sent:
                     self._dd_warning_sent = True
                     logger.warning(
-                        "⚠️ DD Warning | equity=$%.2f | month=%.1f%% (kill: %.1f%%)",
-                        equity, month_return * 100, config.BINANCE_CRASHBOT_KILL_PCT * 100,
+                        "⚠️ DD Warning | equity=$%.2f | DD=%.1f%% | perf_mois=%.1f%% (kill: %.1f%%)",
+                        equity, drawdown_pct, month_return_pct, config.BINANCE_CRASHBOT_KILL_PCT * 100,
                     )
                     self._telegram.notify_warning(
-                        f"Drawdown {month_return*100:.1f}%",
-                        f"Equity: ${equity:,.0f} | DD mois: {month_return*100:+.1f}% "
+                        f"Drawdown {drawdown_pct:.1f}%",
+                        f"Equity: ${equity:,.0f} | DD mois: {drawdown_pct:+.1f}% | Perf mois: {month_return_pct:+.1f}% "
                         f"(kill-switch à {config.BINANCE_CRASHBOT_KILL_PCT*100:.0f}%)",
                     )
 
@@ -1327,7 +1361,9 @@ class TradeXBinanceCrashBot:
                             fb_log_event("KILL_SWITCH", {
                                 "equity": equity,
                                 "month_start_equity": self._month_start_equity,
+                                "month_peak_equity": self._month_peak_equity,
                                 "month_return_pct": round(month_return * 100, 2),
+                                "drawdown_pct": round(drawdown_pct, 2),
                                 "threshold_pct": config.BINANCE_CRASHBOT_KILL_PCT * 100,
                             }, exchange=EXCHANGE_NAME)
                         except Exception:
@@ -1445,7 +1481,7 @@ class TradeXBinanceCrashBot:
         self._save_state()
 
         # Telegram
-        self._telegram.notify_sl_hit(position, exit_price)
+        self._telegram.notify_sl_hit(position, exit_price, pnl_usd=pnl_net)
 
         # Incrémenter le PnL cumulé en mémoire
         self._cumulative_pnl += pnl_net
@@ -1533,11 +1569,12 @@ class TradeXBinanceCrashBot:
     def _save_bot_state(self) -> None:
         """Persiste l'état du bot sur disque pour survivre aux redémarrages.
 
-        Contient : momentum sizing (risk%), kill-switch (month_start_equity), mois courant.
+        Contient : momentum sizing (risk%), kill-switch (month_start/peak equity), mois courant.
         """
         state = {
             "current_risk": self._current_risk,
             "month_start_equity": self._month_start_equity,
+            "month_peak_equity": self._month_peak_equity,
             "current_month": self._current_month,
         }
         path = os.path.abspath(_MOMENTUM_STATE_FILE)
@@ -1575,10 +1612,14 @@ class TradeXBinanceCrashBot:
                 saved_equity = state.get("month_start_equity", 0.0)
                 if saved_equity > 0:
                     self._month_start_equity = saved_equity
+                    self._month_peak_equity = max(
+                        state.get("month_peak_equity", saved_equity),
+                        saved_equity,
+                    )
                     self._current_month = saved_month
                     logger.info(
-                        "📊 Kill-switch restauré: equity début mois = $%.2f (mois %s)",
-                        self._month_start_equity, saved_month,
+                        "📊 Kill-switch restauré: start=$%.2f | peak=$%.2f (mois %s)",
+                        self._month_start_equity, self._month_peak_equity, saved_month,
                     )
             else:
                 logger.info(
@@ -1609,10 +1650,7 @@ class TradeXBinanceCrashBot:
 
         allocated_equity = self._calculate_allocated_equity()
 
-        # Drawdown mensuel
-        dd_pct = 0.0
-        if self._month_start_equity > 0:
-            dd_pct = (allocated_equity - self._month_start_equity) / self._month_start_equity * 100
+        month_return_pct, dd_pct = self._compute_month_metrics(allocated_equity)
 
         # Exposition courante
         exposure_notional = 0.0
@@ -1670,10 +1708,10 @@ class TradeXBinanceCrashBot:
             risk_info = f" | Risk: {self._current_risk*100:.1f}%"
 
         logger.info(
-            "💓 CRASHBOT H4 | Equity: $%.0f | DD: %+.1f%% | "
+            "💓 CRASHBOT H4 | Equity: $%.0f | DD: %+.1f%% | PerfM: %+.1f%% | "
             "Expo: %.0f%% | Pos: %d/%d | PnL jour: %+.2f$ (%+.1f%%) | Kill: %s | "
             "Signaux: %d📡 | API: %.0fms%s | cycle #%d%s",
-            allocated_equity, dd_pct,
+            allocated_equity, dd_pct, month_return_pct,
             exposure_pct, len(open_pos), config.BINANCE_CRASHBOT_MAX_POSITIONS,
             self._daily_pnl, daily_pnl_pct,
             "🔴 ON" if self._kill_switch_active else "🟢 OFF",
@@ -1688,6 +1726,7 @@ class TradeXBinanceCrashBot:
                 equity=allocated_equity,
                 allocated_equity=allocated_equity,
                 drawdown_pct=dd_pct,
+                month_return_pct=month_return_pct,
                 exposure_pct=exposure_pct,
                 open_positions=len(open_pos),
                 max_positions=config.BINANCE_CRASHBOT_MAX_POSITIONS,

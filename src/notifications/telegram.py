@@ -103,9 +103,10 @@ class TelegramNotifier:
         self,
         position: Position,
         exit_price: float,
+        pnl_usd: Optional[float] = None,
     ) -> None:
         """Notification de stop loss atteint."""
-        pnl = _calculate_pnl(position, exit_price)
+        pnl = pnl_usd if pnl_usd is not None else _calculate_pnl(position, exit_price)
         emoji = "✅" if pnl >= 0 else "🛑"
 
         message = (
@@ -364,6 +365,7 @@ class TelegramNotifier:
         equity: float,
         allocated_equity: float,
         drawdown_pct: float,
+        month_return_pct: float,
         exposure_pct: float,
         open_positions: int,
         max_positions: int,
@@ -397,7 +399,8 @@ class TelegramNotifier:
         lines = [
             f"{sys_emoji} *CRASHBOT H4* — {sys_label}",
             f"  💰 Equity: `${equity:,.0f}` (alloué: `${allocated_equity:,.0f}`)",
-            f"  📉 DD mois: `{drawdown_pct:+.1f}%` {dd_emoji}",
+            f"  📉 DD mois (pic): `{drawdown_pct:+.1f}%` {dd_emoji}",
+            f"  📆 Perf mois: `{month_return_pct:+.1f}%`",
             f"  📊 Expo: `{exposure_pct:.0f}%` | Pos: `{open_positions}/{max_positions}`",
         ]
 
