@@ -1468,29 +1468,27 @@ class LondonBreakoutBot:
             pass
 
     def _get_london_scoped_equity(self) -> float:
-        """Equity scope London: USD + actifs des paires London uniquement."""
+        """Equity scope London: USD + valorisation des positions London ouvertes.
+
+        Exclut les avoirs externes/staking (ex: ETH personnel) tant qu'ils ne sont
+        pas des positions gérées par le bot.
+        """
         try:
             balances = self._client.get_balances()
-            tracked_bases = {symbol.split("-")[0] for symbol in LON_TRADING_PAIRS}
+            usd_total = next((b.total for b in balances if b.currency == "USD"), 0.0)
 
-            total = 0.0
-            for balance in balances:
-                if balance.total <= 0:
+            positions_value = 0.0
+            for symbol, position in self._positions.items():
+                if position.remaining_size <= 0:
+                    continue
+                try:
+                    ticker = self._data.get_ticker(symbol)
+                    if ticker:
+                        positions_value += position.remaining_size * ticker.last_price
+                except Exception:
                     continue
 
-                if balance.currency == "USD":
-                    total += balance.total
-                    continue
-
-                if balance.currency in tracked_bases:
-                    try:
-                        ticker = self._data.get_ticker(f"{balance.currency}-USD")
-                        if ticker:
-                            total += balance.total * ticker.last_price
-                    except Exception:
-                        continue
-
-            return total
+            return usd_total + positions_value
         except Exception:
             return 0.0
 
