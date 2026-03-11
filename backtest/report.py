@@ -107,9 +107,10 @@ def _generate_charts(result: BacktestResult, metrics: dict) -> Path:
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Style
-    plt.style.use("seaborn-v0_8-whitegrid")
+    # Style (mobile trading dark)
+    plt.style.use("dark_background")
     fig = plt.figure(figsize=(16, 12))
+    fig.patch.set_facecolor("#05080d")
     gs = fig.add_gridspec(4, 1, height_ratios=[3, 1, 1, 1], hspace=0.3)
 
     # Données
@@ -123,17 +124,18 @@ def _generate_charts(result: BacktestResult, metrics: dict) -> Path:
 
     # ── 1. Equity curve ────────────────────────────────────────────────────
     ax1 = fig.add_subplot(gs[0])
-    ax1.fill_between(dates, equities, alpha=0.15, color="#2196F3")
-    ax1.plot(dates, equities, color="#1565C0", linewidth=1.2, label="Equity")
-    ax1.axhline(y=result.initial_balance, color="gray", linestyle="--", alpha=0.5, linewidth=0.8)
+    ax1.set_facecolor("#05080d")
+    ax1.fill_between(dates, equities, alpha=0.10, color="#14d8c4")
+    ax1.plot(dates, equities, color="#14d8c4", linewidth=2.6, label="Equity")
+    ax1.axhline(y=result.initial_balance, color="#9aa7b3", linestyle=":", alpha=0.7, linewidth=1.0)
 
     # Marqueurs des trades
     for t in trades:
-        entry_dt = datetime.fromtimestamp(t.entry_time / 1000, tz=timezone.utc) if t.entry_time else None
         exit_dt = datetime.fromtimestamp(t.exit_time / 1000, tz=timezone.utc) if t.exit_time else None
-        if entry_dt:
-            color = "#4CAF50" if t.strategy.value == "TREND" else "#FF9800"
-            ax1.axvline(x=entry_dt, color=color, alpha=0.08, linewidth=0.5)
+        if exit_dt and t.pnl_usd is not None:
+            marker_color = "#14d8c4" if t.pnl_usd > 0 else "#ff5c7a" if t.pnl_usd < 0 else "#9aa7b3"
+            eq_idx = min(range(len(dates)), key=lambda i: abs((dates[i] - exit_dt).total_seconds()))
+            ax1.scatter(exit_dt, equities[eq_idx], s=24, color=marker_color, edgecolors="#111", linewidths=0.6, zorder=5)
 
     ax1.set_title(
         f"TradeX Backtest — {result.start_date:%b %Y} → {result.end_date:%b %Y}  |  "
@@ -143,23 +145,27 @@ def _generate_charts(result: BacktestResult, metrics: dict) -> Path:
     )
     ax1.set_ylabel("Equity ($)", fontsize=10)
     ax1.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"${x:,.0f}"))
-    ax1.legend(loc="upper left", fontsize=9)
+    ax1.legend(loc="upper left", fontsize=9, frameon=False)
     ax1.tick_params(axis="x", labelbottom=False)
+    ax1.grid(True, linestyle=":", linewidth=0.7, alpha=0.25)
 
     # ── 2. Drawdown ────────────────────────────────────────────────────────
     ax2 = fig.add_subplot(gs[1], sharex=ax1)
-    ax2.fill_between(dates[:len(dd)], dd, alpha=0.3, color="#F44336")
-    ax2.plot(dates[:len(dd)], dd, color="#D32F2F", linewidth=0.8)
+    ax2.set_facecolor("#05080d")
+    ax2.fill_between(dates[:len(dd)], dd, alpha=0.25, color="#ff5c7a")
+    ax2.plot(dates[:len(dd)], dd, color="#ff5c7a", linewidth=1.2)
     ax2.set_ylabel("Drawdown", fontsize=10)
     ax2.yaxis.set_major_formatter(mticker.PercentFormatter(1.0, decimals=0))
     ax2.tick_params(axis="x", labelbottom=False)
+    ax2.grid(True, linestyle=":", linewidth=0.7, alpha=0.25)
 
     # ── 3. Rendements mensuels ─────────────────────────────────────────────
     ax3 = fig.add_subplot(gs[2])
+    ax3.set_facecolor("#05080d")
     if monthly:
         m_labels = [m[0] for m in monthly]
         m_vals = [m[1] for m in monthly]
-        colors = ["#4CAF50" if v >= 0 else "#F44336" for v in m_vals]
+        colors = ["#14d8c4" if v >= 0 else "#ff5c7a" for v in m_vals]
         ax3.bar(range(len(m_vals)), m_vals, color=colors, alpha=0.7, width=0.8)
         # Afficher 1 label sur N pour lisibilité
         step = max(1, len(m_labels) // 12)
@@ -168,17 +174,20 @@ def _generate_charts(result: BacktestResult, metrics: dict) -> Path:
                             rotation=45, ha="right", fontsize=8)
     ax3.set_ylabel("Mensuel", fontsize=10)
     ax3.yaxis.set_major_formatter(mticker.PercentFormatter(1.0, decimals=0))
-    ax3.axhline(y=0, color="gray", linewidth=0.5)
+    ax3.axhline(y=0, color="#9aa7b3", linewidth=0.8, linestyle=":")
+    ax3.grid(True, linestyle=":", linewidth=0.7, alpha=0.25)
 
     # ── 4. Distribution des trades (P&L %) ─────────────────────────────────
     ax4 = fig.add_subplot(gs[3])
+    ax4.set_facecolor("#05080d")
     if trades:
         pnl_pcts = [t.pnl_pct * 100 for t in trades]
-        colors_hist = ["#4CAF50" if p >= 0 else "#F44336" for p in pnl_pcts]
+        colors_hist = ["#14d8c4" if p >= 0 else "#ff5c7a" for p in pnl_pcts]
         ax4.bar(range(len(pnl_pcts)), pnl_pcts, color=colors_hist, alpha=0.7, width=0.9)
-        ax4.axhline(y=0, color="gray", linewidth=0.5)
+        ax4.axhline(y=0, color="#9aa7b3", linewidth=0.8, linestyle=":")
     ax4.set_ylabel("Trade P&L %", fontsize=10)
     ax4.set_xlabel("Trades (chronologique)", fontsize=10)
+    ax4.grid(True, linestyle=":", linewidth=0.7, alpha=0.25)
 
     # ── Annotations stats ──────────────────────────────────────────────────
     stats_text = (
@@ -190,7 +199,7 @@ def _generate_charts(result: BacktestResult, metrics: dict) -> Path:
         f"Trades: {metrics['n_trades']}"
     )
     fig.text(0.5, 0.01, stats_text, ha="center", fontsize=10, style="italic",
-             bbox=dict(boxstyle="round,pad=0.5", facecolor="#E3F2FD", alpha=0.8))
+             bbox=dict(boxstyle="round,pad=0.5", facecolor="#101722", edgecolor="#14d8c4", alpha=0.9))
 
     plt.tight_layout(rect=[0, 0.03, 1, 1])
 

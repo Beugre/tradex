@@ -198,6 +198,33 @@ def _fmt_price(p):
     return f"{p:.{d}f}"
 
 
+def _apply_mobile_chart_theme(fig: go.Figure, show_legend: bool = False) -> go.Figure:
+    """Applique un style visuel type app mobile trading (dark + cyan)."""
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#05080d",
+        plot_bgcolor="#05080d",
+        font=dict(color="#d9e7f0"),
+        hovermode="x unified",
+        hoverlabel=dict(bgcolor="#101722", font_color="#d9e7f0"),
+        margin=dict(l=0, r=0, t=10, b=0),
+        showlegend=show_legend,
+    )
+    fig.update_xaxes(
+        showgrid=True,
+        gridcolor="rgba(255,255,255,0.08)",
+        zeroline=False,
+        linecolor="rgba(255,255,255,0.18)",
+    )
+    fig.update_yaxes(
+        showgrid=True,
+        gridcolor="rgba(255,255,255,0.08)",
+        zeroline=False,
+        linecolor="rgba(255,255,255,0.18)",
+    )
+    return fig
+
+
 @st.cache_data(ttl=15)
 def _fetch_binance_prices() -> dict[str, float]:
     """Récupère tous les prix actuels depuis l'API publique Binance."""
@@ -581,42 +608,92 @@ def _render_equity_curve(snapshots_df: pd.DataFrame, closed: pd.DataFrame, color
     """Affiche la courbe d'equity."""
     st.subheader("📈 Courbe d'equity")
 
+    line_color = "#14d8c4"
+    pos_color = "#14d8c4"
+    neg_color = "#ff5c7a"
+    neu_color = "#9aa7b3"
+
     if not snapshots_df.empty and "equity" in snapshots_df.columns:
-        fig = px.area(
-            snapshots_df, x="date", y="equity",
-            labels={"date": "Date", "equity": "Equity ($)"},
-            color_discrete_sequence=[color],
-        )
+        eq_df = snapshots_df.sort_values("date").copy()
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=eq_df["date"],
+            y=eq_df["equity"],
+            mode="lines",
+            name="Equity",
+            line=dict(color=line_color, width=3),
+            connectgaps=True,
+        ))
+
+        if not closed.empty and "closed_at" in closed.columns:
+            markers = closed.dropna(subset=["closed_at"]).copy()
+            if not markers.empty:
+                y_ref = eq_df.set_index("date")["equity"]
+                marker_y = y_ref.reindex(markers["closed_at"], method="nearest").values
+                marker_colors = [
+                    pos_color if (v or 0) > 0 else neg_color if (v or 0) < 0 else neu_color
+                    for v in markers.get("pnl_usd", pd.Series([0] * len(markers)))
+                ]
+                fig.add_trace(go.Scatter(
+                    x=markers["closed_at"],
+                    y=marker_y,
+                    mode="markers",
+                    name="Trades",
+                    marker=dict(size=7, color=marker_colors, line=dict(width=1, color="#111")),
+                    opacity=0.95,
+                ))
+
         fig.update_layout(
-            height=350, margin=dict(l=0, r=0, t=10, b=0),
-            yaxis_tickformat="$,.0f", hovermode="x unified",
+            height=350,
+            yaxis_tickformat="$,.0f",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        _apply_mobile_chart_theme(fig, show_legend=False)
+        st.plotly_chart(fig, width='stretch')
     elif not closed.empty and "pnl_usd" in closed.columns:
         eq_from_field = (
             closed.dropna(subset=["equity_after"]).sort_values("closed_at")
             if "equity_after" in closed.columns else pd.DataFrame()
         )
+
+        fig = go.Figure()
         if not eq_from_field.empty:
-            fig = px.area(
-                eq_from_field, x="closed_at", y="equity_after",
-                labels={"closed_at": "Date", "equity_after": "Equity ($)"},
-                color_discrete_sequence=[color],
-            )
+            eq_df = eq_from_field
+            x_col, y_col = "closed_at", "equity_after"
         else:
             eq_df = closed.sort_values("closed_at").copy()
             initial_equity = eq_df.iloc[0].get("equity_at_entry", 1000) or 1000
             eq_df["equity_curve"] = initial_equity + eq_df["pnl_usd"].cumsum()
-            fig = px.area(
-                eq_df, x="closed_at", y="equity_curve",
-                labels={"closed_at": "Date", "equity_curve": "Equity ($)"},
-                color_discrete_sequence=[color],
-            )
+
+            x_col, y_col = "closed_at", "equity_curve"
+
+        fig.add_trace(go.Scatter(
+            x=eq_df[x_col],
+            y=eq_df[y_col],
+            mode="lines",
+            name="Equity",
+            line=dict(color=line_color, width=3),
+            connectgaps=True,
+        ))
+
+        marker_colors = [
+            pos_color if (v or 0) > 0 else neg_color if (v or 0) < 0 else neu_color
+            for v in eq_df.get("pnl_usd", pd.Series([0] * len(eq_df)))
+        ]
+        fig.add_trace(go.Scatter(
+            x=eq_df[x_col],
+            y=eq_df[y_col],
+            mode="markers",
+            name="Trades",
+            marker=dict(size=7, color=marker_colors, line=dict(width=1, color="#111")),
+            opacity=0.95,
+        ))
+
         fig.update_layout(
-            height=350, margin=dict(l=0, r=0, t=10, b=0),
-            yaxis_tickformat="$,.0f", hovermode="x unified",
+            height=350,
+            yaxis_tickformat="$,.0f",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        _apply_mobile_chart_theme(fig, show_legend=False)
+        st.plotly_chart(fig, width='stretch')
     else:
         st.info("Pas de données d'equity disponibles")
 
@@ -632,17 +709,17 @@ def _render_cumulative_pnl(closed: pd.DataFrame, color: str):
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=pnl_df["closed_at"], y=pnl_df["cumulative_pnl"],
-        mode="lines", name="P&L cumulé",
-        line=dict(color=color, width=2),
-        fill="tozeroy",
-        fillcolor=f"rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.1)",
+        mode="lines+markers", name="P&L cumulé",
+        line=dict(color="#14d8c4", width=3),
+        marker=dict(size=5, color="#14d8c4"),
     ))
-    fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+    fig.add_hline(y=0, line_dash="dot", line_color="#9aa7b3", opacity=0.6)
     fig.update_layout(
-        height=300, margin=dict(l=0, r=0, t=10, b=0),
-        yaxis_tickformat="$,.2f", hovermode="x unified",
+        height=300,
+        yaxis_tickformat="$,.2f",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    _apply_mobile_chart_theme(fig, show_legend=False)
+    st.plotly_chart(fig, width='stretch')
 
 
 def _render_daily_pnl(closed: pd.DataFrame):
@@ -1107,11 +1184,12 @@ def render_overview():
 
     if fig_eq.data:
         fig_eq.update_layout(
-            height=400, margin=dict(l=0, r=0, t=10, b=0),
-            yaxis_tickformat="$,.0f", hovermode="x unified",
+            height=400,
+            yaxis_tickformat="$,.0f",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
-        st.plotly_chart(fig_eq, use_container_width=True)
+        _apply_mobile_chart_theme(fig_eq, show_legend=True)
+        st.plotly_chart(fig_eq, width='stretch')
     else:
         st.info("Pas de données d'equity disponibles")
 
@@ -1143,10 +1221,11 @@ def render_overview():
             textposition="outside",
         ))
         fig_daily.update_layout(
-            height=300, margin=dict(l=0, r=0, t=10, b=0),
+            height=300,
             yaxis_tickformat="$,.2f",
         )
-        st.plotly_chart(fig_daily, use_container_width=True)
+        _apply_mobile_chart_theme(fig_daily, show_legend=False)
+        st.plotly_chart(fig_daily, width='stretch')
     else:
         st.info("Pas de trades sur cette période")
 
