@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import plotly.express as px
@@ -37,6 +38,21 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+DASHBOARD_TZ = ZoneInfo(os.getenv("DASHBOARD_TZ", "Europe/Paris"))
+
+
+def _to_display_datetime(series: pd.Series, normalize_day: bool = False) -> pd.Series:
+    """Convertit une série datetime en timezone dashboard puis retire la timezone.
+
+    Objectif: éviter les décalages UTC/local et les mélanges tz-aware/tz-naive
+    dans les courbes Plotly.
+    """
+    dt = pd.to_datetime(series, errors="coerce", utc=True)
+    dt = dt.dt.tz_convert(DASHBOARD_TZ).dt.tz_localize(None)
+    if normalize_day:
+        dt = dt.dt.normalize()
+    return dt
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -67,7 +83,7 @@ def _fetch_trades(days: int = 90, exchange: str | None = None) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     for col in ("opened_at", "closed_at", "created_at", "updated_at"):
         if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
+            df[col] = _to_display_datetime(df[col])
     return df
 
 
@@ -82,7 +98,7 @@ def _fetch_daily_snapshots(days: int = 90, exchange: str | None = None) -> pd.Da
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
-    df["date"] = pd.to_datetime(df["date"])
+    df["date"] = _to_display_datetime(df["date"], normalize_day=True)
     return df
 
 
