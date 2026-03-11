@@ -21,6 +21,9 @@ echo ""
 # ── 1. Sync des fichiers ────────────────────────────────────────────────
 echo "📦 Synchronisation des fichiers..."
 rsync -avz --delete \
+    --filter='P .venv/' \
+    --filter='P data/' \
+    --filter='P logs/' \
     --exclude='.venv' \
     --exclude='__pycache__' \
     --exclude='.git' \
@@ -45,6 +48,9 @@ ssh "$VPS_HOST" << 'REMOTE'
     set -e
     cd /opt/tradex
 
+    # S'assurer que les répertoires runtime existent (protégés côté rsync)
+    sudo mkdir -p /opt/tradex/data /opt/tradex/logs
+
     # Mettre à jour les dépendances
     .venv/bin/pip install -r requirements.txt -q 2>/dev/null
 
@@ -57,7 +63,7 @@ ssh "$VPS_HOST" << 'REMOTE'
     sudo chown -R tradex:tradex /opt/tradex
 
     # Créer le répertoire data s'il n'existe pas
-    mkdir -p /opt/tradex/data
+    sudo mkdir -p /opt/tradex/data
 
     # Redémarrer le service
     sudo systemctl restart tradex-infinity

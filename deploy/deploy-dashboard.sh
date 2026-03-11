@@ -18,6 +18,9 @@ echo ""
 # ── 1. Sync des fichiers ────────────────────────────────────────────────
 echo "📦 Synchronisation des fichiers..."
 rsync -avz --delete \
+    --filter='P .venv/' \
+    --filter='P data/' \
+    --filter='P logs/' \
     --exclude='.venv' \
     --exclude='__pycache__' \
     --exclude='.git' \
@@ -41,6 +44,9 @@ echo "🔧 Migration des services dashboard..."
 ssh "$VPS_HOST" << 'REMOTE'
     set -e
     cd /opt/tradex
+
+    # S'assurer que les répertoires runtime existent (protégés côté rsync)
+    sudo mkdir -p /opt/tradex/data /opt/tradex/logs
 
     echo "   ⏹ Arrêt des 3 anciens dashboards..."
     sudo systemctl stop tradex-dashboard tradex-binance-dashboard tradex-binance-breakout-dashboard 2>/dev/null || true

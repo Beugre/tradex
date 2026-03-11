@@ -84,6 +84,10 @@ Ce script :
 3. Redémarre le service
 4. Vérifie que le bot est bien actif
 
+⚠️ Important : les scripts de déploiement utilisent `rsync --delete` avec des règles de protection pour préserver les répertoires runtime du VPS (`/opt/tradex/.venv`, `/opt/tradex/data`, `/opt/tradex/logs`).
+
+Évite les commandes `rsync --delete` manuelles hors scripts `deploy/*.sh` si ces protections ne sont pas présentes.
+
 > 💡 Pour changer l'hôte SSH, modifier `VPS_HOST` dans le script ou l'exporter :
 > ```bash
 > VPS_HOST=user@1.2.3.4 ./deploy/deploy.sh
