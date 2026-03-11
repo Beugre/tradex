@@ -15,7 +15,6 @@ VPS_HOST="${VPS_HOST:-BOT-VPS}"
 APP_DIR="/opt/tradex"
 SERVICE_RANGE="tradex-binance"
 SERVICE_CRASHBOT="tradex-binance-crashbot"
-SERVICE_CRASHBOT_DASH="tradex-binance-crashbot-dashboard"
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -66,12 +65,19 @@ ssh "$VPS_HOST" << 'REMOTE'
     echo "── 💥 Installation du CrashBot ──"
     sudo cp deploy/tradex-binance.service /etc/systemd/system/
     sudo cp deploy/tradex-binance-crashbot.service /etc/systemd/system/
-    sudo cp deploy/tradex-binance-crashbot-dashboard.service /etc/systemd/system/
+    if [ -f deploy/tradex-binance-crashbot-dashboard.service ]; then
+        sudo cp deploy/tradex-binance-crashbot-dashboard.service /etc/systemd/system/
+        HAS_CRASHBOT_DASH=1
+    else
+        HAS_CRASHBOT_DASH=0
+    fi
     sudo systemctl daemon-reload
 
     # Activer les services
     sudo systemctl enable tradex-binance-crashbot
-    sudo systemctl enable tradex-binance-crashbot-dashboard
+    if [ "$HAS_CRASHBOT_DASH" -eq 1 ]; then
+        sudo systemctl enable tradex-binance-crashbot-dashboard
+    fi
 
     # Permissions
     sudo chown -R tradex:tradex /opt/tradex
@@ -83,7 +89,9 @@ ssh "$VPS_HOST" << 'REMOTE'
     # Redémarrer le bot RANGE + lancer le CrashBot
     sudo systemctl restart tradex-binance
     sudo systemctl restart tradex-binance-crashbot
-    sudo systemctl restart tradex-binance-crashbot-dashboard
+    if [ "$HAS_CRASHBOT_DASH" -eq 1 ]; then
+        sudo systemctl restart tradex-binance-crashbot-dashboard
+    fi
 
     sleep 2
 
@@ -105,11 +113,15 @@ ssh "$VPS_HOST" << 'REMOTE'
         sudo journalctl -u tradex-binance-crashbot -n 10 --no-pager
     fi
 
-    if sudo systemctl is-active --quiet tradex-binance-crashbot-dashboard; then
-        echo "   ✅ tradex-binance-crashbot-dashboard : actif (port 8504)"
+    if [ "$HAS_CRASHBOT_DASH" -eq 1 ]; then
+        if sudo systemctl is-active --quiet tradex-binance-crashbot-dashboard; then
+            echo "   ✅ tradex-binance-crashbot-dashboard : actif (port 8504)"
+        else
+            echo "   ❌ tradex-binance-crashbot-dashboard : erreur"
+            sudo journalctl -u tradex-binance-crashbot-dashboard -n 5 --no-pager
+        fi
     else
-        echo "   ❌ tradex-binance-crashbot-dashboard : erreur"
-        sudo journalctl -u tradex-binance-crashbot-dashboard -n 5 --no-pager
+        echo "   ⚪ tradex-binance-crashbot-dashboard : non déployé (fichier service absent)"
     fi
 
     echo ""
