@@ -560,7 +560,7 @@ def _render_positions(open_df: pd.DataFrame, bot_type: str = "range", exchange: 
                 lambda s: f"🔄 {s}" if s == "TRAILING" else s
             )
 
-        st.dataframe(show_df, use_container_width=True, hide_index=True)
+        st.dataframe(show_df, width='stretch', hide_index=True)
     else:
         st.info("Aucune position ouverte")
 
@@ -600,7 +600,7 @@ def _render_alerts(open_df: pd.DataFrame, exchange: str | None):
                     "error": "Erreur", "next_retry_s": "Retry (s)",
                     "timestamp": "Date",
                 }),
-                use_container_width=True, hide_index=True,
+                width='stretch', hide_index=True,
             )
 
 
@@ -750,7 +750,7 @@ def _render_daily_pnl(closed: pd.DataFrame):
         height=300, margin=dict(l=0, r=0, t=10, b=0),
         yaxis_tickformat="$,.2f",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def _render_pair_performance(closed: pd.DataFrame):
@@ -786,7 +786,7 @@ def _render_pair_performance(closed: pd.DataFrame):
             margin=dict(l=0, r=0, t=10, b=0),
             xaxis_tickformat="$,.2f",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     with col_right:
         st.dataframe(
@@ -796,7 +796,7 @@ def _render_pair_performance(closed: pd.DataFrame):
             }).sort_values("P&L ($)", ascending=False).style.map(
                 _color_pnl, subset=["P&L ($)", "Moy ($)"]
             ).format({"P&L ($)": "${:+,.2f}", "Moy ($)": "${:+,.2f}"}),
-            use_container_width=True, hide_index=True,
+            width='stretch', hide_index=True,
         )
 
 
@@ -846,7 +846,7 @@ def _render_last_trades(closed: pd.DataFrame):
     if "Fees ($)" in display.columns:
         styled = styled.format({"Fees ($)": "${:.4f}"})
 
-    st.dataframe(styled, use_container_width=True, hide_index=True)
+    st.dataframe(styled, width='stretch', hide_index=True)
 
 
 def _render_pnl_distribution(closed: pd.DataFrame, color: str, group_col: str = "strategy"):
@@ -867,7 +867,7 @@ def _render_pnl_distribution(closed: pd.DataFrame, color: str, group_col: str = 
         fig_hist.update_layout(
             height=300, margin=dict(l=0, r=0, t=10, b=0), showlegend=False,
         )
-        st.plotly_chart(fig_hist, use_container_width=True)
+        st.plotly_chart(fig_hist, width='stretch')
 
     with col_box:
         if group_col in closed.columns:
@@ -881,7 +881,7 @@ def _render_pnl_distribution(closed: pd.DataFrame, color: str, group_col: str = 
         fig_box.update_layout(
             height=300, margin=dict(l=0, r=0, t=10, b=0), showlegend=False,
         )
-        st.plotly_chart(fig_box, use_container_width=True)
+        st.plotly_chart(fig_box, width='stretch')
 
 
 # ── CrashBot-specific sections ─────────────────────────────────────────────────
@@ -921,7 +921,7 @@ def _render_exit_reasons(closed: pd.DataFrame):
             color_discrete_sequence=px.colors.qualitative.Set2, hole=0.4,
         )
         fig.update_layout(height=300, margin=dict(l=0, r=0, t=10, b=0))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     with col_table:
         st.dataframe(
@@ -931,7 +931,7 @@ def _render_exit_reasons(closed: pd.DataFrame):
             }).style.map(
                 _color_pnl, subset=["P&L Total ($)", "P&L Moy ($)"]
             ).format({"P&L Total ($)": "${:+,.2f}", "P&L Moy ($)": "${:+,.2f}"}),
-            use_container_width=True, hide_index=True,
+            width='stretch', hide_index=True,
         )
 
 
@@ -984,7 +984,7 @@ def _render_trailing_stats(closed: pd.DataFrame):
         xaxis_title="Gain au peak (%)", yaxis_title="Gain à la sortie (%)",
         height=350, margin=dict(l=0, r=0, t=10, b=0), showlegend=False,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def _render_advanced_stats(closed: pd.DataFrame):
@@ -1151,7 +1151,7 @@ def render_overview():
             yaxis=dict(visible=False),
             showlegend=False,
         )
-        st.plotly_chart(fig_alloc, use_container_width=True)
+        st.plotly_chart(fig_alloc, width='stretch')
 
         st.caption(f"ℹ️ {alloc['reason']} — Total: ${alloc['total_balance']:,.0f}")
 
@@ -1257,7 +1257,7 @@ def render_overview():
             "size_usd": "Notionnel $", "risk_usd": "Risque $",
             "pnl_latent": "P&L latent", "status": "Statut",
         })
-        st.dataframe(show, use_container_width=True, hide_index=True)
+        st.dataframe(show, width='stretch', hide_index=True)
     else:
         st.info("Aucune position ouverte sur les 4 bots")
 
@@ -1588,7 +1588,7 @@ def _render_infinity_vcurve(cycle: dict | None):
         margin=dict(l=60, r=20, t=80, b=60),
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     # ── Métriques du cycle ──
     if pmp > 0:
@@ -1635,7 +1635,7 @@ def _render_vcurve_theoretical(cycle: dict):
             "Drop": f"{drop * 100:+.0f}%",
             "Prix": _pfmt(price),
         })
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
