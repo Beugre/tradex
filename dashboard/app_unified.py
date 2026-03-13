@@ -23,6 +23,7 @@ from google.oauth2 import service_account
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.core.allocator import AllocationRegime
+from src import config as app_config
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -161,6 +162,24 @@ def _fetch_events(exchange: str, event_type: str | None = None, hours: int = 48)
     if not rows:
         return pd.DataFrame()
     return pd.DataFrame(rows)
+
+
+def _fetch_last_heartbeat(exchange: str, hours: int = 72) -> dict:
+    """Retourne le dernier heartbeat Firebase pour un exchange donné."""
+    db = _get_db()
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    docs = (
+        db.collection("events")
+        .where("exchange", "==", exchange)
+        .where("event_type", "==", "HEARTBEAT")
+        .where("timestamp", ">=", cutoff)
+        .order_by("timestamp", direction=firestore.Query.DESCENDING)
+        .limit(1)
+        .stream()
+    )
+    for doc in docs:
+        return doc.to_dict() or {}
+    return {}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -442,6 +461,7 @@ def _load_all(days: int):
             "snapshots": _fetch_daily_snapshots(days=days, exchange=ex),
             "open": _fetch_open_positions(exchange=ex),
             "stats": _compute_stats(closed),
+            "heartbeat": _fetch_last_heartbeat(ex),
         }
     return data
 
@@ -493,6 +513,61 @@ def _render_kpis(stats: dict, n_open: int, max_pos: int):
         col4.metric("⚖️ Profit Factor", f"{pf:.2f}" if pf != float("inf") else "∞")
         col5.metric("🏦 Equity", f"${stats['equity']:,.2f}" if stats['equity'] else "—")
         col6.metric("📂 Positions", f"{n_open}/{max_pos}")
+
+
+def _render_last_heartbeat_cockpit(bot_key: str, d: dict, max_pos: int):
+    """Affiche le dernier heartbeat dans un format cockpit uniforme."""
+    hb = d.get("heartbeat") or {}
+    if not hb:
+        st.info("💓 Aucun heartbeat Firebase récent.")
+        return
+
+    data = hb.get("data") or {}
+    hb_ts_raw = hb.get("timestamp")
+    hb_ts = pd.to_datetime(hb_ts_raw, errors="coerce", utc=True)
+    if pd.isna(hb_ts):
+        ts_label = "—"
+        stale_min = None
+    else:
+        hb_local = hb_ts.tz_convert(DASHBOARD_TZ)
+        ts_label = hb_local.strftime("%d/%m %H:%M:%S")
+        stale_min = (datetime.now(timezone.utc) - hb_ts.to_pydatetime()).total_seconds() / 60
+
+    open_positions = int(data.get("open_positions", len(d.get("open", []))))
+    pairs_count = int(data.get("pairs_count", 0))
+    total_equity = float(data.get("total_equity", 0.0))
+    risk_pct = float(data.get("total_risk_pct", 0.0)) * 100
+
+    open_df = d.get("open") if isinstance(d, dict) else None
+    exposure_usd = 0.0
+    if isinstance(open_df, pd.DataFrame) and not open_df.empty and "size_usd" in open_df.columns:
+        exposure_usd = float(pd.to_numeric(open_df["size_usd"], errors="coerce").fillna(0).sum())
+
+    if stale_min is not None and stale_min > 20:
+        sys_emoji, sys_label = "🔴", "stale"
+    elif risk_pct > 6:
+        sys_emoji, sys_label = "🟡", "watch"
+    else:
+        sys_emoji, sys_label = "🟢", "ok"
+
+    lines = [
+        f"{sys_emoji} **Dernier heartbeat** · {sys_label.upper()} · {ts_label}",
+        f"💰 Equity `${total_equity:,.0f}` · 📂 Pos `{open_positions}/{max_pos}` · ⚠️ Risque `{risk_pct:.1f}%` · 📦 Expo `${exposure_usd:,.0f}`",
+    ]
+
+    if bot_key == "infinity":
+        slots = max(1, int(app_config.INF_CAPITAL_ACTIVE_SLOTS))
+        slots_used = min(open_positions, slots)
+        slots_free = max(0, slots - slots_used)
+        lines.append(f"🧩 Slots `{slots_used}/{slots}` · libres `{slots_free}` · paires suivies `{pairs_count}`")
+    elif bot_key == "crashbot":
+        lines.append(f"📡 Universe `{pairs_count}` paires · Signaux/état via Telegram heartbeat")
+    elif bot_key == "london":
+        lines.append(f"🇬🇧 Session breakout · paires suivies `{pairs_count}`")
+    else:
+        lines.append(f"🟡 Range bot · paires suivies `{pairs_count}`")
+
+    st.markdown("\n\n".join(lines))
     else:
         col1.metric("💰 P&L Total", "—")
         col2.metric("📈 Trades", "0")
@@ -1287,6 +1362,8 @@ def render_binance_range():
     cfg = BOTS["binance"]
 
     st.title(f"{cfg['icon']} Binance Range")
+    _render_last_heartbeat_cockpit("binance", d, cfg["max_pos"])
+    st.divider()
     _render_kpis(d["stats"], len(d["open"]), cfg["max_pos"])
     st.divider()
 
@@ -1315,6 +1392,8 @@ def render_binance_crashbot():
     cfg = BOTS["crashbot"]
 
     st.title(f"{cfg['icon']} Binance CrashBot")
+    _render_last_heartbeat_cockpit("crashbot", d, cfg["max_pos"])
+    st.divider()
     _render_kpis(d["stats"], len(d["open"]), cfg["max_pos"])
     st.divider()
 
@@ -1351,7 +1430,11 @@ def render_revolut_london():
     cfg = BOTS["london"]
 
     st.title(f"{cfg['icon']} Revolut London Breakout")
-    st.caption("Session breakout (08-16 UTC) — H4, maker-only, 20% du capital Revolut X")
+    st.caption(
+        f"Session breakout (08-16 UTC) — H4, maker-only, {app_config.LON_CAPITAL_PCT * 100:.0f}% du capital Revolut X"
+    )
+    _render_last_heartbeat_cockpit("london", d, cfg["max_pos"])
+    st.divider()
     _render_kpis(d["stats"], len(d["open"]), cfg["max_pos"])
     st.divider()
 
@@ -1663,7 +1746,12 @@ def render_revolut_infinity():
     cfg = BOTS["infinity"]
 
     st.title(f"{cfg['icon']} Revolut Infinity")
-    st.caption("DCA inversé multi-paires (BTC, AAVE, XLM, ADA, DOT, LTC) — H4, maker-only, 80% du capital Revolut X")
+    st.caption(
+        f"DCA inversé multi-paires (BTC, AAVE, XLM, ADA, DOT, LTC) — H4, maker-only, {app_config.INF_CAPITAL_PCT * 100:.0f}% du capital Revolut X"
+    )
+
+    _render_last_heartbeat_cockpit("infinity", d, cfg["max_pos"])
+    st.divider()
 
     _render_kpis(d["stats"], len(d["open"]), cfg["max_pos"])
     st.divider()
