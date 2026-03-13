@@ -96,6 +96,7 @@ INF_POLLING_SECONDS: int = config.INF_POLLING_SECONDS
 INF_HEARTBEAT_SECONDS: int = config.INF_HEARTBEAT_SECONDS
 INF_MAKER_WAIT_SECONDS: int = config.INF_MAKER_WAIT_SECONDS
 INF_CAPITAL_PCT: float = config.INF_CAPITAL_PCT
+INF_CAPITAL_ACTIVE_SLOTS: int = max(1, config.INF_CAPITAL_ACTIVE_SLOTS)
 
 # ── Per-pair validated configs ────────────────────────────────────────────────
 # Walk-forward validated: train 2020→2024, test 2024→2026
@@ -640,20 +641,27 @@ class InfinityBot:
         """Une paire est active si un cycle est en cours avec position restante."""
         return ctx.cycle.phase != "WAITING" and ctx.cycle.size_remaining > 0
 
-    def _get_dynamic_pair_capital_pct(self, ctx: PairContext) -> float:
-        """Part dynamique du pool de capital allouée à une paire.
+    def _get_active_pairs_count(self) -> int:
+        """Nombre de paires Infinity actuellement actives."""
+        return sum(1 for pair_ctx in self._pairs.values() if self._is_pair_active(pair_ctx))
 
-        - Paires actives: partage entre toutes les paires actives.
-        - Paires inactives: partage prospectif (actives + cette paire) pour autoriser une entrée.
+    def _get_dynamic_pair_capital_pct(self, ctx: PairContext) -> float:
+        """Part du pool allouée à une paire avec logique de slots fixes.
+
+        - Le pool Infinity est partagé sur `INF_CAPITAL_ACTIVE_SLOTS` positions max.
+        - Chaque slot reçoit une part fixe du pool (ex: 2 slots => 50/50).
+        - Si tous les slots sont occupés, les nouvelles paires ont 0 allocation.
         """
-        active_count = sum(1 for pair_ctx in self._pairs.values() if self._is_pair_active(pair_ctx))
+        active_count = self._get_active_pairs_count()
+        slot_pct = INF_CAPITAL_PCT / INF_CAPITAL_ACTIVE_SLOTS
 
         if self._is_pair_active(ctx):
-            effective_count = max(1, active_count)
-        else:
-            effective_count = max(1, active_count + 1)
+            return slot_pct
 
-        return INF_CAPITAL_PCT / effective_count
+        if active_count >= INF_CAPITAL_ACTIVE_SLOTS:
+            return 0.0
+
+        return slot_pct
 
     def _get_allocated_balance(self, ctx: PairContext) -> float:
         """Retourne le capital alloué à cette paire (part dynamique du pool global)."""
@@ -726,6 +734,14 @@ class InfinityBot:
             logger.warning(
                 "[%s] ♾️ %d stops consécutifs → pause (max=%d)",
                 ctx.symbol, ctx.consecutive_stops, cfg.max_consecutive_stops,
+            )
+            return
+
+        active_count = self._get_active_pairs_count()
+        if active_count >= INF_CAPITAL_ACTIVE_SLOTS:
+            logger.info(
+                "[%s] ♾️ Slots capital pleins (%d/%d) — skip entry",
+                ctx.symbol, active_count, INF_CAPITAL_ACTIVE_SLOTS,
             )
             return
 
@@ -1678,10 +1694,13 @@ class InfinityBot:
             unr_emoji = "🟢" if total_unrealized >= 0 else "🔴"
             last_update = now_utc.strftime("%H:%M UTC")
 
+            slot_pct = INF_CAPITAL_PCT / INF_CAPITAL_ACTIVE_SLOTS * 100
+            slots_free = max(0, INF_CAPITAL_ACTIVE_SLOTS - active_pairs)
+
             tg_lines = [
                 f"{sys_emoji} *INFINITY* ♾️ ({len(self._pairs)} paires) — {sys_label}",
-                f"  💰 Equity scope: `${total_equity:,.0f}` | Pool (80%): `${infinity_pool:,.0f}`",
-                f"  🧩 Allocation dynamique: actives=`{active_pairs}` | part active=`{(INF_CAPITAL_PCT / max(1, active_pairs) * 100) if active_pairs else 0:.1f}%` | part nouvelle=`{INF_CAPITAL_PCT / max(1, active_pairs + 1) * 100:.1f}%`",
+                f"  💰 Equity scope: `${total_equity:,.0f}` | Pool ({INF_CAPITAL_PCT * 100:.0f}%): `${infinity_pool:,.0f}`",
+                f"  🧩 Allocation slots: actives=`{active_pairs}/{INF_CAPITAL_ACTIVE_SLOTS}` | part/slot=`{slot_pct:.1f}%` | libres=`{slots_free}`",
                 f"  📦 Exposition active: `${total_exposure:,.0f}`",
                 f"  {unr_emoji} PnL open: `${total_unrealized:+.2f}`",
                 f"  ⏳ Prochaine H4: `{countdown_str}`",

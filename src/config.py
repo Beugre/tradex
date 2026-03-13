@@ -246,6 +246,7 @@ INF_POLLING_SECONDS: int = int(os.getenv("INF_POLLING_SECONDS", "30"))
 INF_HEARTBEAT_SECONDS: int = int(os.getenv("INF_HEARTBEAT_SECONDS", "600"))
 INF_MAKER_WAIT_SECONDS: int = int(os.getenv("INF_MAKER_WAIT_SECONDS", "60"))
 INF_CAPITAL_PCT: float = float(os.getenv("INF_CAPITAL_PCT", "0.80"))  # 80% du capital Revolut X
+INF_CAPITAL_ACTIVE_SLOTS: int = int(os.getenv("INF_CAPITAL_ACTIVE_SLOTS", "2"))  # Capital partagé sur 2 positions max
 
 # Paramètres de stratégie
 INF_ENTRY_DROP_PCT: float = float(os.getenv("INF_ENTRY_DROP_PCT", "0.05"))
