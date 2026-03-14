@@ -134,3 +134,19 @@ def get_documents(
     except Exception as e:
         logger.error("❌ Firebase read [%s] échoué: %s", collection, e)
         return []
+
+
+def get_document(collection: str, doc_id: str) -> Optional[dict[str, Any]]:
+    """Lit un document par ID. Retourne None s'il n'existe pas."""
+    db = get_db()
+    if db is None:
+        return None
+    try:
+        snap = db.collection(collection).document(doc_id).get()
+        if not snap.exists:
+            return None
+        data = snap.to_dict() or {}
+        return {**data, "_id": snap.id}
+    except Exception as e:
+        logger.error("❌ Firebase read [%s/%s] échoué: %s", collection, doc_id, e)
+        return None

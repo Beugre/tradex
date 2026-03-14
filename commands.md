@@ -27,6 +27,9 @@ ssh BOT-VPS 'sudo journalctl -u tradex-infinity -f'
 
 # Dashboard (Streamlit)
 ssh BOT-VPS 'sudo journalctl -u tradex-dashboard-unified -f'
+
+# Telegram Command Bot
+ssh BOT-VPS 'sudo journalctl -u tradex-telegram-commands -f'
 ```
 
 ### Les 4 bots en parallèle (tmux)
@@ -111,6 +114,7 @@ ssh BOT-VPS 'sudo systemctl restart tradex-binance-crashbot'
 ssh BOT-VPS 'sudo systemctl restart tradex-london'
 ssh BOT-VPS 'sudo systemctl restart tradex-infinity'
 ssh BOT-VPS 'sudo systemctl restart tradex-dashboard-unified'
+ssh BOT-VPS 'sudo systemctl restart tradex-telegram-commands'
 ```
 
 ### Redémarrer tous les bots
@@ -163,6 +167,8 @@ rsync -avz --exclude='.venv' --exclude='__pycache__' --exclude='.git' --exclude=
 ssh BOT-VPS 'sudo systemctl restart tradex-infinity'
 ```
 
+> Important: ajoute aussi `--exclude='private.pem' --exclude='public.pem'` pour éviter d'écraser les permissions de clés sur le VPS.
+
 ---
 
 ## Git
@@ -195,8 +201,43 @@ git log --oneline -10
 .venv/bin/python -m src.bot_london --dry-run
 .venv/bin/python -m src.bot_infinity --dry-run
 
+# Bot commandes Telegram (pilotage / monitoring)
+.venv/bin/python -m src.telegram_command_bot
+
 # Dashboard local
 .venv/bin/streamlit run dashboard/app_unified.py --server.port 8502
+```
+
+### Commandes Telegram disponibles
+
+```text
+/pnl <bot|all> [today|7d|30d|90d]
+/perf <bot|all> [7d|30d|90d]
+/alloc get
+/alloc set <crashbot|range|infinity|london> <pct_decimal>
+/health <bot|all>
+/hb get [bot|all]
+/hb set <bot> <5m|10m|30m|300|600|1800>
+/hb reset <bot|all>
+/open <bot|all>
+/last <bot|all> [n]
+/cmdlog [n]
+/logs <bot|all> [n]
+/close now <bot> <symbol|all>
+/sl set <bot> <symbol> <price>
+/tp set <bot> <symbol> <price>
+/help pnl
+/help perf
+/help logs
+/help health
+/help hb
+/help open
+/help last
+/help alloc
+/help cmdlog
+/help close
+/help sl
+/help tp
 ```
 
 ---

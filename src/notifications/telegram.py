@@ -30,6 +30,7 @@ _STRATEGY_LABEL = {
     StrategyType.CRASHBOT: "💥 CRASHBOT",
     StrategyType.INFINITY: "♾️ INFINITY",
     StrategyType.LONDON: "🇬🇧 LONDON",
+    StrategyType.LISTING: "🆕 LISTING",
 }
 
 logger = logging.getLogger(__name__)

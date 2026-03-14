@@ -3,7 +3,7 @@
 ## Table des matières
 
 1. [L&#39;idée générale](#lidée-générale)
-2. [Les quatre bots](#les-quatre-bots)
+2. [Les cinq bots](#les-cinq-bots)
 3. [Bot 1 — Trail Range (Binance)](#bot-1--trail-range-binance)
    - [Détecter le range](#détecter-le-range)
    - [Décider quand entrer](#décider-quand-entrer-range)
@@ -16,42 +16,50 @@
    - [Entrée et Stop Loss](#entrée-et-stop-loss-crashbot)
    - [Step Trailing : le TP qui monte par paliers](#step-trailing--le-tp-qui-monte-par-paliers)
    - [Kill-Switch mensuel](#kill-switch-mensuel)
-5. [Bot 3 — London Breakout (Revolut X)](#bot-3--london-breakout-revolut-x)
+5. [Bot 3 — Listing Bot (Binance)](#bot-3--listing-bot-binance)
+   - [L&#39;idée](#lidée-listing)
+   - [Détection de listing](#détection-de-listing)
+   - [Filtre Momentum](#filtre-momentum)
+   - [OCO dynamique en 2 phases](#oco-dynamique-en-2-phases)
+   - [Force close](#force-close)
+6. [Bot 4 — London Breakout (Revolut X)](#bot-4--london-breakout-revolut-x)
    - [L&#39;idée](#lidée-london)
    - [Phase 1 : Accumuler le range de session](#phase-1--accumuler-le-range-de-session)
    - [Phase 2 : Détecter le breakout](#phase-2--détecter-le-breakout)
    - [Phase 3 : Entrée et gestion](#phase-3--entrée-et-gestion)
-6. [Exécution des ordres Revolut X](#exécution-des-ordres-revolut-x-london--infinity)
-7. [Bot 4 — Infinity Bot (Revolut X)](#bot-4--infinity-bot-revolut-x)
+7. [Exécution des ordres Revolut X](#exécution-des-ordres-revolut-x-london--infinity)
+8. [Bot 5 — Infinity Bot (Revolut X)](#bot-5--infinity-bot-revolut-x)
    - [L&#39;idée](#lidée-infinity)
    - [Trailing High](#trailing-high--le-prix-de-référence-dynamique)
    - [Paliers d&#39;achat](#paliers-dachat-dca-inversé)
    - [Paliers de vente](#paliers-de-vente-distribution-progressive)
    - [Sécurités](#sécurités)
-8. [Allocation dynamique du capital](#allocation-dynamique-du-capital)
+9. [Allocation dynamique du capital](#allocation-dynamique-du-capital)
    - [Comment ça marche](#comment-ça-marche)
    - [Pourquoi cette logique](#pourquoi-cette-logique)
-9. [Gestion du risque (Money Management)](#gestion-du-risque-money-management)
-10. [La boucle de chaque bot](#la-boucle-de-chaque-bot)
-11. [Les fichiers et qui fait quoi](#les-fichiers-et-qui-fait-quoi)
-12. [Exemple concret — Trade RANGE](#exemple-concret--trade-range)
-13. [Exemple concret — Trade CRASH](#exemple-concret--trade-crash)
-14. [Exemple concret — Trade LONDON BREAKOUT](#exemple-concret--trade-london-breakout)
-15. [Exemple concret — Trade INFINITY](#exemple-concret--trade-infinity)
-16. [Ce que les bots ne font PAS](#ce-que-les-bots-ne-font-pas)
-17. [Les paramètres importants](#les-paramètres-importants-fichier-env)
-18. [Infrastructure &amp; Déploiement](#infrastructure--déploiement)
+10. [Gestion du risque (Money Management)](#gestion-du-risque-money-management)
+11. [La boucle de chaque bot](#la-boucle-de-chaque-bot)
+12. [Les fichiers et qui fait quoi](#les-fichiers-et-qui-fait-quoi)
+13. [Exemple concret — Trade RANGE](#exemple-concret--trade-range)
+14. [Exemple concret — Trade CRASH](#exemple-concret--trade-crash)
+15. [Exemple concret — Trade LISTING](#exemple-concret--trade-listing)
+16. [Exemple concret — Trade LONDON BREAKOUT](#exemple-concret--trade-london-breakout)
+17. [Exemple concret — Trade INFINITY](#exemple-concret--trade-infinity)
+18. [Ce que les bots ne font PAS](#ce-que-les-bots-ne-font-pas)
+19. [Les paramètres importants](#les-paramètres-importants-fichier-env)
+20. [Infrastructure &amp; Déploiement](#infrastructure--déploiement)
 
 ---
 
 ## L'idée générale
 
-TradeX est un **écosystème de 4 bots** qui surveillent le marché crypto **24h/24** et tradent automatiquement quand les conditions sont réunies.
+TradeX est un **écosystème de 5 bots** qui surveillent le marché crypto **24h/24** et tradent automatiquement quand les conditions sont réunies.
 
-Les bots fonctionnent sur **2 exchanges** avec **4 stratégies complémentaires** :
+Les bots fonctionnent sur **2 exchanges** avec **5 stratégies complémentaires** :
 
 > **🔄 Trail Range** (Binance) : "Quand le prix oscille dans un couloir, je joue les rebonds entre le plafond et le plancher."
 > **💥 CrashBot** (Binance) : "Quand une crypto s'effondre brutalement, j'achète le dip et je laisse remonter."
+> **🆕 Listing Bot** (Binance) : "Quand un nouveau token est listé sur Binance, j'achète le momentum initial et je sécurise via OCO dynamique."
 > **🇬🇧 London Breakout** (Revolut X) : "Quand le prix casse le range de la session de Londres (08-16 UTC), j'entre long avec un SL basé sur l'ATR."
 > **♾️ Infinity** (Revolut X) : "Quand une crypto baisse de X% par rapport à son plus haut récent, j'accumule par paliers DCA puis je revends progressivement."
 
@@ -59,12 +67,13 @@ Aucun bot ne prédit l'avenir. Chacun **constate** un pattern spécifique et agi
 
 ---
 
-## Les quatre bots
+## Les cinq bots
 
 | Bot                     | Exchange        | Paires                                 | Logique                              | Side                | Capital                     |
 | ----------------------- | --------------- | -------------------------------------- | ------------------------------------ | ------------------- | --------------------------- |
-| 🔄**Trail Range** | Binance (USDC)  | ~284 (auto-discovery)                  | Rebonds dans le range + trailing OCO | Long Only           | 10–40% Binance (dynamique) |
-| 💥**CrashBot**    | Binance (USDC)  | ~284 (auto-discovery)                  | Dip-buy + step-trail                 | **Long Only** | 60–90% Binance (dynamique) |
+| 🔄**Trail Range** | Binance (USDC)  | ~284 (auto-discovery)                  | Rebonds dans le range + trailing OCO | Long Only           | 5–20% Binance (dynamique) |
+| 💥**CrashBot**    | Binance (USDC)  | ~284 (auto-discovery)                  | Dip-buy + step-trail                 | **Long Only** | 50–65% Binance (dynamique) |
+| 🆕**Listing Bot** | Binance (USDC)  | Auto-discovery nouveaux USDC           | Listing event + momentum + OCO       | **Long Only** | 30% Binance (fixe) |
 | 🇬🇧**London Breakout** | Revolut X (USD) | 8 (BTC, ETH, SOL, BNB, LINK, ADA, DOT, AVAX) | Session breakout (08-16 UTC) → long | **Long Only** | 20% Revolut X |
 | ♾️**Infinity**  | Revolut X (USD) | BTC, AAVE, XLM (configs optimisées) | DCA inversé + vente paliers         | **Long Only** | 65% Revolut X (~22% par paire) |
 
@@ -264,7 +273,98 @@ Le risk% actuel est persisté sur disque (`crashbot_momentum_state.json`) et res
 
 ---
 
-## Bot 3 — London Breakout (Revolut X)
+## Bot 3 — Listing Bot (Binance)
+
+### L'idée (Listing)
+
+> Quand Binance ajoute un nouveau token (paire USDC), le prix explose souvent dans les premières minutes. Le bot détecte le listing en temps réel, vérifie un filtre momentum, achète immédiatement, et sécurise via un OCO dynamique en 2 phases.
+
+**⚠️ LONG ONLY** : le bot n'achète que les nouveaux listings. Pas de short.
+
+### Détection de listing
+
+📄 **Fichier : `listing_detector.py` + `bot_binance_listing.py`**
+
+Le bot poll l'API Binance `exchangeInfo` toutes les 30 secondes. Un diff avec les symboles connus (`listing_known_symbols.json`) détecte les nouvelles paires USDC en status `TRADING` :
+
+```
+Symboles connus : 284 paires USDC
+
+Nouveau poll exchangeInfo → 285 paires
+Diff : NEWUSDC ajouté !
+→ 🔔 Nouveau listing détecté : NEWUSDC
+```
+
+### Filtre Momentum
+
+Une fois un nouveau symbol détecté, le bot récupère les **klines 1 minute** et vérifie si le HIGH de la première bougie atteint au moins **+30%** au-dessus de l'OPEN.
+
+```
+Kline 1m du listing :
+  OPEN = 1.00$ | HIGH = 1.42$
+  Momentum = (1.42 - 1.00) / 1.00 = +42% ≥ 30% ✅
+→ 🆕 Momentum validé ! Signal d'achat.
+```
+
+Ce filtre élimine ~52% des listings de mauvaise qualité (les "dead listings" qui ne bougent pas).
+
+### Entrée
+
+|                      | Valeur                          | Logique                              |
+| -------------------- | ------------------------------- | ------------------------------------ |
+| **Entrée**     | Market order immédiat           | Capturer le momentum initial         |
+| **Capital**    | 30% Binance / max_slots         | Max 3 positions simultanées          |
+| **Plafond**    | 5 000 USDC par slot             | Protection contre la surexposition   |
+
+### OCO dynamique en 2 phases
+
+Une fois entré, le bot place un **OCO1** (SL + TP simultanés). Si le prix approche du TP, l'OCO est **re-armé** avec de nouveaux niveaux.
+
+**Phase 1 — OCO1 (initial) :**
+
+| Niveau       | Formule                    | Exemple (entrée = 1.00$) |
+| ------------ | -------------------------- | ------------------------ |
+| **SL**  | Entry × 0.92 (-8%)        | 0.92$                    |
+| **TP1** | Entry × 1.30 (+30%)       | 1.30$                    |
+
+**Phase 2 — Re-arm OCO2 :**
+
+Quand le prix atteint ≥ TP1 × 0.98 (= 98% du TP1), le bot annule OCO1 et place OCO2 :
+
+| Niveau       | Formule                    | Exemple (TP1 = 1.30$)   |
+| ------------ | -------------------------- | ------------------------ |
+| **SL2** | TP1 × 0.769 (≈ breakeven) | 1.00$ (≈ entry)         |
+| **TP2** | TP1 × 1.538 (+100%)       | 2.00$                    |
+
+```
+Entrée : 1.00$ | SL = 0.92$ | TP1 = 1.30$
+
+  Prix monte à 1.28$ (≥ 1.30 × 0.98 = 1.274) → Re-arm !
+    Annule OCO1
+    Nouveau SL2 = 1.30 × 0.769 = 1.00$ (≈ breakeven)
+    Nouveau TP2 = 1.30 × 1.538 = 2.00$ (+100%)
+
+  Prix monte à 2.00$ → TP2 touché !
+  Gain : (2.00 - 1.00) × size = gros profit 🎉
+```
+
+### Force close
+
+Si un trade est ouvert depuis plus de **7 jours** sans toucher TP ni SL → vente market forcée. Cela évite de bloquer du capital sur un listing qui ne bouge plus.
+
+### Résultats backtest (2 ans, 288 paires)
+
+```
+Config : SL -8%, TP +30%, re-arm (SL2=0.769×TP1, TP2=1.538×TP1)
+Momentum ≥ 30%, Horizon 7j, 3 slots max
+
+Scénario réaliste :  +1,571%  (fill rate 50%, slippage 1%)
+Scénario optimiste : +45,608% (fill rate 100%, pas de slippage)
+```
+
+---
+
+## Bot 4 — London Breakout (Revolut X)
 
 ### L'idée (London)
 
@@ -346,7 +446,7 @@ Taker fallback              → fill immédiat ✅ (0.09% fee)
 
 ---
 
-## Bot 4 — Infinity Bot (Revolut X)
+## Bot 5 — Infinity Bot (Revolut X)
 
 C'est le bot **DCA inversé** multi-paires. Il achète les baisses par paliers et revend progressivement quand le prix remonte.
 
@@ -484,9 +584,9 @@ Stops     : 0
 
 ### Comment ça marche
 
-Les bots **Trail Range** et **CrashBot** partagent le même capital sur Binance. La répartition est recalculée **1×/jour** automatiquement.
+Les bots **Trail Range**, **CrashBot** et **Listing Bot** partagent le même capital sur Binance. La répartition est recalculée **1×/jour** automatiquement.
 
-Le **Profit Factor (PF)** du Trail Range sur 90 jours détermine qui reçoit combien :
+Le **Listing Bot reçoit toujours 30%** du capital (fixe). Les **70% restants** sont répartis entre Trail Range et CrashBot selon le **Profit Factor (PF)** du Trail Range sur 90 jours :
 
 ```
 PF = somme des gains / |somme des pertes|
@@ -495,23 +595,25 @@ PF > 1 → le bot gagne plus qu'il ne perd
 PF < 1 → le bot perd plus qu'il ne gagne
 ```
 
-| PF Trail Range (90j)    | Trail Range   | CrashBot      | Régime        |
-| ----------------------- | ------------- | ------------- | -------------- |
-| PF < 0.9 OU < 20 trades | **10%** | **90%** | 🛡️ DÉFENSIF |
-| 0.9 ≤ PF ≤ 1.1        | **20%** | **80%** | ⚖️ NEUTRE    |
-| PF > 1.1                | **40%** | **60%** | 🚀 AGRESSIF    |
+| PF Trail Range (90j)    | Trail Range   | CrashBot      | Listing Bot   | Régime        |
+| ----------------------- | ------------- | ------------- | ------------- | -------------- |
+| PF < 0.9 OU < 20 trades | **5%** | **65%** | **30%** | 🛡️ DÉFENSIF |
+| 0.9 ≤ PF ≤ 1.1        | **10%** | **60%** | **30%** | ⚖️ NEUTRE    |
+| PF > 1.1                | **20%** | **50%** | **30%** | 🚀 AGRESSIF    |
 
 ```
 Exemple : Capital Binance = 3 226 USDC, PF Trail = 0.47
 
   PF 0.47 < 0.9 → Régime DÉFENSIF
-  Trail Range : 10% = 323 USDC
-  CrashBot    : 90% = 2 904 USDC
+  Trail Range : 5%  = 161 USDC
+  CrashBot    : 65% = 2 097 USDC
+  Listing Bot : 30% = 968 USDC
 ```
 
 ### Pourquoi cette logique
 
 - **CrashBot domine par défaut** car sa stratégie (dip-buy) est plus robuste en marché latéral
+- **Listing Bot a une part fixe de 30%** car les opportunités de listing sont indépendantes du PF
 - Quand le Trail Range **prouve** qu'il gagne (PF > 1.1), on lui donne plus de capital
 - Quand il perd, on réduit son exposition et CrashBot prend le relais
 
@@ -541,7 +643,8 @@ position_size = risk_amount / sl_distance # ex: 150 / 5 = 30 unités
 | -------------- | --------- | ------------ | ------------- | ---------------------- |
 | 🔄 Trail Range | Binance   | 5%           | 3             | 30%                    |
 | 💥 CrashBot    | Binance   | 2%           | 3             | 30%                    |
-| 🇬🇧 London Breakout | Revolut X | 5%           | 1             | 50%                    |
+| � Listing Bot | Binance   | N/A (market) | 3             | 30% / slots            |
+| �🇬🇧 London Breakout | Revolut X | 5%           | 1             | 50%                    |
 | ♾️ Infinity  | Revolut X | 15-25% (SL)  | 3 cycles max  | 70% (max investi/paire) |
 
 ### Calcul d'equity
@@ -597,7 +700,35 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 └──────────────────────────────────────────────────────────┘
 ```
 
-### 🇬🇧 London Breakout (`bot_london.py`)
+### � Listing Bot (`bot_binance_listing.py`)
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ TOUTES LES 10 SECONDES                                  │
+│                                                          │
+│  1. Poll exchangeInfo (cache 30s)                        │
+│     ├─ Nouveau symbole USDC ? → 🔔 Détecté !            │
+│     │   ├─ Récupérer klines 1m                           │
+│     │   ├─ Momentum ≥ 30% ? → Signal valide             │
+│     │   │   └─ Market BUY + OCO1 (SL -8%, TP +30%)      │
+│     │   └─ Momentum < 30% → ⏭️ Skip (dead listing)     │
+│     └─ Pas de nouveau symbole → continuer                │
+│                                                          │
+│  2. Gérer les positions ouvertes                         │
+│     ├─ Prix ≥ TP1 × 0.98 ? → Re-arm OCO2                │
+│     │   └─ SL2 = TP1×0.769 | TP2 = TP1×1.538            │
+│     ├─ OCO fill SL/TP ? → Clôturer position              │
+│     └─ Ouverte > 7 jours ? → ⏰ Force close market      │
+│                                                          │
+│ 1×/JOUR                                                  │
+│    └─ Recalculer l'allocation dynamique (30% fixe)       │
+│                                                          │
+│ TOUTES LES 10 MINUTES                                    │
+│    └─ 💓 Heartbeat Telegram + Firebase                   │
+└──────────────────────────────────────────────────────────┘
+```
+
+### �🇬🇧 London Breakout (`bot_london.py`)
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -687,11 +818,13 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 | `strategy_trend.py`       | Stratégie Trend Following : signaux BUY/SELL en tendance               |
 | `crashbot_detector.py`    | 💥 Détecte les crashes (drop ≥ 20%) + step trailing                   |
 | `indicators.py`           | 📐 Indicateurs techniques réutilisables (EMA, SMA, ATR, RSI)         |
-| `allocator.py`            | Répartit le capital Binance entre Trail Range et CrashBot              |
+| `allocator.py`            | Répartit le capital Binance entre Trail Range, CrashBot et Listing Bot |
 | `risk_manager.py`         | Calcul de taille de position, zero-risk, trailing, equity               |
 | `position_store.py`       | Sérialisation/désérialisation des positions en JSON                  |
 | `bot_binance.py`          | 🔄 Boucle principale Trail Range (Binance, ~284 paires, OCO)            |
 | `bot_binance_crashbot.py` | 💥 Boucle principale CrashBot (Binance, dip-buy, step-trail)            |
+| `bot_binance_listing.py`  | 🆕 Boucle principale Listing Bot (Binance, nouveaux listings, OCO)       |
+| `listing_detector.py`     | 🆕 Détection listings, filtre momentum, niveaux OCO, force close      |
 | `bot_london.py`           | 🇬🇧 Boucle principale London Breakout (Revolut X, 8 paires, maker-only)  |
 | `bot_infinity.py`         | ♾️ Boucle principale Infinity (Revolut X, BTC+AAVE+XLM, DCA inversé) |
 | `infinity_engine.py`      | ♾️ Logique DCA inversé : check_first_entry, paliers, trailing high   |
@@ -707,7 +840,7 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 
 | Dashboard            | Port | Description                                           |
 | -------------------- | ---- | ----------------------------------------------------- |
-| 📊 Dashboard unifié | 8502 | 5 onglets : Overview, Trail Range, CrashBot, Infinity, London |
+| 📊 Dashboard unifié | 8502 | 6 onglets : Overview, Trail Range, CrashBot, Listing, Infinity, London |
 
 ---
 
@@ -789,6 +922,68 @@ Prix monte à 24.18$ →
 
 Prix redescend → SL₃ touché à 24.20$
 → Gain : (24.20 - 22.20) × size = gros profit 🎉
+```
+
+---
+
+## Exemple concret — Trade LISTING
+
+Imaginons qu'un nouveau token NEWUSDC est listé sur Binance :
+
+### 1️⃣ Détection du listing
+
+```
+Symboles connus : 284 paires USDC
+Poll exchangeInfo → 285 paires !
+Nouveau symbole : NEWUSDC (status = TRADING)
+→ 🔔 Nouveau listing détecté : NEWUSDC
+```
+
+### 2️⃣ Filtre momentum (klines 1m)
+
+```
+Kline 1m de NEWUSDC :
+  OPEN = 1.2000$ | HIGH = 1.7040$
+  Momentum = (1.7040 - 1.2000) / 1.2000 = +42% ≥ 30% ✅
+→ 🆕 Momentum validé ! Achat autorisé.
+```
+
+### 3️⃣ Entrée market + OCO1
+
+```
+Capital Binance = 3 226 USDC | Listing Bot = 30% = 968 USDC
+Slots libres : 3 → Capital/slot = 968 / 3 = 322 USDC
+
+→ MARKET BUY NEW @ 1.2345$
+  Taille = 322 / 1.2345 = 261 NEW
+  OCO1 : SL = 1.2345 × 0.92 = 1.1357$ (-8%)
+         TP1 = 1.2345 × 1.30 = 1.6049$ (+30%)
+```
+
+### 4️⃣ Prix monte → re-arm OCO2
+
+```
+Prix monte à 1.5728$ (≥ TP1 × 0.98 = 1.5728$) → Re-arm !
+  Annule OCO1
+  SL2 = 1.6049 × 0.769 = 1.2342$ (≈ breakeven !)
+  TP2 = 1.6049 × 1.538 = 2.4683$ (+100%)
+  Place OCO2 : SL2 + TP2
+```
+
+### 5️⃣ TP2 touché → gros gain
+
+```
+Prix explose à 2.4683$ → TP2 ✅
+  → Vend 261 NEW @ 2.4683$
+  → Gain : (2.4683 - 1.2345) × 261 = 322 USDC → +100% 🎉
+```
+
+### 6️⃣ Scénario alternatif : force close
+
+```
+Prix stagne à 1.10$ pendant 7 jours
+→ ⏰ Force close ! Vente market @ 1.10$
+→ Perte : (1.10 - 1.2345) × 261 = -35 USDC (-10.9%)
 ```
 
 ---
@@ -975,6 +1170,25 @@ Prix crash à 58 100$ → SL touché ❌
 | `MIN_RISK_PCT`              | 2%     | Plancher du risk% dynamique               |
 | `MAX_RISK_PCT`              | 10%    | Plafond du risk% dynamique                |
 
+### Listing Bot 🆕
+
+| Paramètre                          | Valeur  | Ce que ça fait                                |
+| ----------------------------------- | ------- | ---------------------------------------------- |
+| `LISTING_CAPITAL_PCT`             | 30%     | Part fixe du capital Binance pour le Listing   |
+| `LISTING_MAX_SLOTS`               | 3       | Max 3 positions simultanées                    |
+| `LISTING_MAX_ALLOC_USD`           | 5 000$  | Plafond par slot                               |
+| `LISTING_SL_INIT_PCT`             | 8%      | Stop-loss initial sous l'entrée                |
+| `LISTING_TP_INIT_PCT`             | 30%     | Take-profit initial au-dessus de l'entrée      |
+| `LISTING_TP_NEAR_RATIO`           | 0.98    | Seuil re-arm OCO (98% du TP1)                 |
+| `LISTING_SL2_TP1_MULT`            | 0.769   | SL2 = TP1 × 0.769 (≈ breakeven)              |
+| `LISTING_TP2_TP1_MULT`            | 1.538   | TP2 = TP1 × 1.538 (+100%)                     |
+| `LISTING_MOMENTUM_PCT`            | 30%     | Momentum minimum pour valider un listing       |
+| `LISTING_MOMENTUM_WINDOW_MIN`     | 1 min   | Fenêtre kline pour mesurer le momentum         |
+| `LISTING_HORIZON_DAYS`            | 7 jours | Force close si position ouverte > horizon      |
+| `LISTING_POLL_INTERVAL_SECONDS`   | 10s     | Fréquence de polling principal                 |
+| `LISTING_EXCHANGEINFO_CACHE_SECONDS` | 30s  | Cache exchangeInfo pour limiter les appels      |
+| `LISTING_HEARTBEAT_SECONDS`       | 600s    | Heartbeat Telegram (10 min)                    |
+
 ### London Breakout 🇬🇧
 
 | Paramètre                   | Valeur  | Ce que ça fait                         |
@@ -1038,9 +1252,11 @@ Prix crash à 58 100$ → SL touché ❌
 | ---------------------------- | ----------------------------------------------- | ---- |
 | `tradex-binance`           | Bot Trail Range (284 paires USDC, OCO)          | —   |
 | `tradex-binance-crashbot`  | Bot CrashBot (284 paires USDC, dip-buy)         | —   |
+| `tradex-listing`           | Bot Listing (nouveaux listings USDC, OCO dynamique) | —   |
 | `tradex-london`          | Bot London Breakout (8 paires USD, Revolut X)   | —   |
 | `tradex-infinity`          | Bot Infinity (BTC+AAVE+XLM, DCA inversé, Revolut X)   | —   |
 | `tradex-dashboard-unified` | Dashboard Streamlit unifié                     | 8502 |
+| `tradex-telegram-commands` | Bot Telegram de pilotage opérateur             | —   |
 
 ### Commandes utiles
 
@@ -1048,11 +1264,12 @@ Prix crash à 58 100$ → SL touché ❌
 # Logs en direct
 ssh BOT-VPS 'sudo journalctl -u tradex-binance -f'
 ssh BOT-VPS 'sudo journalctl -u tradex-binance-crashbot -f'
+ssh BOT-VPS 'sudo journalctl -u tradex-listing -f'
 ssh BOT-VPS 'sudo journalctl -u tradex-london -f'
 ssh BOT-VPS 'sudo journalctl -u tradex-infinity -f'
 
 # État de tous les services
-ssh BOT-VPS 'for svc in tradex-binance tradex-binance-crashbot tradex-london tradex-infinity tradex-dashboard-unified; do echo -n "$svc: "; sudo systemctl is-active $svc; done'
+ssh BOT-VPS 'for svc in tradex-binance tradex-binance-crashbot tradex-listing tradex-london tradex-infinity tradex-dashboard-unified; do echo -n "$svc: "; sudo systemctl is-active $svc; done'
 
 # Redémarrer un bot
 ssh BOT-VPS 'sudo systemctl restart tradex-binance'
@@ -1060,3 +1277,20 @@ ssh BOT-VPS 'sudo systemctl restart tradex-binance'
 # Dashboard
 # http://213.199.41.168:8502
 ```
+
+### Commandes Telegram opérateur
+
+Le service `tradex-telegram-commands` permet le pilotage à chaud via Firestore (`runtime_overrides` et `runtime_actions`) sans redémarrage des bots.
+
+- Heartbeat live: `/hb get`, `/hb set <bot|all> <sec>`, `/hb reset <bot|all>`
+- Observabilité: `/health`, `/alloc`, `/open <bot|all>`, `/last <bot|all> [n]`, `/cmdlog [n]`, `/logs <bot|all> [n]`
+- Actions manuelles: `/close now <bot> <symbol|all>`, `/sl set <bot> <symbol> <price>`, `/tp set <bot> <symbol> <price>`
+
+#### Sécurité — double confirmation
+
+La commande de fermeture globale `/close now <bot> all` exige une validation explicite en 2 étapes:
+
+1. `/close now <bot> all` → retourne un token temporaire
+2. `/confirm <token>` dans les 120 secondes → action réellement enfilée dans `runtime_actions`
+
+Si le token expire, aucune fermeture globale n'est enfilée et la demande doit être relancée.

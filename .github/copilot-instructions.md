@@ -2,19 +2,20 @@
 
 ## Aperçu du projet
 
-Écosystème de **4 bots de trading crypto automatisés** déployés sur un VPS Contabo, opérant sur **2 exchanges** :
+Écosystème de **5 bots de trading crypto automatisés** déployés sur un VPS Contabo, opérant sur **2 exchanges** :
 
 | Bot | Exchange | Stratégie | Timeframe | Paires |
 |-----|----------|-----------|-----------|--------|
 | **Trail Range** | Binance (USDC) | Mean-reversion + step-trail OCO | H4 | ~284 paires USDC (auto-discovery) |
 | **CrashBot** | Binance (USDC) | Dip-buy (long only) avec step-trail | H4 (polling) | ~284 paires USDC (auto-discovery) |
+| **Listing Bot** | Binance (USDC) | Listing event + momentum filter + OCO dynamique | 1m (détection) | Auto-discovery nouveaux USDC |
 | **Infinity** | Revolut X (USD) | DCA inversé multi-paires (trailing high → achat → vente paliers) | H4 | BTC, AAVE, XLM, ADA, DOT, LTC |
 | **London Breakout** | Revolut X (USD) | Session breakout (range 08-16 UTC → breakout LONG) | H4 | BTC, ETH, SOL, BNB, LINK, ADA, DOT, AVAX |
 
 - **Langage** : Python 3.10+ (VPS), Python 3.12+ (dev local)
 - **Notifications** : Telegram Bot API (entrée, SL, TP, clôture, heartbeat)
 - **Persistance** : Firebase Firestore (trades, positions, heartbeats, allocation, snapshots)
-- **Dashboard** : Streamlit unifié (port 8502) — 5 onglets (Overview, Range, CrashBot, Infinity, London)
+- **Dashboard** : Streamlit unifié (port 8502) — 6 onglets (Overview, Range, CrashBot, Listing, Infinity, London)
 - **Déploiement** : VPS Contabo (SSH alias `BOT-VPS`, path `/opt/tradex/`)
 
 ## Architecture
@@ -27,6 +28,7 @@ src/
 │   ├── flow_detector.py        # Analyse de flux pour aide à la décision
 │   ├── infinity_engine.py      # Logique DCA inversé (paliers achat/vente, RSI gate, trailing high)
 │   ├── indicators.py           # Indicateurs techniques réutilisables (EMA, SMA, ATR, RSI, rolling min/max)
+│   ├── listing_detector.py     # Détection de nouveaux listings Binance + momentum filter + OCO levels
 │   ├── models.py               # Modèles de données partagés (dataclass/Pydantic)
 │   ├── position_store.py       # Gestion en mémoire des positions ouvertes
 │   ├── risk_manager.py         # Money management (% risque, sizing, fiat balance, equity)
@@ -45,38 +47,49 @@ src/
 │   └── telegram.py             # Envoi d'alertes Telegram
 ├── bot_binance.py              # Bot Trail Range — Binance (mean-reversion + step-trail OCO)
 ├── bot_binance_crashbot.py     # Bot CrashBot — Binance (dip-buy, step-trail, long only)
+├── bot_binance_listing.py      # Bot Listing — Binance (listing event, momentum filter, OCO dynamique)
 ├── bot_infinity.py             # Bot Infinity — Revolut X (DCA inversé multi-paires, maker-only)
 ├── bot_london.py               # Bot London Breakout — Revolut X (session breakout H4, maker-only)
 ├── bot.py                      # (legacy) Bot Dow Theory Revolut X
 └── config.py                   # Chargement .env (clés API, paramètres de risque)
 dashboard/
-└── app_unified.py              # Dashboard Streamlit unifié (5 tabs, 2 exchanges)
+└── app_unified.py              # Dashboard Streamlit unifié (6 tabs, 2 exchanges)
 tests/
 ├── test_swing_detector.py
 ├── test_trend_engine.py
 ├── test_allocator.py
+├── test_listing_detector.py
 └── test_risk_manager.py
 ```
 
 ## Allocation du capital
 
-### Binance (Trail Range + CrashBot)
+### Binance (Trail Range + CrashBot + Listing)
 
-Les bots **Trail Range** et **CrashBot** partagent le même capital sur Binance. L'allocation est recalculée **1×/jour** via `allocator.py` basé sur le Profit Factor du Trail Range.
+Les 3 bots Binance partagent le même capital. L'allocation est recalculée **1×/jour** via `allocator.py` basé sur le Profit Factor du Trail Range. Le **Listing Bot reçoit toujours 30%** (fixe), les 70% restants sont répartis entre Trail et Crash selon le PF.
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│ PF 90j du Trail Range   │  Trail Range  │   CrashBot    │
-├──────────────────────────────────────────────────────────┤
-│ PF < 0.9 OU < 20 trades │     10%       │     90%       │  ← DEFENSIVE
-│ 0.9 ≤ PF ≤ 1.1          │     20%       │     80%       │  ← NEUTRAL
-│ PF > 1.1                │     40%       │     60%       │  ← AGGRESSIVE
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│ PF 90j du Trail Range   │ Trail Range │  CrashBot  │  Listing Bot    │
+├──────────────────────────────────────────────────────────────────────┤
+│ PF < 0.9 OU < 20 trades │     5%      │     65%    │      30%        │  ← DEFENSIVE
+│ 0.9 ≤ PF ≤ 1.1          │    10%      │     60%    │      30%        │  ← NEUTRAL
+│ PF > 1.1                │    20%      │     50%    │      30%        │  ← AGGRESSIVE
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 - Le PF est calculé via `compute_profit_factor(pnl_list)` : `sum(gains) / abs(sum(pertes))`
 - Les PnL sont récupérés depuis Firebase (`get_trail_range_pnl_list(days=90)`)
 - L'allocation est loggée dans Firebase (`allocation/current`) pour le dashboard
+
+### Binance — Listing Bot (capital intégré à l'allocator)
+
+Le **Listing Bot** reçoit **30% fixe** du capital total Binance via l'allocator dynamique.
+
+- **Capital** : `LISTING_CAPITAL_PCT=0.30` (30% du total, fixe quel que soit le régime)
+- **Max slots** : `LISTING_MAX_SLOTS=3` (3 positions simultanées max)
+- **Allocation par slot** : `equity / max_slots`, plafonnée à `LISTING_MAX_ALLOC_USD=5000`
+- Fallback statique : `LISTING_ALLOCATED_BALANCE=500` si `DYNAMIC_ALLOCATION_ENABLED=false`
 
 ### Revolut X (Infinity + London Breakout)
 
@@ -110,7 +123,23 @@ Les bots **Infinity** et **London Breakout** partagent le même compte Revolut X
   - Base : 5%, persisté dans `crashbot_momentum_state.json`
   - Désactivable via `BINANCE_CRASHBOT_MOMENTUM_SIZING=false`
 
-## Bot 3 — Infinity (`bot_infinity.py`)
+## Bot 3 — Listing Bot (`bot_binance_listing.py`)
+
+- **Exchange** : Binance Spot (USDC)
+- **Stratégie** : Listing Event — achète les nouveaux tokens listés sur Binance, filtre par momentum, sort via OCO dynamique
+- **Détection** : Polling `exchangeInfo` toutes les 30s, diff avec `listing_known_symbols.json`
+- **Momentum filter** : Récupère les klines 1m du nouveau symbole. Si HIGH de la 1ère bougie ≥ OPEN × 1.30 → signal valide (filtrage qualité, ~48% des listings passent)
+- **Entrée** : Market buy immédiat après validation momentum
+- **Gestion de position** : OCO dynamique en 2 phases :
+  1. **OCO1** : SL = entry × 0.92 (-8%), TP1 = entry × 1.30 (+30%)
+  2. **Re-arm** : Quand prix ≥ TP1 × 0.98 → annule OCO1, place OCO2 : SL2 = TP1 × 0.769 (≈ breakeven), TP2 = TP1 × 1.538 (+100%)
+- **Force close** : Si position ouverte > 7 jours → vente market
+- **Capital** : 30% du total Binance via l'allocator dynamique, max 3 slots
+- **Boucle** : Polling toutes les 10s
+- **Heartbeat** : Toutes les 10 minutes
+- **Backtest** : +1,571% à +45,608% selon scénario (2 ans, 288 paires)
+
+## Bot 4 — Infinity (`bot_infinity.py`)
 
 - **Exchange** : Revolut X (USD) — Maker 0% fees, Taker 0.09%
 - **Stratégie** : DCA inversé multi-paires :
@@ -124,7 +153,7 @@ Les bots **Infinity** et **London Breakout** partagent le même compte Revolut X
 - **Exécution** : Maker 2 retry → taker fallback (0.09% fee)
 - **Capital** : 80% du solde Revolut X (`INF_CAPITAL_PCT=0.80`)
 
-## Bot 4 — London Breakout (`bot_london.py`)
+## Bot 5 — London Breakout (`bot_london.py`)
 
 - **Exchange** : Revolut X (USD) — Maker 0% fees, Taker 0.09%
 - **Stratégie** : London Session Breakout en 4 phases :
@@ -153,7 +182,7 @@ position_size = risk_amount / sl_distance      # en unités de base (ex: ETH)
 
 - **Séparation stricte I/O / logique** : `src/core/` ne fait AUCUN appel réseau. Les tests de `core/` doivent tourner sans mock d'API.
 - **Types** : utiliser des `dataclass` ou `Pydantic BaseModel` pour toutes les structures de données.
-- **Enums** pour les états : `AllocationRegime(Enum): DEFENSIVE, NEUTRAL, AGGRESSIVE`, `StrategyType(Enum): TREND, RANGE, CRASHBOT, INFINITY, LONDON`
+- **Enums** pour les états : `AllocationRegime(Enum): DEFENSIVE, NEUTRAL, AGGRESSIVE`, `StrategyType(Enum): TREND, RANGE, CRASHBOT, LISTING, INFINITY, LONDON`
 - **Logging** : module `logging` standard avec le format `[%(asctime)s] %(levelname)s %(name)s: %(message)s`.
 - **Config** : toutes les valeurs sensibles et paramètres dans `.env`, chargés via `python-dotenv`. Ne jamais hardcoder de clé API ou de paramètre de risque.
 - **Firebase** : Toute persistance passe par `src/firebase/`. Les trades, heartbeats, allocations, et snapshots sont stockés dans Firestore.
@@ -218,6 +247,23 @@ INF_POLLING_SECONDS=30
 INF_HEARTBEAT_SECONDS=600
 INF_MAKER_WAIT_SECONDS=60
 
+# ── Listing Bot (bot_binance_listing.py) ──
+LISTING_CAPITAL_PCT=0.30
+LISTING_ALLOCATED_BALANCE=500
+LISTING_MAX_SLOTS=3
+LISTING_MAX_ALLOC_USD=5000
+LISTING_SL_INIT_PCT=0.08
+LISTING_TP_INIT_PCT=0.30
+LISTING_TP_NEAR_RATIO=0.98
+LISTING_SL2_TP1_MULT=0.769
+LISTING_TP2_TP1_MULT=1.538
+LISTING_MOMENTUM_PCT=0.30
+LISTING_MOMENTUM_WINDOW_MIN=1
+LISTING_HORIZON_DAYS=7
+LISTING_POLL_INTERVAL_SECONDS=10
+LISTING_EXCHANGEINFO_CACHE_SECONDS=30
+LISTING_HEARTBEAT_SECONDS=600
+
 # ── London Breakout (bot_london.py) ──
 LON_TRADING_PAIRS=BTC-USD,ETH-USD,SOL-USD,BNB-USD,LINK-USD,ADA-USD,DOT-USD,AVAX-USD
 LON_CAPITAL_PCT=0.20
@@ -270,6 +316,7 @@ LON_MAKER_WAIT_SECONDS=60
 ```bash
 tradex-binance              # Bot Trail Range
 tradex-binance-crashbot     # Bot CrashBot
+tradex-listing              # Bot Listing (Binance, listing event)
 tradex-infinity             # Bot Infinity (Revolut X)
 tradex-london               # Bot London Breakout (Revolut X)
 tradex-dashboard-unified    # Dashboard Streamlit (port 8502)
@@ -287,6 +334,7 @@ pytest tests/ -v
 # Lancer un bot en mode dry-run
 python -m src.bot_binance --dry-run
 python -m src.bot_binance_crashbot --dry-run
+python -m src.bot_binance_listing --dry-run
 python -m src.bot_infinity --dry-run
 python -m src.bot_london --dry-run
 
@@ -299,6 +347,7 @@ ssh BOT-VPS
 # Voir les logs d'un bot sur le VPS
 sudo journalctl -u tradex-binance -f
 sudo journalctl -u tradex-binance-crashbot -f
+sudo journalctl -u tradex-listing -f
 sudo journalctl -u tradex-infinity -f
 sudo journalctl -u tradex-london -f
 
@@ -308,12 +357,13 @@ sudo systemctl restart tradex-binance
 
 ## Dashboard unifié (`dashboard/app_unified.py`)
 
-Dashboard Streamlit avec 5 onglets :
+Dashboard Streamlit avec 6 onglets :
 1. **Overview** : Allocation Binance (gauge CrashBot/Trail), allocation Revolut X (Infinity 80%/London 20%), KPIs globaux, equity cumulée
 2. **Trail Range** : Positions ouvertes, trades récents, PnL journalier
 3. **CrashBot** : Positions ouvertes, trades récents, statistiques de dip-buy
-4. **Infinity** : Cycles par paire, V-curves, paliers achat/vente
-5. **London** : Positions Revolut X, sessions détectées, breakouts
+4. **Listing** : Positions listing, listings détectés, momentum stats, equity
+5. **Infinity** : Cycles par paire, V-curves, paliers achat/vente
+6. **London** : Positions Revolut X, sessions détectées, breakouts
 
 L'Overview affiche la répartition dynamique du capital Binance entre CrashBot et Trail Range, et la répartition statique 80/20 du capital Revolut X entre Infinity et London Breakout.
 
@@ -328,3 +378,13 @@ Chaque notification contient : **paire**, **action**, **prix d'entrée**, **SL**
   Risque: 5% ($25.00) | ATR: 75.00
 ```
 Alertes envoyées pour : signal d'entrée, fill d'ordre, stop-loss touché, TP1 (partial close + breakeven), TP2, clôture, heartbeat (toutes les 10 min), changement d'allocation.
+
+### Listing Bot — Notifications spécifiques
+```
+🔔 Nouveau listing détecté : NEWUSDC
+🆕🛒 BUY LISTING – NEWUSDC
+  Entrée: 1.2345 | Momentum: +42.3%
+  SL: 1.1357 (-8.0%) | TP: 1.6049 (+30.0%)
+  Size: 405.00 NEW ($500.00)
+```
+Alertes listing : détection (🔔), momentum skip (⏭️), entrée (🆕🛒), OCO SL/TP (💸/💰), re-arm OCO (🔄), force close horizon (⏰), heartbeat (💓).

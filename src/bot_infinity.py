@@ -76,6 +76,11 @@ from src.firebase.trade_logger import (
     cleanup_old_events as fb_cleanup_events,
 )
 from src.firebase.client import add_document as fb_add_document
+from src.runtime_overrides import (
+    get_heartbeat_override_seconds,
+    get_pending_runtime_actions,
+    mark_runtime_action_status,
+)
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 
@@ -413,6 +418,7 @@ class InfinityBot:
 
         # Heartbeat
         self._last_heartbeat: float = 0.0
+        self._heartbeat_seconds: int = INF_HEARTBEAT_SECONDS
         self._tick_count: int = 0
 
         # Daily cleanup / snapshot
@@ -539,6 +545,7 @@ class InfinityBot:
 
     def _tick(self) -> None:
         """Un cycle de polling — itère sur toutes les paires."""
+        self._apply_runtime_actions()
         self._tick_count += 1
 
         for symbol, ctx in self._pairs.items():
@@ -549,6 +556,51 @@ class InfinityBot:
 
         self._maybe_heartbeat()
         self._maybe_daily_tasks()
+
+    def _apply_runtime_actions(self) -> None:
+        actions = get_pending_runtime_actions("infinity")
+        if not actions:
+            return
+
+        for action in actions:
+            action_id = str(action.get("_id", ""))
+            kind = str(action.get("action", "")).lower().strip()
+            symbol = str(action.get("symbol", "")).upper().strip()
+
+            try:
+                if kind == "close":
+                    targets = list(self._pairs.keys()) if symbol == "ALL" else [symbol]
+                    closed = 0
+                    for sym in targets:
+                        ctx = self._pairs.get(sym)
+                        if not ctx:
+                            continue
+                        if ctx.cycle.phase == "WAITING" or ctx.cycle.size_remaining <= 0:
+                            continue
+                        ticker = self._data.get_ticker(sym)
+                        if not ticker:
+                            continue
+                        self._close_cycle(ctx, ticker.last_price, InfinityExitReason.OVERRIDE_SELL)
+                        closed += 1
+
+                    mark_runtime_action_status(action_id, "done", f"manual close appliqué ({closed})")
+                    try:
+                        fb_log_event(
+                            "MANUAL_ACTION",
+                            {"action": "close", "symbol": symbol, "count": closed},
+                            exchange="revolut-infinity",
+                        )
+                    except Exception:
+                        pass
+                    continue
+
+                if kind in ("set_sl", "set_tp"):
+                    mark_runtime_action_status(action_id, "failed", "non supporté pour infinity")
+                    continue
+
+                mark_runtime_action_status(action_id, "failed", "action inconnue")
+            except Exception as e:
+                mark_runtime_action_status(action_id, "failed", f"erreur: {e}")
 
     def _tick_pair(self, ctx: PairContext) -> None:
         """Tick pour une paire spécifique."""
@@ -1548,7 +1600,12 @@ class InfinityBot:
 
     def _maybe_heartbeat(self) -> None:
         now = time.time()
-        if now - self._last_heartbeat < INF_HEARTBEAT_SECONDS:
+        heartbeat_seconds = get_heartbeat_override_seconds("infinity", INF_HEARTBEAT_SECONDS)
+        if heartbeat_seconds != self._heartbeat_seconds:
+            self._heartbeat_seconds = heartbeat_seconds
+            logger.info("💓 [INFINITY] Heartbeat runtime override: %ss", self._heartbeat_seconds)
+
+        if now - self._last_heartbeat < self._heartbeat_seconds:
             return
         self._last_heartbeat = now
 

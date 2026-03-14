@@ -1,0 +1,16 @@
+[Unit]
+Description=TradeX Telegram Command Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/tradex
+EnvironmentFile=/opt/tradex/.env
+ExecStart=/opt/tradex/.venv/bin/python -m src.telegram_command_bot
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

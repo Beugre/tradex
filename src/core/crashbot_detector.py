@@ -48,6 +48,8 @@ class CrashConfig:
     # Step trailing
     trail_step_pct: float = 0.005    # TP extend par step = +0.5%
     trail_trigger_buffer: float = 0.0005  # trigger trail à TP - 0.05% de entry
+    trail_sl_lock_ratio: float = 0.80      # SL lock à 80% du move entry→TP précédent
+    trail_tp_mult: float = 1.20            # TP suivant = 120% du move entry→TP précédent
 
     # Cooldown
     cooldown_bars: int = 6           # Cooldown entre deux trades sur la même paire
@@ -151,8 +153,8 @@ def compute_step_trailing(
     cfg: CrashConfig,
 ) -> tuple[float, float, int]:
     """
-    Calcule le step trailing : quand le prix approche du TP, verrouille SL au TP
-    et étend le TP par step_pct.
+    Calcule le step trailing : quand le prix atteint 98% du TP,
+    recalcule SL/TP sur le move entry→TP précédent.
 
     Returns:
         (new_sl, new_tp, new_trail_steps)
@@ -163,11 +165,15 @@ def compute_step_trailing(
 
     safety = 0
     while safety < 50:
-        trigger = new_tp - entry_price * cfg.trail_trigger_buffer
+        trigger = new_tp * 0.98
         if current_price >= trigger:
-            # Verrouiller SL au TP actuel, étendre TP
-            new_sl = new_tp
-            new_tp += entry_price * cfg.trail_step_pct
+            old_tp = new_tp
+            move = old_tp - entry_price
+            if move <= 0:
+                break
+
+            new_sl = entry_price + move * cfg.trail_sl_lock_ratio
+            new_tp = entry_price + move * cfg.trail_tp_mult
             new_steps += 1
             safety += 1
         else:

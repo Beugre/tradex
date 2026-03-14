@@ -59,6 +59,11 @@ from src.firebase.trade_logger import (
     log_daily_snapshot as fb_log_daily_snapshot,
     cleanup_old_events as fb_cleanup_events,
 )
+from src.runtime_overrides import (
+    get_heartbeat_override_seconds,
+    get_pending_runtime_actions,
+    mark_runtime_action_status,
+)
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 
@@ -328,6 +333,7 @@ class LondonBreakoutBot:
 
         # Heartbeat
         self._last_heartbeat: float = 0.0
+        self._heartbeat_seconds: int = LON_HEARTBEAT_SECONDS
         self._tick_count: int = 0
 
         # Daily cleanup / snapshot
@@ -481,6 +487,7 @@ class LondonBreakoutBot:
 
     def _tick(self) -> None:
         """Un cycle de polling — itère sur toutes les paires."""
+        self._apply_runtime_actions()
         self._tick_count += 1
 
         for symbol in LON_TRADING_PAIRS:
@@ -491,6 +498,88 @@ class LondonBreakoutBot:
 
         self._maybe_heartbeat()
         self._maybe_daily_tasks()
+
+    def _apply_runtime_actions(self) -> None:
+        actions = get_pending_runtime_actions("london")
+        if not actions:
+            return
+
+        for action in actions:
+            action_id = str(action.get("_id", ""))
+            kind = str(action.get("action", "")).lower().strip()
+            symbol = str(action.get("symbol", "")).upper().strip()
+            value = action.get("value")
+
+            try:
+                if kind == "close":
+                    targets = list(self._positions.keys()) if symbol == "ALL" else [symbol]
+                    closed = 0
+                    for sym in targets:
+                        pos = self._positions.get(sym)
+                        if not pos:
+                            continue
+                        ticker = self._data.get_ticker(sym)
+                        if not ticker:
+                            continue
+                        self._close_position(sym, ticker.last_price, "Manual close (Telegram)", partial=False)
+                        closed += 1
+                    mark_runtime_action_status(action_id, "done", f"manual close appliqué ({closed})")
+                    try:
+                        fb_log_event("MANUAL_ACTION", {
+                            "action": "close",
+                            "symbol": symbol,
+                            "count": closed,
+                        }, exchange="revolut-london")
+                    except Exception:
+                        pass
+                    continue
+
+                if kind in ("set_sl", "set_tp"):
+                    pos = self._positions.get(symbol)
+                    if not pos:
+                        mark_runtime_action_status(action_id, "failed", "position introuvable")
+                        continue
+
+                    try:
+                        price = float(str(value))
+                    except Exception:
+                        mark_runtime_action_status(action_id, "failed", "price invalide")
+                        continue
+                    if price <= 0:
+                        mark_runtime_action_status(action_id, "failed", "price invalide")
+                        continue
+
+                    ticker = self._data.get_ticker(symbol)
+                    if not ticker:
+                        mark_runtime_action_status(action_id, "failed", "ticker indisponible")
+                        continue
+
+                    if kind == "set_sl":
+                        if price >= ticker.last_price:
+                            mark_runtime_action_status(action_id, "failed", "SL doit être sous le prix")
+                            continue
+                        pos.sl_price = price
+                    else:
+                        if price <= ticker.last_price:
+                            mark_runtime_action_status(action_id, "failed", "TP doit être au-dessus du prix")
+                            continue
+                        pos.tp2_price = price
+
+                    self._save_state()
+                    mark_runtime_action_status(action_id, "done", f"{kind} appliqué")
+                    try:
+                        fb_log_event("MANUAL_ACTION", {
+                            "action": kind,
+                            "symbol": symbol,
+                            "value": price,
+                        }, symbol=symbol, exchange="revolut-london")
+                    except Exception:
+                        pass
+                    continue
+
+                mark_runtime_action_status(action_id, "failed", "action inconnue")
+            except Exception as e:
+                mark_runtime_action_status(action_id, "failed", f"erreur: {e}")
 
     def _process_symbol(self, symbol: str) -> None:
         """Traite un symbole : check prix (SL/TP) + check nouvelles bougies."""
@@ -1297,7 +1386,12 @@ class LondonBreakoutBot:
 
     def _maybe_heartbeat(self) -> None:
         now = time.time()
-        if now - self._last_heartbeat < LON_HEARTBEAT_SECONDS:
+        heartbeat_seconds = get_heartbeat_override_seconds("london", LON_HEARTBEAT_SECONDS)
+        if heartbeat_seconds != self._heartbeat_seconds:
+            self._heartbeat_seconds = heartbeat_seconds
+            logger.info("💓 [LONDON] Heartbeat runtime override: %ss", self._heartbeat_seconds)
+
+        if now - self._last_heartbeat < self._heartbeat_seconds:
             return
         self._last_heartbeat = now
 

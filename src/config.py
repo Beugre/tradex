@@ -117,6 +117,12 @@ BINANCE_CRASHBOT_TRAIL_STEP_PCT: float = float(
 BINANCE_CRASHBOT_TRAIL_TRIGGER_BUFFER: float = float(
     os.getenv("BINANCE_CRASHBOT_TRAIL_TRIGGER_BUFFER", "0.0005")
 )
+BINANCE_CRASHBOT_TRAIL_SL_LOCK_RATIO: float = float(
+    os.getenv("BINANCE_CRASHBOT_TRAIL_SL_LOCK_RATIO", "0.80")
+)
+BINANCE_CRASHBOT_TRAIL_TP_MULT: float = float(
+    os.getenv("BINANCE_CRASHBOT_TRAIL_TP_MULT", "1.20")
+)
 BINANCE_CRASHBOT_COOLDOWN_BARS: int = int(
     os.getenv("BINANCE_CRASHBOT_COOLDOWN_BARS", "6")
 )
@@ -154,6 +160,9 @@ CRASHBOT_HEARTBEAT_TELEGRAM_SECONDS: int = int(
 # ── Telegram ───────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_COMMANDS_POLL_SECONDS: int = int(
+    os.getenv("TELEGRAM_COMMANDS_POLL_SECONDS", "2")
+)
 
 # ── Paramètres de trading ──────────────────────────────────────────────────────
 # Risque par stratégie
@@ -316,4 +325,53 @@ LON_VOL_MA_PERIOD: int = int(os.getenv("LON_VOL_MA_PERIOD", "20"))
 LON_BREAKEVEN_AFTER_TP1: bool = os.getenv(
     "LON_BREAKEVEN_AFTER_TP1", "true"
 ).lower() in ("true", "1", "yes")
+
+# ── Listing Bot (bot_binance_listing.py) ─────────────────────────────────────
+# Fallback statique si DYNAMIC_ALLOCATION_ENABLED=false
+LISTING_ALLOCATED_BALANCE: float = float(
+    os.getenv("LISTING_ALLOCATED_BALANCE", "500")
+)
+# Part fixe du listing dans l'allocator (défaut 30%)
+LISTING_CAPITAL_PCT: float = float(
+    os.getenv("LISTING_CAPITAL_PCT", "0.30")
+)
+LISTING_MAX_SLOTS: int = int(
+    os.getenv("LISTING_MAX_SLOTS", "3")
+)
+LISTING_MAX_ALLOC_USD: float = float(
+    os.getenv("LISTING_MAX_ALLOC_USD", "5000")
+)
+LISTING_SL_INIT_PCT: float = float(
+    os.getenv("LISTING_SL_INIT_PCT", "0.08")
+)
+LISTING_TP_INIT_PCT: float = float(
+    os.getenv("LISTING_TP_INIT_PCT", "0.30")
+)
+LISTING_TP_NEAR_RATIO: float = float(
+    os.getenv("LISTING_TP_NEAR_RATIO", "0.98")
+)
+LISTING_SL2_TP1_MULT: float = float(
+    os.getenv("LISTING_SL2_TP1_MULT", "0.769")
+)
+LISTING_TP2_TP1_MULT: float = float(
+    os.getenv("LISTING_TP2_TP1_MULT", "1.538")
+)
+LISTING_MOMENTUM_PCT: float = float(
+    os.getenv("LISTING_MOMENTUM_PCT", "0.30")
+)
+LISTING_MOMENTUM_WINDOW_MIN: int = int(
+    os.getenv("LISTING_MOMENTUM_WINDOW_MIN", "1")
+)
+LISTING_HORIZON_DAYS: int = int(
+    os.getenv("LISTING_HORIZON_DAYS", "7")
+)
+LISTING_POLL_INTERVAL_SECONDS: int = int(
+    os.getenv("LISTING_POLL_INTERVAL_SECONDS", "10")
+)
+LISTING_EXCHANGEINFO_CACHE_SECONDS: int = int(
+    os.getenv("LISTING_EXCHANGEINFO_CACHE_SECONDS", "30")
+)
+LISTING_HEARTBEAT_SECONDS: int = int(
+    os.getenv("LISTING_HEARTBEAT_SECONDS", "600")
+)
 

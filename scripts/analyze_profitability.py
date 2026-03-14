@@ -21,6 +21,7 @@ BOT_LABELS = {
     "crashbot": "CrashBot (DipBuy)",
     "infinity": "Infinity",
     "london-breakout": "London Breakout",
+    "listing": "Listing Event",
     "trend-legacy": "Trend Legacy",
     "unknown": "UNKNOWN",
 }
@@ -38,6 +39,8 @@ def classify_bot(trade: dict) -> str:
 
     if strategy == "CRASHBOT" or exchange == "binance-crashbot":
         return "crashbot"
+    if strategy == "LISTING" or exchange == "binance-listing":
+        return "listing"
     if strategy == "INFINITY" or exchange == "revolut-infinity":
         return "infinity"
     if strategy == "LONDON" or exchange == "revolut-london":

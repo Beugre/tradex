@@ -69,6 +69,11 @@ from src.firebase.trade_logger import (
     get_daily_pnl as fb_get_daily_pnl,
 )
 from src.core.allocator import compute_allocation, compute_profit_factor
+from src.runtime_overrides import (
+    get_heartbeat_override_seconds,
+    get_pending_runtime_actions,
+    mark_runtime_action_status,
+)
 
 
 # ── Logging ────────────────────────────────────────────────────────────────────
@@ -188,6 +193,8 @@ class TradeXBinanceCrashBot:
 
         # Heartbeat
         self._last_heartbeat_time: float = 0.0
+        self._heartbeat_seconds: int = config.HEARTBEAT_INTERVAL_SECONDS
+        self._telegram_heartbeat_seconds: int = config.CRASHBOT_HEARTBEAT_TELEGRAM_SECONDS
         self._cycle_count: int = 0
         self._last_h4_ts: int = 0
 
@@ -222,6 +229,8 @@ class TradeXBinanceCrashBot:
             atr_period=config.BINANCE_CRASHBOT_ATR_PERIOD,
             trail_step_pct=config.BINANCE_CRASHBOT_TRAIL_STEP_PCT,
             trail_trigger_buffer=config.BINANCE_CRASHBOT_TRAIL_TRIGGER_BUFFER,
+            trail_sl_lock_ratio=config.BINANCE_CRASHBOT_TRAIL_SL_LOCK_RATIO,
+            trail_tp_mult=config.BINANCE_CRASHBOT_TRAIL_TP_MULT,
             cooldown_bars=config.BINANCE_CRASHBOT_COOLDOWN_BARS,
         )
 
@@ -271,10 +280,11 @@ class TradeXBinanceCrashBot:
                 config.BINANCE_CRASHBOT_MAX_POSITIONS,
             )
         logger.info(
-            "   TP: +%.1f%% | SL: %.1f×ATR | Trail step: +%.2f%%",
+            "   TP: +%.1f%% | SL: %.1f×ATR | Trail trigger: 98%% TP | SL lock: %.0f%% move | TP mult: ×%.2f",
             self._crash_cfg.tp_pct * 100,
             self._crash_cfg.atr_sl_mult,
-            self._crash_cfg.trail_step_pct * 100,
+            self._crash_cfg.trail_sl_lock_ratio * 100,
+            self._crash_cfg.trail_tp_mult,
         )
         allocated = self._allocated_balance
         logger.info(
@@ -490,8 +500,10 @@ class TradeXBinanceCrashBot:
                 regime=result.regime.value,
                 crash_pct=result.crash_pct,
                 trail_pct=result.trail_pct,
+                listing_pct=result.listing_pct,
                 crash_balance=result.crash_balance,
                 trail_balance=result.trail_balance,
+                listing_balance=result.listing_balance,
                 total_balance=total_balance,
                 trail_pf=trail_pf,
                 trail_trades=trail_trades,
@@ -502,12 +514,14 @@ class TradeXBinanceCrashBot:
             logger.info("📊 ALLOCATION DYNAMIQUE — %s", result.regime.value.upper())
             logger.info("   %s", result.reason)
             logger.info(
-                "   Total: $%.0f | Crash: %.0f%% → $%.0f | Trail: %.0f%% → $%.0f",
+                "   Total: $%.0f | Crash: %.0f%% → $%.0f | Trail: %.0f%% → $%.0f | Listing: %.0f%% → $%.0f",
                 total_balance,
                 result.crash_pct * 100,
                 result.crash_balance,
                 result.trail_pct * 100,
                 result.trail_balance,
+                result.listing_pct * 100,
+                result.listing_balance,
             )
             logger.info("═" * 50)
 
@@ -663,6 +677,7 @@ class TradeXBinanceCrashBot:
 
     def _tick(self) -> None:
         """Un cycle de polling."""
+        self._apply_runtime_actions()
         self._check_new_h4_candle()
         self._check_oco_fills()
         self._check_kill_switch_month_reset()
@@ -676,6 +691,102 @@ class TradeXBinanceCrashBot:
 
         self._cycle_count += 1
         self._maybe_heartbeat()
+
+    def _apply_runtime_actions(self) -> None:
+        actions = get_pending_runtime_actions("crashbot")
+        if not actions:
+            return
+
+        for action in actions:
+            action_id = str(action.get("_id", ""))
+            kind = str(action.get("action", "")).lower().strip()
+            symbol = str(action.get("symbol", "")).upper().strip()
+            value = action.get("value")
+
+            try:
+                if kind == "close":
+                    targets = list(self._positions.keys()) if symbol == "ALL" else [symbol]
+                    closed = 0
+                    for sym in targets:
+                        pos = self._positions.get(sym)
+                        if not pos or pos.status not in (PositionStatus.OPEN, PositionStatus.ZERO_RISK):
+                            continue
+                        ticker = self._data.get_ticker(sym)
+                        if not ticker:
+                            continue
+                        self._close_crash_position(sym, ticker.last_price, "Manual close (Telegram)")
+                        closed += 1
+                    mark_runtime_action_status(action_id, "done", f"manual close appliqué ({closed})")
+                    try:
+                        fb_log_event("MANUAL_ACTION", {
+                            "action": "close",
+                            "symbol": symbol,
+                            "count": closed,
+                        }, exchange=EXCHANGE_NAME)
+                    except Exception:
+                        pass
+                    continue
+
+                if kind in ("set_sl", "set_tp"):
+                    pos = self._positions.get(symbol)
+                    if not pos or pos.status not in (PositionStatus.OPEN, PositionStatus.ZERO_RISK):
+                        mark_runtime_action_status(action_id, "failed", "position introuvable")
+                        continue
+
+                    try:
+                        price = float(value)
+                    except Exception:
+                        mark_runtime_action_status(action_id, "failed", "price invalide")
+                        continue
+                    if price <= 0:
+                        mark_runtime_action_status(action_id, "failed", "price invalide")
+                        continue
+
+                    ticker = self._data.get_ticker(symbol)
+                    if not ticker:
+                        mark_runtime_action_status(action_id, "failed", "ticker indisponible")
+                        continue
+
+                    if kind == "set_sl":
+                        if price >= ticker.last_price:
+                            mark_runtime_action_status(action_id, "failed", "SL doit être sous le prix")
+                            continue
+                        self._trail_sl[symbol] = price
+                        pos.sl_price = price
+                        pos.zero_risk_sl = price
+                    else:
+                        if price <= ticker.last_price:
+                            mark_runtime_action_status(action_id, "failed", "TP doit être au-dessus du prix")
+                            continue
+                        self._trail_tp[symbol] = price
+                        pos.tp_price = price
+
+                    oco_info = self._oco_orders.get(symbol)
+                    if oco_info and not self.dry_run:
+                        try:
+                            self._client.cancel_order_list(symbol=symbol, order_list_id=oco_info.get("order_list_id"))
+                        except Exception:
+                            pass
+                        self._oco_orders.pop(symbol, None)
+
+                    if not self.dry_run:
+                        self._place_oco(symbol, pos)
+
+                    self._save_state()
+                    mark_runtime_action_status(action_id, "done", f"{kind} appliqué")
+                    try:
+                        fb_log_event("MANUAL_ACTION", {
+                            "action": kind,
+                            "symbol": symbol,
+                            "value": price,
+                        }, symbol=symbol, exchange=EXCHANGE_NAME)
+                    except Exception:
+                        pass
+                    continue
+
+                mark_runtime_action_status(action_id, "failed", "action inconnue")
+            except Exception as e:
+                mark_runtime_action_status(action_id, "failed", f"erreur: {e}")
 
     def _check_new_h4_candle(self) -> None:
         """Détecte une nouvelle bougie H4 — optimisé : skip si pas encore l'heure."""
@@ -884,6 +995,11 @@ class TradeXBinanceCrashBot:
         tp_price_str = self._client.format_price(symbol, current_tp)
         sl_stop_str = self._client.format_price(symbol, current_sl)
 
+        try:
+            placed_tp = float(tp_price_str)
+        except (TypeError, ValueError):
+            placed_tp = current_tp
+
         # SL limit = stop price - offset (SELL side → vendre un peu en-dessous du stop)
         offset = config.BINANCE_SL_LIMIT_OFFSET_PCT
         sl_limit = current_sl * (1 - offset)
@@ -916,6 +1032,9 @@ class TradeXBinanceCrashBot:
             self._oco_orders[symbol] = {
                 "order_list_id": order_list_id,
             }
+
+            # Synchroniser le TP interne sur le TP réellement placé (arrondi exchange)
+            self._trail_tp[symbol] = placed_tp
 
             logger.info(
                 "[%s] 🎯 OCO placé | TP=%s | SL_stop=%s SL_limit=%s | listId=%s",
@@ -1632,7 +1751,17 @@ class TradeXBinanceCrashBot:
     def _maybe_heartbeat(self) -> None:
         """Heartbeat étendu — log + Telegram périodique."""
         now = time.time()
-        if now - self._last_heartbeat_time < config.HEARTBEAT_INTERVAL_SECONDS:
+        heartbeat_seconds = get_heartbeat_override_seconds("crashbot", config.HEARTBEAT_INTERVAL_SECONDS)
+        if heartbeat_seconds != self._heartbeat_seconds:
+            self._heartbeat_seconds = heartbeat_seconds
+            logger.info("💓 [CRASHBOT] Heartbeat runtime override: %ss", self._heartbeat_seconds)
+
+        telegram_seconds = get_heartbeat_override_seconds("crashbot", config.CRASHBOT_HEARTBEAT_TELEGRAM_SECONDS)
+        if telegram_seconds != self._telegram_heartbeat_seconds:
+            self._telegram_heartbeat_seconds = telegram_seconds
+            logger.info("💬 [CRASHBOT] Telegram heartbeat runtime override: %ss", self._telegram_heartbeat_seconds)
+
+        if now - self._last_heartbeat_time < self._heartbeat_seconds:
             return
         self._last_heartbeat_time = now
 
@@ -1720,7 +1849,7 @@ class TradeXBinanceCrashBot:
         )
 
         # Heartbeat Telegram (moins fréquent)
-        if now - self._last_telegram_heartbeat >= config.CRASHBOT_HEARTBEAT_TELEGRAM_SECONDS:
+        if now - self._last_telegram_heartbeat >= self._telegram_heartbeat_seconds:
             self._last_telegram_heartbeat = now
             self._telegram.notify_crashbot_heartbeat(
                 equity=allocated_equity,

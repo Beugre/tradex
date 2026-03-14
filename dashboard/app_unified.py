@@ -442,6 +442,7 @@ if auto_refresh:
 BOTS = {
     "binance": {"label": "Binance Range", "icon": "🟡", "exchange": "binance", "color": "#f0b90b", "max_pos": 3},
     "crashbot": {"label": "Binance CrashBot", "icon": "💥", "exchange": "binance-crashbot", "color": "#7c4dff", "max_pos": 5},
+    "listing": {"label": "Binance Listing", "icon": "🆕", "exchange": "binance-listing", "color": "#00e676", "max_pos": 3},
     "infinity": {"label": "Revolut Infinity", "icon": "♾️", "exchange": "revolut-infinity", "color": "#ff6d00", "max_pos": 6},
     "london": {"label": "Revolut London", "icon": "🇬🇧", "exchange": "revolut-london", "color": "#2196f3", "max_pos": 1},
 }
@@ -513,6 +514,13 @@ def _render_kpis(stats: dict, n_open: int, max_pos: int):
         col4.metric("⚖️ Profit Factor", f"{pf:.2f}" if pf != float("inf") else "∞")
         col5.metric("🏦 Equity", f"${stats['equity']:,.2f}" if stats['equity'] else "—")
         col6.metric("📂 Positions", f"{n_open}/{max_pos}")
+    else:
+        col1.metric("💰 P&L Total", "—")
+        col2.metric("📈 Trades", "0")
+        col3.metric("🎯 Win Rate", "—")
+        col4.metric("⚖️ Profit Factor", "—")
+        col5.metric("🏦 Equity", "—")
+        col6.metric("📂 Positions", f"{n_open}/{max_pos}")
 
 
 def _render_last_heartbeat_cockpit(bot_key: str, d: dict, max_pos: int):
@@ -568,13 +576,6 @@ def _render_last_heartbeat_cockpit(bot_key: str, d: dict, max_pos: int):
         lines.append(f"🟡 Range bot · paires suivies `{pairs_count}`")
 
     st.markdown("\n\n".join(lines))
-    else:
-        col1.metric("💰 P&L Total", "—")
-        col2.metric("📈 Trades", "0")
-        col3.metric("🎯 Win Rate", "—")
-        col4.metric("⚖️ Profit Factor", "—")
-        col5.metric("🏦 Equity", "—")
-        col6.metric("📂 Positions", f"{n_open}/{max_pos}")
 
 
 def _render_positions(open_df: pd.DataFrame, bot_type: str = "range", exchange: str = "binance"):
@@ -1126,7 +1127,7 @@ def _render_advanced_stats(closed: pd.DataFrame):
 
 def render_overview():
     st.title("🏠 Overview")
-    st.caption("Vue consolidée des 4 bots de trading")
+    st.caption("Vue consolidée des 5 bots de trading")
 
     # ── Allocation (source de vérité pour l'equity par bot) ──────────────
     alloc = _fetch_current_allocation()
@@ -1136,6 +1137,7 @@ def render_overview():
     if alloc:
         alloc_equity["binance"] = alloc.get("trail_balance")
         alloc_equity["crashbot"] = alloc.get("crash_balance")
+        alloc_equity["listing"] = alloc.get("listing_balance")
         alloc_equity["infinity"] = None  # Infinity est sur Revolut, pas dans l'allocation Binance
         alloc_equity["london"] = None    # London est sur Revolut, pas dans l'allocation Binance
 
@@ -1203,7 +1205,7 @@ def render_overview():
             AllocationRegime.AGGRESSIVE: "#4caf50",
         }
 
-        a1, a2, a3, a4, a5 = st.columns(5)
+        a1, a2, a3, a4, a5, a6 = st.columns(6)
         a1.metric(
             "Régime",
             f"{regime_emoji.get(regime, '')} {regime.value.upper()}",
@@ -1220,16 +1222,26 @@ def render_overview():
             f"${alloc['trail_balance']:,.0f}",
             f"{alloc['trail_pct']*100:.0f}%",
         )
+        listing_bal = alloc.get('listing_balance', 0) or 0
+        listing_pct_val = alloc.get('listing_pct', 0.30) or 0.30
+        a6.metric(
+            "🆕 Listing",
+            f"${listing_bal:,.0f}",
+            f"{listing_pct_val*100:.0f}%",
+        )
 
-        # Gauge visuelle
+        # Gauge visuelle 3 segments
+        crash_pct_val = alloc.get('crash_pct', 0.65) or 0.65
+        trail_pct_val = alloc.get('trail_pct', 0.05) or 0.05
         fig_alloc = go.Figure(go.Bar(
-            x=[alloc["crash_pct"] * 100, alloc["trail_pct"] * 100],
-            y=["Allocation", "Allocation"],
+            x=[crash_pct_val * 100, trail_pct_val * 100, listing_pct_val * 100],
+            y=["Allocation", "Allocation", "Allocation"],
             orientation="h",
-            marker_color=["#7c4dff", "#f0b90b"],
+            marker_color=["#7c4dff", "#f0b90b", "#00e676"],
             text=[
-                f"CrashBot {alloc['crash_pct']*100:.0f}% (${alloc['crash_balance']:,.0f})",
-                f"Trail Range {alloc['trail_pct']*100:.0f}% (${alloc['trail_balance']:,.0f})",
+                f"CrashBot {crash_pct_val*100:.0f}% (${alloc['crash_balance']:,.0f})",
+                f"Trail {trail_pct_val*100:.0f}% (${alloc['trail_balance']:,.0f})",
+                f"Listing {listing_pct_val*100:.0f}% (${listing_bal:,.0f})",
             ],
             textposition="inside",
             textfont=dict(color="white", size=14),
@@ -1412,6 +1424,45 @@ def render_binance_crashbot():
 
     _render_exit_reasons(d["closed"])
     _render_trailing_stats(d["closed"])
+    st.divider()
+
+    _render_last_trades(d["closed"])
+    _render_pnl_distribution(d["closed"], cfg["color"], "exit_reason")
+    st.divider()
+
+    _render_advanced_stats(d["closed"])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB: Binance Listing Event
+# ══════════════════════════════════════════════════════════════════════════════
+
+def render_binance_listing():
+    d = all_data["listing"]
+    cfg = BOTS["listing"]
+
+    st.title(f"{cfg['icon']} Binance Listing Event")
+    st.caption(
+        "Achat automatique des nouveaux listings USDC — momentum ≥30%, OCO dynamique, horizon 7j"
+    )
+    _render_last_heartbeat_cockpit("listing", d, cfg["max_pos"])
+    st.divider()
+    _render_kpis(d["stats"], len(d["open"]), cfg["max_pos"])
+    st.divider()
+
+    _render_positions(d["open"], bot_type="listing")
+    _render_alerts(d["open"], cfg["exchange"])
+    st.divider()
+
+    _render_equity_curve(d["snapshots"], d["closed"], cfg["color"])
+    _render_cumulative_pnl(d["closed"], cfg["color"])
+    st.divider()
+
+    _render_daily_pnl(d["closed"])
+    _render_pair_performance(d["closed"])
+    st.divider()
+
+    _render_exit_reasons(d["closed"])
     st.divider()
 
     _render_last_trades(d["closed"])
@@ -1793,10 +1844,11 @@ def render_revolut_infinity():
 #  Main — Tabs
 # ══════════════════════════════════════════════════════════════════════════════
 
-tab_overview, tab_binance, tab_crashbot, tab_infinity, tab_london = st.tabs([
+tab_overview, tab_binance, tab_crashbot, tab_listing, tab_infinity, tab_london = st.tabs([
     "🏠 Overview",
     "🟡 Binance Range",
     "💥 Binance CrashBot",
+    "🆕 Binance Listing",
     "♾️ Revolut Infinity",
     "🇬🇧 Revolut London",
 ])
@@ -1809,6 +1861,9 @@ with tab_binance:
 
 with tab_crashbot:
     render_binance_crashbot()
+
+with tab_listing:
+    render_binance_listing()
 
 with tab_infinity:
     render_revolut_infinity()

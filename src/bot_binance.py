@@ -75,6 +75,11 @@ from src.firebase.trade_logger import (
     log_allocation as fb_log_allocation,
 )
 from src.core.allocator import compute_allocation, compute_profit_factor
+from src.runtime_overrides import (
+    get_heartbeat_override_seconds,
+    get_pending_runtime_actions,
+    mark_runtime_action_status,
+)
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 
@@ -174,6 +179,7 @@ class TradeXBinanceBot:
 
         # Heartbeat
         self._last_heartbeat_time: float = 0.0
+        self._heartbeat_seconds: int = config.HEARTBEAT_INTERVAL_SECONDS
         self._cycle_count: int = 0
 
         # Log on-change
@@ -399,6 +405,7 @@ class TradeXBinanceBot:
 
     def _tick(self) -> None:
         """Un cycle de polling."""
+        self._apply_runtime_actions()
         self._check_new_h4_candle()
         self._check_oco_fills()
         self._maybe_recompute_allocation()
@@ -414,6 +421,104 @@ class TradeXBinanceBot:
 
         self._cycle_count += 1
         self._maybe_heartbeat()
+
+    def _apply_runtime_actions(self) -> None:
+        actions = get_pending_runtime_actions("range")
+        if not actions:
+            return
+
+        for action in actions:
+            action_id = str(action.get("_id", ""))
+            kind = str(action.get("action", "")).lower().strip()
+            symbol = str(action.get("symbol", "")).upper().strip()
+            value = action.get("value")
+
+            try:
+                if kind == "close":
+                    targets = list(self._positions.keys()) if symbol == "ALL" else [symbol]
+                    closed = 0
+                    for sym in targets:
+                        pos = self._positions.get(sym)
+                        if not pos or pos.status not in (PositionStatus.OPEN, PositionStatus.ZERO_RISK):
+                            continue
+                        ticker = self._data.get_ticker(sym)
+                        if not ticker:
+                            continue
+                        self._close_position_market(sym, ticker.last_price, "Manual close (Telegram)")
+                        closed += 1
+                    msg = f"manual close appliqué ({closed})"
+                    mark_runtime_action_status(action_id, "done", msg)
+                    try:
+                        fb_log_event("MANUAL_ACTION", {
+                            "action": "close",
+                            "symbol": symbol,
+                            "count": closed,
+                        }, exchange=EXCHANGE_NAME)
+                    except Exception:
+                        pass
+                    continue
+
+                if kind in ("set_sl", "set_tp"):
+                    pos = self._positions.get(symbol)
+                    if not pos or pos.status not in (PositionStatus.OPEN, PositionStatus.ZERO_RISK):
+                        mark_runtime_action_status(action_id, "failed", "position introuvable")
+                        continue
+
+                    try:
+                        price = float(value)
+                    except Exception:
+                        mark_runtime_action_status(action_id, "failed", "price invalide")
+                        continue
+                    if price <= 0:
+                        mark_runtime_action_status(action_id, "failed", "price invalide")
+                        continue
+
+                    ticker = self._data.get_ticker(symbol)
+                    if not ticker:
+                        mark_runtime_action_status(action_id, "failed", "ticker indisponible")
+                        continue
+
+                    if kind == "set_sl":
+                        if price >= ticker.last_price:
+                            mark_runtime_action_status(action_id, "failed", "SL doit être sous le prix")
+                            continue
+                        pos.sl_price = price
+                    else:
+                        if price <= ticker.last_price:
+                            mark_runtime_action_status(action_id, "failed", "TP doit être au-dessus du prix")
+                            continue
+                        pos.tp_price = price
+
+                    if pos.tp_price is None or pos.tp_price <= 0:
+                        mark_runtime_action_status(action_id, "failed", "TP manquant")
+                        continue
+
+                    oco_info = self._oco_orders.get(symbol)
+                    if oco_info and not self.dry_run:
+                        try:
+                            self._client.cancel_order_list(symbol=symbol, order_list_id=oco_info.get("order_list_id"))
+                        except Exception:
+                            pass
+                        self._oco_orders.pop(symbol, None)
+
+                    if not self.dry_run:
+                        self._place_oco(symbol, pos)
+
+                    self._save_state()
+                    mark_runtime_action_status(action_id, "done", f"{kind} appliqué")
+                    try:
+                        fb_log_event("MANUAL_ACTION", {
+                            "action": kind,
+                            "symbol": symbol,
+                            "value": price,
+                        }, symbol=symbol, exchange=EXCHANGE_NAME)
+                    except Exception:
+                        pass
+                    continue
+
+                mark_runtime_action_status(action_id, "failed", "action inconnue")
+            except Exception as e:
+                mark_runtime_action_status(action_id, "failed", f"erreur: {e}")
 
     def _check_oco_fills(self) -> None:
         """Vérifie si des OCO ont été exécutés (TP ou SL atteint)."""
@@ -1544,8 +1649,10 @@ class TradeXBinanceBot:
                 regime=result.regime.value,
                 crash_pct=result.crash_pct,
                 trail_pct=result.trail_pct,
+                listing_pct=result.listing_pct,
                 crash_balance=result.crash_balance,
                 trail_balance=result.trail_balance,
+                listing_balance=result.listing_balance,
                 total_balance=total_balance,
                 trail_pf=trail_pf,
                 trail_trades=trail_trades,
@@ -1556,12 +1663,14 @@ class TradeXBinanceBot:
             logger.info("📊 ALLOCATION DYNAMIQUE — %s", result.regime.value.upper())
             logger.info("   %s", result.reason)
             logger.info(
-                "   Total: $%.0f | Trail: %.0f%% → $%.0f | Crash: %.0f%% → $%.0f",
+                "   Total: $%.0f | Trail: %.0f%% → $%.0f | Crash: %.0f%% → $%.0f | Listing: %.0f%% → $%.0f",
                 total_balance,
                 result.trail_pct * 100,
                 result.trail_balance,
                 result.crash_pct * 100,
                 result.crash_balance,
+                result.listing_pct * 100,
+                result.listing_balance,
             )
             logger.info("═" * 50)
 
@@ -1705,7 +1814,12 @@ class TradeXBinanceBot:
 
     def _maybe_heartbeat(self) -> None:
         now = time.time()
-        if now - self._last_heartbeat_time < config.HEARTBEAT_INTERVAL_SECONDS:
+        heartbeat_seconds = get_heartbeat_override_seconds("range", config.HEARTBEAT_INTERVAL_SECONDS)
+        if heartbeat_seconds != self._heartbeat_seconds:
+            self._heartbeat_seconds = heartbeat_seconds
+            logger.info("💓 [RANGE] Heartbeat runtime override: %ss", self._heartbeat_seconds)
+
+        if now - self._last_heartbeat_time < self._heartbeat_seconds:
             return
         self._last_heartbeat_time = now
 

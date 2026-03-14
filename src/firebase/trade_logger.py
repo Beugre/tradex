@@ -56,6 +56,12 @@ _BOT_META_BY_STRATEGY: dict[str, dict[str, str]] = {
         "exchange_venue": "revolut",
         "exchange_key": "revolut-london",
     },
+    "LISTING": {
+        "bot_id": "listing",
+        "bot_label": "Listing Event",
+        "exchange_venue": "binance",
+        "exchange_key": "binance-listing",
+    },
     "TREND": {
         "bot_id": "trend-legacy",
         "bot_label": "Trend Legacy",
@@ -558,8 +564,22 @@ def get_daily_pnl(exchange: str, date: str | None = None) -> tuple[float, int]:
     daily_pnl = 0.0
     daily_trades = 0
     for t in trades:
-        closed_at = t.get("closed_at", "")
-        if closed_at.startswith(date):
+        closed_at = t.get("closed_at")
+        is_same_day = False
+
+        if isinstance(closed_at, datetime):
+            dt = closed_at
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
+            is_same_day = dt.strftime("%Y-%m-%d") == date
+        elif isinstance(closed_at, str):
+            is_same_day = closed_at.startswith(date)
+        elif closed_at is not None:
+            is_same_day = str(closed_at).startswith(date)
+
+        if is_same_day:
             pnl = t.get("pnl_net_usd")
             if pnl is not None:
                 daily_pnl += float(pnl)
@@ -615,8 +635,10 @@ def log_allocation(
     regime: str,
     crash_pct: float,
     trail_pct: float,
+    listing_pct: float,
     crash_balance: float,
     trail_balance: float,
+    listing_balance: float,
     total_balance: float,
     trail_pf: float,
     trail_trades: int,
@@ -631,8 +653,10 @@ def log_allocation(
         "regime": regime,
         "crash_pct": crash_pct,
         "trail_pct": trail_pct,
+        "listing_pct": listing_pct,
         "crash_balance": crash_balance,
         "trail_balance": trail_balance,
+        "listing_balance": listing_balance,
         "total_balance": total_balance,
         "trail_pf": trail_pf,
         "trail_trades": trail_trades,
@@ -642,8 +666,8 @@ def log_allocation(
     doc_id = add_document("allocation", data, doc_id="current")
     if doc_id:
         logger.info(
-            "🔥 Allocation loggée: %s — Crash $%.0f / Trail $%.0f (total $%.0f)",
-            regime, crash_balance, trail_balance, total_balance,
+            "🔥 Allocation loggée: %s — Crash $%.0f / Trail $%.0f / Listing $%.0f (total $%.0f)",
+            regime, crash_balance, trail_balance, listing_balance, total_balance,
         )
     else:
         logger.warning("⚠️ Impossible de logger l'allocation dans Firebase")
