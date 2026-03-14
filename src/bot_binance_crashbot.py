@@ -467,6 +467,10 @@ class TradeXBinanceCrashBot:
 
         Si DYNAMIC_ALLOCATION_ENABLED=false → garde le fallback statique.
         Sinon → requête Firebase pour le PF Trail Range 90j → compute_allocation().
+
+        Si le ratio d'allocation change → recalibrer le kill-switch
+        (month_start_equity) proportionnellement pour ne pas déclencher un faux
+        drawdown dû au changement d'allocation.
         """
         if not config.DYNAMIC_ALLOCATION_ENABLED:
             logger.info(
@@ -475,6 +479,8 @@ class TradeXBinanceCrashBot:
             )
             self._last_allocation_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             return
+
+        old_pct = self._allocation_pct  # ratio avant recalcul
 
         try:
             # Solde réel Binance (USDC + valeur des positions)
@@ -494,6 +500,27 @@ class TradeXBinanceCrashBot:
             self._allocated_balance = result.crash_balance
             self._allocation_pct = result.crash_pct
             self._last_allocation_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+            # ── Kill-switch : recalibrer si l'allocation a changé ──
+            new_pct = self._allocation_pct
+            if (
+                old_pct > 0
+                and abs(new_pct - old_pct) > 0.01  # changement > 1 point
+                and self._month_start_equity > 0
+            ):
+                ratio = new_pct / old_pct
+                old_start = self._month_start_equity
+                self._month_start_equity = round(self._month_start_equity * ratio, 2)
+                self._month_peak_equity = round(self._month_peak_equity * ratio, 2)
+                logger.info(
+                    "📊 Kill-switch recalibré: allocation %.0f%% → %.0f%% | "
+                    "month_start $%.0f → $%.0f",
+                    old_pct * 100, new_pct * 100,
+                    old_start, self._month_start_equity,
+                )
+                self._kill_switch_active = False
+                self._dd_warning_sent = False
+                self._save_bot_state()
 
             # Persister dans Firebase pour le dashboard
             fb_log_allocation(
