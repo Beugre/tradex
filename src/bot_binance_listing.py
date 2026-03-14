@@ -961,14 +961,10 @@ class TradeXBinanceListingBot:
         try:
             fb_log_heartbeat(
                 exchange=EXCHANGE_NAME,
-                equity=equity,
+                total_equity=equity,
+                total_risk_pct=0.0,
+                pairs_count=len(self._known_symbols),
                 open_positions=n_positions,
-                metadata={
-                    "listings_detected": self._listings_detected,
-                    "listings_traded": self._listings_traded,
-                    "listings_skipped": self._listings_skipped_momentum,
-                    "known_symbols": len(self._known_symbols),
-                },
             )
         except Exception:
             logger.exception("Firebase heartbeat échoué")
@@ -1164,9 +1160,15 @@ class TradeXBinanceListingBot:
             logger.exception("Erreur sauvegarde skipped_symbols")
 
     def _load_positions(self) -> None:
-        """Charge les positions ouvertes."""
+        """Charge les positions ouvertes depuis le fichier JSON d'état."""
         try:
-            state = self._store.load()
+            state_path = self._store._path
+            if not state_path.exists():
+                logger.info("Pas de fichier d'état listing — démarrage à vide")
+                self._positions = {}
+                return
+            with open(state_path, "r") as f:
+                state = _json.load(f)
             self._positions = state.get("positions", {})
             logger.info("Positions chargées: %d", len(self._positions))
         except Exception:
