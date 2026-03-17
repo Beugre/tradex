@@ -71,17 +71,29 @@ ssh "$VPS_HOST" << 'REMOTE'
     # Permissions
     sudo chown -R tradex:tradex /opt/tradex
 
-    # Redémarrer le service
-    sudo systemctl restart tradex
+    # Redémarrer tous les services actifs (sauf le legacy 'tradex' qui est désactivé)
+    SERVICES="tradex-binance tradex-binance-crashbot tradex-infinity tradex-london tradex-dca tradex-dashboard-unified"
+    for svc in $SERVICES; do
+        if sudo systemctl is-enabled --quiet "$svc" 2>/dev/null; then
+            sudo systemctl restart "$svc"
+            echo "   ✅ $svc redémarré"
+        else
+            echo "   ⏭️  $svc (disabled, skip)"
+        fi
+    done
 
-    # Vérifier le statut
-    sleep 2
-    if sudo systemctl is-active --quiet tradex; then
-        echo "   ✅ TradeX redémarré avec succès"
-    else
-        echo "   ❌ Erreur au démarrage — voir: sudo journalctl -u tradex -n 20"
-        exit 1
-    fi
+    # Vérifier après 3 secondes
+    sleep 3
+    FAILED=0
+    for svc in $SERVICES; do
+        if sudo systemctl is-enabled --quiet "$svc" 2>/dev/null; then
+            if ! sudo systemctl is-active --quiet "$svc"; then
+                echo "   ❌ $svc FAILED — voir: sudo journalctl -u $svc -n 20"
+                FAILED=1
+            fi
+        fi
+    done
+    [ "$FAILED" -eq 1 ] && exit 1
 REMOTE
 
 echo ""
@@ -89,5 +101,5 @@ echo "════════════════════════�
 echo "  ✅ Déploiement terminé !"
 echo "══════════════════════════════════════════════════"
 echo ""
-echo "  Voir les logs : ssh $VPS_HOST 'sudo journalctl -u tradex -f'"
+echo "  Voir les logs : ssh $VPS_HOST 'sudo journalctl -u tradex-dca -f'"
 echo ""
