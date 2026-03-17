@@ -11,7 +11,7 @@
 | **Listing Bot** | Binance (USDC) | Listing event + momentum filter + OCO dynamique | 1m (détection) | Auto-discovery nouveaux USDC |
 | **Infinity** | Revolut X (USD) | DCA inversé multi-paires (trailing high → achat → vente paliers) | H4 | BTC, AAVE, XLM, ADA, DOT, LTC |
 | **London Breakout** | Revolut X (USD) | Session breakout (range 08-16 UTC → breakout LONG) | H4 | BTC, ETH, SOL, BNB, LINK, ADA, DOT, AVAX |
-| **DCA RSI** | Revolut X (USD) | DCA quotidien RSI-based (BTC 80% + ETH 20%) + crash reserve | Daily | BTC, ETH |
+| **DCA RSI v2** | Revolut X (USD) | DCA quotidien RSI + MVRV progressif + régime MA200 + spending caps + crash reserve | Daily | BTC, ETH |
 
 - **Langage** : Python 3.10+ (VPS), Python 3.12+ (dev local)
 - **Notifications** : Telegram Bot API (entrée, SL, TP, clôture, heartbeat)
@@ -27,7 +27,7 @@ src/
 │   ├── allocator.py            # Allocation dynamique Crash/Trail basée sur le Profit Factor
 │   ├── crashbot_detector.py    # Détection de dip / crash pour CrashBot
 │   ├── flow_detector.py        # Analyse de flux pour aide à la décision
-│   ├── dca_engine.py           # Logique DCA RSI-based (brackets RSI, crash reserve, budget tracking)
+│   ├── dca_engine.py           # Logique DCA RSI v2 (brackets RSI, MVRV progressif, régime MA200, spending caps, DCADecision)
 │   ├── infinity_engine.py      # Logique DCA inversé (paliers achat/vente, RSI gate, trailing high)
 │   ├── indicators.py           # Indicateurs techniques réutilisables (EMA, SMA, ATR, RSI, rolling min/max)
 │   ├── listing_detector.py     # Détection de nouveaux listings Binance + momentum filter + OCO levels
@@ -53,7 +53,7 @@ src/
 ├── bot_binance_listing.py      # Bot Listing — Binance (listing event, momentum filter, OCO dynamique)
 ├── bot_infinity.py             # Bot Infinity — Revolut X (DCA inversé multi-paires, maker-only)
 ├── bot_london.py               # Bot London Breakout — Revolut X (session breakout H4, maker-only)
-├── bot_dca.py                  # Bot DCA RSI — Revolut X (achat quotidien BTC/ETH, maker-only)
+├── bot_dca.py                  # Bot DCA RSI v2 — Revolut X (achat quotidien BTC/ETH, MVRV+regime+caps, maker-only)
 ├── bot.py                      # (legacy) Bot Dow Theory Revolut X
 └── config.py                   # Chargement .env (clés API, paramètres de risque)
 dashboard/
@@ -173,27 +173,35 @@ Les bots **Infinity** et **London Breakout** partagent le même compte Revolut X
 - **Cooldown** : 2 bougies H4 (8h) entre deux trades sur la même paire
 - **Backtest** : PF 1.98, +530$/an, DD 13.3%, walk-forward stable (PF test 1.57-1.76)
 
-## Bot 6 — DCA RSI (`bot_dca.py`)
+## Bot 6 — DCA RSI v2 (`bot_dca.py`)
 
 - **Exchange** : Revolut X (USD) — Maker 0% fees, Taker 0.09%
-- **Stratégie** : DCA quotidien RSI-based + MVRV deep-value + crash reserve :
-  1. **MVRV check** (CoinMetrics Community API, `CapMVRVCur`, cache 1h) :
-     - MVRV < 1.0 ET RSI ≤ 70 → bracket DEEP_VALUE (×5 du montant de base)
-  2. **RSI daily BTC** détermine le montant d’achat :
+- **Stratégie** : DCA quotidien RSI + MVRV progressif + régime MA200 + spending caps + crash reserve :
+  1. **RSI daily BTC** détermine le montant de base :
      - RSI > 70 → $0 (skip)
      - 55 < RSI ≤ 70 → $30 (×1)
      - 45 ≤ RSI ≤ 55 → $60 (×2)
      - RSI < 45 → $90 (×3)
-     - MVRV < 1.0 → $150 (×5, override si RSI ≤ 70)
-  3. **Allocation** : 90% BTC / 10% ETH
-  4. **Crash reserve** : Si BTC chute de -15%/-25%/-35% du rolling high 90j → achats bonus 100% BTC ($500/$700/$800)
-  5. **Reset crash levels** : Quand prix remonte au-dessus de -10% du high
+  2. **MVRV progressif** (CoinMetrics Community API, `CapMVRVCur`, cache 1h) :
+     - MVRV ≥ 1.0 → ×1.0 (pas de boost)
+     - 0.85 ≤ MVRV < 1.0 → ×1.5 (sous-évaluation modérée)
+     - MVRV < 0.85 → ×2.0 (sous-évaluation profonde)
+  3. **Spending caps** : $1,500/mois, $400/semaine (montant réduit si cap atteint)
+  4. **Boost cooldown** : 24h entre deux boosts MVRV (seuil $120)
+  5. **Régime MA200** → allocation BTC/ETH dynamique :
+     - NORMAL (prix > MA200) : BTC 90% / ETH 10%
+     - WEAK (prix < MA200) : BTC 95% / ETH 5%
+     - CAPITULATION (prix < MA200 × 0.85) : BTC 100% / ETH 0%
+  6. **Crash reserve** : Si BTC chute de -15%/-25%/-35% du crash anchor (max high90j/high180j) → achats bonus % de réserve (25%/35%/40%), BTC only
+  7. **Reset crash levels** : Quand prix remonte au-dessus de -10% du high
+  8. **Observabilité** : `DCADecision` dataclass loggé dans Firebase (events) à chaque achat
 - **Paires** : BTC-USD, ETH-USD
 - **Capital** : Dynamique — `DCA_CAPITAL_PCT` du solde Revolut X (défaut 100%), réparti 85% DCA actif / 15% crash reserve
+- **Plafond journalier** : $150 (`DCA_MAX_DAILY_BUY`)
 - **Exécution** : 1× par jour à 10:00 UTC, maker-only (0% fees)
 - **Polling** : Toutes les 60s
-- **Heartbeat** : Toutes les 10 minutes (inclut MVRV)
-- **State** : Persisté dans `data/state_dca.json`
+- **Heartbeat** : Toutes les 10 minutes (inclut MVRV ×mult, régime, MA200, caps mois/sem)
+- **State** : Persisté dans `data/state_dca.json` (rétrocompatible v1 → v2 via `.get()` defaults)
 - **On-chain** : `src/core/onchain.py` — fetch MVRV via CoinMetrics (gratuit, sans clé API)
 
 ### Money management (`risk_manager.py`)
@@ -307,16 +315,23 @@ LON_POLLING_SECONDS=30
 LON_HEARTBEAT_SECONDS=600
 LON_MAKER_WAIT_SECONDS=60
 
-# ── DCA RSI (bot_dca.py) ──
+# ── DCA RSI v2 (bot_dca.py) ──
 DCA_CAPITAL_PCT=1.0
 DCA_ACTIVE_PCT=0.85
 DCA_CRASH_PCT=0.15
 DCA_BASE_DAILY_AMOUNT=30.0
+DCA_MAX_DAILY_BUY=150.0
 DCA_BTC_ALLOC=0.90
 DCA_ETH_ALLOC=0.10
 DCA_RSI_OVERBOUGHT=70.0
 DCA_RSI_WARM=55.0
 DCA_RSI_NEUTRAL_LOW=45.0
+DCA_MONTHLY_CAP=1500.0
+DCA_WEEKLY_CAP=400.0
+DCA_BOOST_COOLDOWN_HOURS=24.0
+DCA_BOOST_THRESHOLD=120.0
+DCA_REGIME_FILTER_ENABLED=true
+DCA_CAPITULATION_THRESHOLD=0.85
 DCA_CRASH_DROP_1=0.15
 DCA_CRASH_DROP_2=0.25
 DCA_CRASH_DROP_3=0.35
@@ -325,13 +340,16 @@ DCA_CRASH_AMOUNT_2=700
 DCA_CRASH_AMOUNT_3=800
 DCA_CRASH_BTC_ONLY=true
 DCA_CRASH_LOOKBACK_DAYS=90
+DCA_CRASH_ANCHOR_LONG_DAYS=180
 DCA_EXECUTION_HOUR_UTC=10
 DCA_POLLING_SECONDS=60
 DCA_HEARTBEAT_SECONDS=600
 DCA_MAKER_WAIT_SECONDS=60
 DCA_MVRV_ENABLED=true
 DCA_MVRV_THRESHOLD=1.0
-DCA_MVRV_MULTIPLIER=5.0
+DCA_MVRV_DEEP_THRESHOLD=0.85
+DCA_MVRV_MULT_LOW=1.5
+DCA_MVRV_MULT_DEEP=2.0
 ```
 
 ## APIs – Points clés
@@ -420,7 +438,7 @@ Dashboard Streamlit avec 7 onglets :
 4. **Listing** : Positions listing, listings détectés, momentum stats, equity
 5. **Infinity** : Cycles par paire, V-curves, paliers achat/vente
 6. **London** : Positions Revolut X, sessions détectées, breakouts
-7. **DCA** : RSI courant, budget restant (DCA actif + crash reserve), cumul BTC/ETH, PnL latent
+7. **DCA** : RSI courant, régime (NORMAL/WEAK/CAPITULATION), MVRV (×mult), MA200, spending caps (mois/sem), budget restant (DCA actif + crash reserve), cumul BTC/ETH, PnL latent, Analytics (MVRV chart, decision log, distribution brackets/régime)
 
 L'Overview affiche la répartition dynamique du capital Binance entre CrashBot et Trail Range, et la répartition statique 80/20 du capital Revolut X entre Infinity et London Breakout.
 
@@ -446,11 +464,12 @@ Alertes envoyées pour : signal d'entrée, fill d'ordre, stop-loss touché, TP1 
 ```
 Alertes listing : détection (🔔), momentum skip (⏭️), entrée (🆕🛒), OCO SL/TP (💸/💰), re-arm OCO (🔄), force close horizon (⏰), heartbeat (💓).
 
-### DCA RSI — Notifications spécifiques
+### DCA RSI v2 — Notifications spécifiques
 ```
 📈 DCA BUY – BTC-USD
-  RSI: 48.2 (NEUTRAL) | Montant: $24.00
-  Prix: 67,500.00 | Size: 0.00035556 BTC
+  RSI: 48.2 (NEUTRAL) | MVRV: 0.92 (×1.5) | Regime: NORMAL
+  Montant: $81.00 | Prix: 67,500.00 | Size: 0.00120000 BTC
   Budget restant: $3,876.00 / $4,200.00
+  Caps: mois $960/$1500 | sem $260/$400
 ```
-Alertes DCA : achat quotidien (📈), crash reserve trigger (🚨📈), heartbeat (💓📈 avec RSI, budget restant, cumul BTC/ETH).
+Alertes DCA : achat quotidien (📈), crash reserve trigger (🚨📈), heartbeat (💓📈 avec RSI, MVRV ×mult, régime, MA200, caps mois/sem, budget restant, cumul BTC/ETH).
