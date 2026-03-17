@@ -29,7 +29,7 @@ echo "📦 Synchronisation des fichiers..."
 # --filter='P' : protection supplémentaire contre --delete-excluded
 # ⚠ Ne JAMAIS lancer rsync manuellement sans ces flags (risque d'écraser data/, .env, .venv)
 rsync -avz --delete \
-    --filter='P .venv/' \
+    --filter='P .venv*/' \
     --filter='P data/' \
     --filter='P logs/' \
     --filter='P .env' \
@@ -37,7 +37,7 @@ rsync -avz --delete \
     --filter='P public.pem' \
     --filter='P firebase-credentials.json' \
     --filter='P firebase-key.json' \
-    --exclude='.venv' \
+    --exclude='.venv*' \
     --exclude='__pycache__' \
     --exclude='.git' \
     --exclude='.pytest_cache' \

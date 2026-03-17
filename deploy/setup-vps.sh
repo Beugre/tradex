@@ -44,7 +44,7 @@ mkdir -p "$APP_DIR/logs"
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 if [ -f "$SCRIPT_DIR/src/bot.py" ]; then
     echo "   Copie des fichiers depuis $SCRIPT_DIR..."
-    rsync -a --exclude='.venv' --exclude='__pycache__' --exclude='.git' \
+    rsync -a --exclude='.venv*' --exclude='__pycache__' --exclude='.git' \
           --exclude='.pytest_cache' --exclude='*.pyc' --exclude='test_*.py' \
             --exclude='private.pem' --exclude='public.pem' \
           --exclude='preflight.py' \
