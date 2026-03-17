@@ -451,14 +451,15 @@ class TradeXBinanceBot:
                         closed += 1
                     msg = f"manual close appliqué ({closed})"
                     mark_runtime_action_status(action_id, "done", msg)
-                    try:
-                        fb_log_event("MANUAL_ACTION", {
-                            "action": "close",
-                            "symbol": symbol,
-                            "count": closed,
-                        }, exchange=EXCHANGE_NAME)
-                    except Exception:
-                        pass
+                    if not self.dry_run:
+                        try:
+                            fb_log_event("MANUAL_ACTION", {
+                                "action": "close",
+                                "symbol": symbol,
+                                "count": closed,
+                            }, exchange=EXCHANGE_NAME)
+                        except Exception:
+                            pass
                     continue
 
                 if kind in ("set_sl", "set_tp"):
@@ -509,14 +510,15 @@ class TradeXBinanceBot:
 
                     self._save_state()
                     mark_runtime_action_status(action_id, "done", f"{kind} appliqué")
-                    try:
-                        fb_log_event("MANUAL_ACTION", {
-                            "action": kind,
-                            "symbol": symbol,
-                            "value": price,
-                        }, symbol=symbol, exchange=EXCHANGE_NAME)
-                    except Exception:
-                        pass
+                    if not self.dry_run:
+                        try:
+                            fb_log_event("MANUAL_ACTION", {
+                                "action": kind,
+                                "symbol": symbol,
+                                "value": price,
+                            }, symbol=symbol, exchange=EXCHANGE_NAME)
+                        except Exception:
+                            pass
                     continue
 
                 mark_runtime_action_status(action_id, "failed", "action inconnue")
@@ -702,10 +704,11 @@ class TradeXBinanceBot:
             )
             if trend.direction == TrendDirection.NEUTRAL:
                 self._neutral_transitions += 1
-            try:
-                fb_log_trend_change(symbol, old_direction, trend.direction, exchange=EXCHANGE_NAME)
-            except Exception:
-                pass
+            if not self.dry_run:
+                try:
+                    fb_log_trend_change(symbol, old_direction, trend.direction, exchange=EXCHANGE_NAME)
+                except Exception:
+                    pass
 
             # Sortie forcée si position RANGE et tendance confirmée
             if (
@@ -923,26 +926,27 @@ class TradeXBinanceBot:
             f"  TP: {_fmt(old_tp)} → {_fmt(new_tp)} ({tp_ratio*100:.0f}% du range)\n"
             f"  Prix: {_fmt(price)}"
         )
-        try:
-            fb_log_event(
-                event_type="step_trail_swap",
-                data={
-                    "step": position.trailing_steps,
-                    "sl_ratio_pct": sl_ratio * 100,
-                    "tp_ratio_pct": tp_ratio * 100,
-                    "old_tp": old_tp,
-                    "new_tp": new_tp,
-                    "old_sl": old_sl,
-                    "new_sl": new_sl,
-                    "price": price,
-                    "range_high": rng_high,
-                    "range_low": rng_low,
-                },
-                symbol=symbol,
-                exchange=EXCHANGE_NAME,
-            )
-        except Exception:
-            pass
+        if not self.dry_run:
+            try:
+                fb_log_event(
+                    event_type="step_trail_swap",
+                    data={
+                        "step": position.trailing_steps,
+                        "sl_ratio_pct": sl_ratio * 100,
+                        "tp_ratio_pct": tp_ratio * 100,
+                        "old_tp": old_tp,
+                        "new_tp": new_tp,
+                        "old_sl": old_sl,
+                        "new_sl": new_sl,
+                        "price": price,
+                        "range_high": rng_high,
+                        "range_low": rng_low,
+                    },
+                    symbol=symbol,
+                    exchange=EXCHANGE_NAME,
+                )
+            except Exception:
+                pass
 
     # ═══════════════════════════════════════════════════════════════════════════
     # TRAIL@TP – Swap d'OCO quand le prix approche du TP
@@ -1057,22 +1061,23 @@ class TradeXBinanceBot:
             f"  TP: {_fmt(old_tp)} → {_fmt(new_tp)}\n"
             f"  Prix: {_fmt(price)}"
         )
-        try:
-            fb_log_event(
-                event_type="trail_oco_swap",
-                data={
-                    "step": position.trailing_steps,
-                    "old_tp": old_tp,
-                    "new_tp": new_tp,
-                    "old_sl": old_sl,
-                    "new_sl": new_sl,
-                    "price": price,
-                },
-                symbol=symbol,
-                exchange=EXCHANGE_NAME,
-            )
-        except Exception:
-            pass
+        if not self.dry_run:
+            try:
+                fb_log_event(
+                    event_type="trail_oco_swap",
+                    data={
+                        "step": position.trailing_steps,
+                        "old_tp": old_tp,
+                        "new_tp": new_tp,
+                        "old_sl": old_sl,
+                        "new_sl": new_sl,
+                        "price": price,
+                    },
+                    symbol=symbol,
+                    exchange=EXCHANGE_NAME,
+                )
+            except Exception:
+                pass
 
         # 6. Mise à jour du document trade Firebase (trailing_active, steps, SL, TP)
         if position.firebase_trade_id:
@@ -1387,21 +1392,21 @@ class TradeXBinanceBot:
                 fiat_balance, 1.0,
             ) if fiat_balance > 0 else 0.0
 
-            fb_id = log_trade_opened(
-                position=position,
-                fill_type="taker",  # MARKET = taker
-                maker_wait_seconds=0,
-                risk_pct=risk_pct,
-                risk_amount_usd=risk_amount,
-                fiat_balance=fiat_balance,
-                current_equity=current_equity,
-                portfolio_risk_before=portfolio_risk,
-                exchange=EXCHANGE_NAME,
-                dry_run=self.dry_run,
-            )
-            if fb_id:
-                position.firebase_trade_id = fb_id
-                self._save_state()
+            if not self.dry_run:
+                fb_id = log_trade_opened(
+                    position=position,
+                    fill_type="taker",  # MARKET = taker
+                    maker_wait_seconds=0,
+                    risk_pct=risk_pct,
+                    risk_amount_usd=risk_amount,
+                    fiat_balance=fiat_balance,
+                    current_equity=current_equity,
+                    portfolio_risk_before=portfolio_risk,
+                    exchange=EXCHANGE_NAME,
+                )
+                if fb_id:
+                    position.firebase_trade_id = fb_id
+                    self._save_state()
         except Exception as e:
             logger.warning("🔥 Firebase log_trade_opened échoué: %s", e)
 
@@ -1541,7 +1546,7 @@ class TradeXBinanceBot:
         # Reset close failures
         if symbol in self._close_failures:
             del self._close_failures[symbol]
-            if position.firebase_trade_id:
+            if not self.dry_run and position.firebase_trade_id:
                 try:
                     fb_clear_close_failure(position.firebase_trade_id)
                 except Exception:
@@ -1584,7 +1589,7 @@ class TradeXBinanceBot:
         equity_after = self._calculate_allocated_equity()
 
         # Firebase
-        if position.firebase_trade_id:
+        if not self.dry_run and position.firebase_trade_id:
             try:
                 log_trade_closed(
                     trade_id=position.firebase_trade_id,
@@ -1791,10 +1796,11 @@ class TradeXBinanceBot:
             logger.warning("[%s] 🔄 %s → %s", symbol, old_direction.value, new_trend.direction.value)
             if new_trend.direction == TrendDirection.NEUTRAL:
                 self._neutral_transitions += 1
-            try:
-                fb_log_trend_change(symbol, old_direction, new_trend.direction, exchange=EXCHANGE_NAME)
-            except Exception:
-                pass
+            if not self.dry_run:
+                try:
+                    fb_log_trend_change(symbol, old_direction, new_trend.direction, exchange=EXCHANGE_NAME)
+                except Exception:
+                    pass
 
         if new_trend.direction == TrendDirection.NEUTRAL:
             self._update_range(symbol, new_trend)
@@ -1889,17 +1895,17 @@ class TradeXBinanceBot:
             neutral_count, len(self._trends), self._neutral_transitions,
         )
 
-        try:
-            fb_log_heartbeat(
-                open_positions=len(open_pos),
-                total_equity=allocated_equity,
-                total_risk_pct=0,
-                pairs_count=len(self._trading_pairs),
-                exchange=EXCHANGE_NAME,
-                dry_run=self.dry_run,
-            )
-        except Exception:
-            pass
+        if not self.dry_run:
+            try:
+                fb_log_heartbeat(
+                    open_positions=len(open_pos),
+                    total_equity=allocated_equity,
+                    total_risk_pct=0,
+                    pairs_count=len(self._trading_pairs),
+                    exchange=EXCHANGE_NAME,
+                )
+            except Exception:
+                pass
 
         # Telegram heartbeat
         try:

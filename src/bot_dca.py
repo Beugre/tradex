@@ -570,10 +570,11 @@ class DCABot:
         )
 
         # Log decision to Firebase
-        try:
-            fb_log_event("DCA_DECISION", decision.to_dict(), exchange="revolut-dca")
-        except Exception:
-            pass
+        if not self.dry_run:
+            try:
+                fb_log_event("DCA_DECISION", decision.to_dict(), exchange="revolut-dca")
+            except Exception:
+                pass
 
         if total_amount <= 0:
             logger.info("   ⏭️ Pas d'achat aujourd'hui: %s", reason)
@@ -1113,40 +1114,41 @@ class DCABot:
         )
 
         # Firebase heartbeat (use log_event directly — DCA has different data shape)
-        try:
-            fb_log_event(
-                "DCA_HEARTBEAT",
-                {
-                    "rsi": rsi,
-                    "bracket": bracket.value,
-                    "total_spent": total_spent,
-                    "pnl": pnl,
-                    "pnl_pct": pnl_pct,
-                    "btc_accumulated": self._state.total_btc_bought,
-                    "eth_accumulated": self._state.total_eth_bought,
-                    "dca_remaining": summary["dca_remaining"],
-                    "crash_remaining": summary["crash_remaining"],
-                    "mvrv": mvrv,
-                    "mvrv_mult": mvrv_mult,
-                    "regime": self._regime.value,
-                    "ma200": self._ma200,
-                    "equity": portfolio_value,
-                    "rolling_high": rolling_high,
-                    "drop_pct": drop_pct,
-                    "crash_levels_triggered": self._state.crash_levels_triggered,
-                    "buy_count": self._state.buy_count,
-                    "crash_buy_count": self._state.crash_buy_count,
-                    "days_active": self._state.total_days_active,
-                    "monthly_spent": self._state.monthly_spent,
-                    "monthly_cap": self._cfg.monthly_cap,
-                    "weekly_spent": self._state.weekly_spent,
-                    "weekly_cap": self._cfg.weekly_cap,
-                },
-                symbol="DCA",
-                exchange="revolut-dca",
-            )
-        except Exception:
-            pass
+        if not self.dry_run:
+            try:
+                fb_log_event(
+                    "DCA_HEARTBEAT",
+                    {
+                        "rsi": rsi,
+                        "bracket": bracket.value,
+                        "total_spent": total_spent,
+                        "pnl": pnl,
+                        "pnl_pct": pnl_pct,
+                        "btc_accumulated": self._state.total_btc_bought,
+                        "eth_accumulated": self._state.total_eth_bought,
+                        "dca_remaining": summary["dca_remaining"],
+                        "crash_remaining": summary["crash_remaining"],
+                        "mvrv": mvrv,
+                        "mvrv_mult": mvrv_mult,
+                        "regime": self._regime.value,
+                        "ma200": self._ma200,
+                        "equity": portfolio_value,
+                        "rolling_high": rolling_high,
+                        "drop_pct": drop_pct,
+                        "crash_levels_triggered": self._state.crash_levels_triggered,
+                        "buy_count": self._state.buy_count,
+                        "crash_buy_count": self._state.crash_buy_count,
+                        "days_active": self._state.total_days_active,
+                        "monthly_spent": self._state.monthly_spent,
+                        "monthly_cap": self._cfg.monthly_cap,
+                        "weekly_spent": self._state.weekly_spent,
+                        "weekly_cap": self._cfg.weekly_cap,
+                    },
+                    symbol="DCA",
+                    exchange="revolut-dca",
+                )
+            except Exception:
+                pass
 
     # ── Daily tasks ────────────────────────────────────────────────────────────
 

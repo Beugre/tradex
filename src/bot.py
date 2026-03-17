@@ -545,15 +545,16 @@ class TradeXBot:
         )
 
         # 🔥 Firebase heartbeat
-        try:
-            fb_log_heartbeat(
-                open_positions=len(open_positions),
-                total_equity=total_equity,
-                total_risk_pct=total_risk_pct / 100,
-                pairs_count=len(config.TRADING_PAIRS),
-            )
-        except Exception:
-            pass
+        if not self.dry_run:
+            try:
+                fb_log_heartbeat(
+                    open_positions=len(open_positions),
+                    total_equity=total_equity,
+                    total_risk_pct=total_risk_pct / 100,
+                    pairs_count=len(config.TRADING_PAIRS),
+                )
+            except Exception:
+                pass
 
         # Détail des positions ouvertes (seulement s'il y en a)
         for pos in open_positions:
@@ -685,10 +686,11 @@ class TradeXBot:
             )
             self._telegram.notify_trend_change(trend, old_direction)
             # 🔥 Firebase
-            try:
-                fb_log_trend_change(symbol, old_direction, trend.direction)
-            except Exception:
-                pass
+            if not self.dry_run:
+                try:
+                    fb_log_trend_change(symbol, old_direction, trend.direction)
+                except Exception:
+                    pass
 
             # ── Sortie forcée si position RANGE et tendance confirmée ──
             if (
@@ -1261,19 +1263,20 @@ class TradeXBot:
                 current_equity = get_total_equity(balances, crypto_tickers)
             except Exception:
                 current_equity = fiat_balance  # fallback
-            fb_id = log_trade_opened(
-                position=position,
-                fill_type=fill_type,
-                maker_wait_seconds=config.MAKER_WAIT_SECONDS,
-                risk_pct=risk_pct,
-                risk_amount_usd=risk_amount,
-                fiat_balance=fiat_balance,
-                current_equity=current_equity,
-                portfolio_risk_before=portfolio_risk,
-            )
-            if fb_id:
-                position.firebase_trade_id = fb_id
-                self._save_state()
+            if not self.dry_run:
+                fb_id = log_trade_opened(
+                    position=position,
+                    fill_type=fill_type,
+                    maker_wait_seconds=config.MAKER_WAIT_SECONDS,
+                    risk_pct=risk_pct,
+                    risk_amount_usd=risk_amount,
+                    fiat_balance=fiat_balance,
+                    current_equity=current_equity,
+                    portfolio_risk_before=portfolio_risk,
+                )
+                if fb_id:
+                    position.firebase_trade_id = fb_id
+                    self._save_state()
         except Exception as e:
             logger.warning("🔥 Firebase log_trade_opened échoué: %s", e)
 
@@ -1492,7 +1495,7 @@ class TradeXBot:
             )
             del self._close_failures[symbol]
             # 🔥 Firebase — clear le flag close_blocked
-            if position.firebase_trade_id:
+            if not self.dry_run and position.firebase_trade_id:
                 try:
                     fb_clear_close_failure(position.firebase_trade_id)
                 except Exception:
@@ -1600,7 +1603,7 @@ class TradeXBot:
             self._telegram.notify_sl_hit(position, actual_exit_price)
 
         # 🔥 Firebase — log clôture
-        if position.firebase_trade_id:
+        if not self.dry_run and position.firebase_trade_id:
             try:
                 log_trade_closed(
                     trade_id=position.firebase_trade_id,
@@ -1701,10 +1704,11 @@ class TradeXBot:
             )
             self._telegram.notify_trend_change(new_trend, old_direction)
             # 🔥 Firebase
-            try:
-                fb_log_trend_change(symbol, old_direction, new_trend.direction)
-            except Exception:
-                pass
+            if not self.dry_run:
+                try:
+                    fb_log_trend_change(symbol, old_direction, new_trend.direction)
+                except Exception:
+                    pass
 
         # ── Mise à jour du range pour Mean-Reversion ──
         if new_trend.direction == TrendDirection.NEUTRAL:

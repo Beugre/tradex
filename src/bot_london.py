@@ -525,14 +525,15 @@ class LondonBreakoutBot:
                         self._close_position(sym, ticker.last_price, "Manual close (Telegram)", partial=False)
                         closed += 1
                     mark_runtime_action_status(action_id, "done", f"manual close appliqué ({closed})")
-                    try:
-                        fb_log_event("MANUAL_ACTION", {
-                            "action": "close",
-                            "symbol": symbol,
-                            "count": closed,
-                        }, exchange="revolut-london")
-                    except Exception:
-                        pass
+                    if not self.dry_run:
+                        try:
+                            fb_log_event("MANUAL_ACTION", {
+                                "action": "close",
+                                "symbol": symbol,
+                                "count": closed,
+                            }, exchange="revolut-london")
+                        except Exception:
+                            pass
                     continue
 
                 if kind in ("set_sl", "set_tp"):
@@ -568,14 +569,15 @@ class LondonBreakoutBot:
 
                     self._save_state()
                     mark_runtime_action_status(action_id, "done", f"{kind} appliqué")
-                    try:
-                        fb_log_event("MANUAL_ACTION", {
-                            "action": kind,
-                            "symbol": symbol,
-                            "value": price,
-                        }, symbol=symbol, exchange="revolut-london")
-                    except Exception:
-                        pass
+                    if not self.dry_run:
+                        try:
+                            fb_log_event("MANUAL_ACTION", {
+                                "action": kind,
+                                "symbol": symbol,
+                                "value": price,
+                            }, symbol=symbol, exchange="revolut-london")
+                        except Exception:
+                            pass
                     continue
 
                 mark_runtime_action_status(action_id, "failed", "action inconnue")
@@ -697,20 +699,21 @@ class LondonBreakoutBot:
         )
 
         # Firebase : log TP1 partial close
-        try:
-            fb_log_event(
-                event_type="london_tp1",
-                data={
-                    "symbol": symbol,
-                    "price": price,
-                    "size": tp1_size,
-                    "pnl_usd": pnl_usd,
-                    "pnl_pct": pnl_pct,
-                },
-                symbol=symbol,
-            )
-        except Exception:
-            pass
+        if not self.dry_run:
+            try:
+                fb_log_event(
+                    event_type="london_tp1",
+                    data={
+                        "symbol": symbol,
+                        "price": price,
+                        "size": tp1_size,
+                        "pnl_usd": pnl_usd,
+                        "pnl_pct": pnl_pct,
+                    },
+                    symbol=symbol,
+                )
+            except Exception:
+                pass
 
     def _close_position(self, symbol: str, exit_price: float, reason: str, partial: bool = False) -> None:
         """Ferme une position (totale)."""
@@ -768,7 +771,7 @@ class LondonBreakoutBot:
         )
 
         # Firebase
-        if pos.firebase_trade_id:
+        if not self.dry_run and pos.firebase_trade_id:
             try:
                 fb_position = Position(
                     symbol=symbol,
@@ -1058,14 +1061,15 @@ class LondonBreakoutBot:
                     ft = result.get("fill_type", "unknown")
                     if ft == "no_fill":
                         logger.error("[%s] 🇬🇧 BUY: taker fallback échoué aussi — abandonné", symbol)
-                        try:
-                            fb_log_event(
-                                event_type="london_maker_no_fill",
-                                data={"price": current_price, "retries": MAX_MAKER_RETRIES},
-                                symbol=symbol,
-                            )
-                        except Exception:
-                            pass
+                        if not self.dry_run:
+                            try:
+                                fb_log_event(
+                                    event_type="london_maker_no_fill",
+                                    data={"price": current_price, "retries": MAX_MAKER_RETRIES},
+                                    symbol=symbol,
+                                )
+                            except Exception:
+                                pass
                         return
                     venue_order_id = result.get("venue_order_id", "unknown")
                     fill_type = "taker"
@@ -1132,21 +1136,21 @@ class LondonBreakoutBot:
                 strategy=StrategyType.LONDON,
                 tp_price=tp2_price,
             )
-            fb_id = log_trade_opened(
-                position=fb_position,
-                fill_type=fill_type,
-                maker_wait_seconds=LON_MAKER_WAIT_SECONDS,
-                risk_pct=LON_RISK_PCT,
-                risk_amount_usd=risk_amount,
-                fiat_balance=available,
-                current_equity=available,
-                portfolio_risk_before=0.0,
-                exchange="revolut-london",
-                dry_run=self.dry_run,
-            )
-            if fb_id:
-                pos.firebase_trade_id = fb_id
-                self._save_state()
+            if not self.dry_run:
+                fb_id = log_trade_opened(
+                    position=fb_position,
+                    fill_type=fill_type,
+                    maker_wait_seconds=LON_MAKER_WAIT_SECONDS,
+                    risk_pct=LON_RISK_PCT,
+                    risk_amount_usd=risk_amount,
+                    fiat_balance=available,
+                    current_equity=available,
+                    portfolio_risk_before=0.0,
+                    exchange="revolut-london",
+                )
+                if fb_id:
+                    pos.firebase_trade_id = fb_id
+                    self._save_state()
         except Exception as e:
             logger.warning("🔥 Firebase log_trade_opened échoué: %s", e)
 
@@ -1552,17 +1556,17 @@ class LondonBreakoutBot:
             logger.warning("Telegram heartbeat failed", exc_info=True)
 
         # Firebase heartbeat
-        try:
-            fb_log_heartbeat(
-                open_positions=len(self._positions),
-                total_equity=allocated,
-                total_risk_pct=0.0,
-                pairs_count=len(LON_TRADING_PAIRS),
-                exchange="revolut-london",
-                dry_run=self.dry_run,
-            )
-        except Exception:
-            pass
+        if not self.dry_run:
+            try:
+                fb_log_heartbeat(
+                    open_positions=len(self._positions),
+                    total_equity=allocated,
+                    total_risk_pct=0.0,
+                    pairs_count=len(LON_TRADING_PAIRS),
+                    exchange="revolut-london",
+                )
+            except Exception:
+                pass
 
     def _get_london_scoped_equity(self) -> float:
         """Equity scope London: USD + valorisation des positions London ouvertes.

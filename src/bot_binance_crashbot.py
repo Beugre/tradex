@@ -745,14 +745,15 @@ class TradeXBinanceCrashBot:
                         self._close_crash_position(sym, ticker.last_price, "Manual close (Telegram)")
                         closed += 1
                     mark_runtime_action_status(action_id, "done", f"manual close appliqué ({closed})")
-                    try:
-                        fb_log_event("MANUAL_ACTION", {
-                            "action": "close",
-                            "symbol": symbol,
-                            "count": closed,
-                        }, exchange=EXCHANGE_NAME)
-                    except Exception:
-                        pass
+                    if not self.dry_run:
+                        try:
+                            fb_log_event("MANUAL_ACTION", {
+                                "action": "close",
+                                "symbol": symbol,
+                                "count": closed,
+                            }, exchange=EXCHANGE_NAME)
+                        except Exception:
+                            pass
                     continue
 
                 if kind in ("set_sl", "set_tp"):
@@ -802,14 +803,15 @@ class TradeXBinanceCrashBot:
 
                     self._save_state()
                     mark_runtime_action_status(action_id, "done", f"{kind} appliqué")
-                    try:
-                        fb_log_event("MANUAL_ACTION", {
-                            "action": kind,
-                            "symbol": symbol,
-                            "value": price,
-                        }, symbol=symbol, exchange=EXCHANGE_NAME)
-                    except Exception:
-                        pass
+                    if not self.dry_run:
+                        try:
+                            fb_log_event("MANUAL_ACTION", {
+                                "action": kind,
+                                "symbol": symbol,
+                                "value": price,
+                            }, symbol=symbol, exchange=EXCHANGE_NAME)
+                        except Exception:
+                            pass
                     continue
 
                 mark_runtime_action_status(action_id, "failed", "action inconnue")
@@ -1323,21 +1325,21 @@ class TradeXBinanceCrashBot:
                 fiat_balance, 1.0,
             ) if fiat_balance > 0 else 0.0
 
-            fb_id = log_trade_opened(
-                position=position,
-                fill_type="taker",
-                maker_wait_seconds=0,
-                risk_pct=risk_pct,
-                risk_amount_usd=risk_amount,
-                fiat_balance=fiat_balance,
-                current_equity=equity,
-                portfolio_risk_before=portfolio_risk,
-                exchange=EXCHANGE_NAME,
-                dry_run=self.dry_run,
-            )
-            if fb_id:
-                position.firebase_trade_id = fb_id
-                self._save_state()
+            if not self.dry_run:
+                fb_id = log_trade_opened(
+                    position=position,
+                    fill_type="taker",
+                    maker_wait_seconds=0,
+                    risk_pct=risk_pct,
+                    risk_amount_usd=risk_amount,
+                    fiat_balance=fiat_balance,
+                    current_equity=equity,
+                    portfolio_risk_before=portfolio_risk,
+                    exchange=EXCHANGE_NAME,
+                )
+                if fb_id:
+                    position.firebase_trade_id = fb_id
+                    self._save_state()
         except Exception as e:
             logger.warning("🔥 Firebase log échoué: %s", e)
 
@@ -1505,17 +1507,18 @@ class TradeXBinanceCrashBot:
                             f"🚨 CRASHBOT Kill-Switch activé | Perf mois: {month_return:.1%} "
                             f"| Fermeture de toutes les positions"
                         )
-                        try:
-                            fb_log_event("KILL_SWITCH", {
-                                "equity": equity,
-                                "month_start_equity": self._month_start_equity,
-                                "month_peak_equity": self._month_peak_equity,
-                                "month_return_pct": round(month_return * 100, 2),
-                                "drawdown_pct": round(drawdown_pct, 2),
-                                "threshold_pct": config.BINANCE_CRASHBOT_KILL_PCT * 100,
-                            }, exchange=EXCHANGE_NAME)
-                        except Exception:
-                            pass
+                        if not self.dry_run:
+                            try:
+                                fb_log_event("KILL_SWITCH", {
+                                    "equity": equity,
+                                    "month_start_equity": self._month_start_equity,
+                                    "month_peak_equity": self._month_peak_equity,
+                                    "month_return_pct": round(month_return * 100, 2),
+                                    "drawdown_pct": round(drawdown_pct, 2),
+                                    "threshold_pct": config.BINANCE_CRASHBOT_KILL_PCT * 100,
+                                }, exchange=EXCHANGE_NAME)
+                            except Exception:
+                                pass
                         self._close_all_positions("Kill-switch mensuel")
             except Exception as e:
                 logger.debug("Kill-switch equity check échoué: %s", e)
@@ -1660,7 +1663,7 @@ class TradeXBinanceCrashBot:
         # Firebase
         equity_after = self._calculate_allocated_equity()
 
-        if position.firebase_trade_id:
+        if not self.dry_run and position.firebase_trade_id:
             try:
                 log_trade_closed(
                     trade_id=position.firebase_trade_id,
@@ -1901,17 +1904,17 @@ class TradeXBinanceCrashBot:
             )
 
         # Firebase heartbeat
-        try:
-            fb_log_heartbeat(
-                open_positions=len(open_pos),
-                total_equity=allocated_equity,
-                total_risk_pct=exposure_pct / 100 if exposure_pct > 0 else 0,
-                pairs_count=len(self._trading_pairs),
-                exchange=EXCHANGE_NAME,
-                dry_run=self.dry_run,
-            )
-        except Exception:
-            pass
+        if not self.dry_run:
+            try:
+                fb_log_heartbeat(
+                    open_positions=len(open_pos),
+                    total_equity=allocated_equity,
+                    total_risk_pct=exposure_pct / 100 if exposure_pct > 0 else 0,
+                    pairs_count=len(self._trading_pairs),
+                    exchange=EXCHANGE_NAME,
+                )
+            except Exception:
+                pass
 
     def _firebase_daily_cleanup(self) -> None:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")

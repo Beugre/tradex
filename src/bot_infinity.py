@@ -585,14 +585,15 @@ class InfinityBot:
                         closed += 1
 
                     mark_runtime_action_status(action_id, "done", f"manual close appliqué ({closed})")
-                    try:
-                        fb_log_event(
-                            "MANUAL_ACTION",
-                            {"action": "close", "symbol": symbol, "count": closed},
-                            exchange="revolut-infinity",
-                        )
-                    except Exception:
-                        pass
+                    if not self.dry_run:
+                        try:
+                            fb_log_event(
+                                "MANUAL_ACTION",
+                                {"action": "close", "symbol": symbol, "count": closed},
+                                exchange="revolut-infinity",
+                            )
+                        except Exception:
+                            pass
                     continue
 
                 if kind in ("set_sl", "set_tp"):
@@ -1303,6 +1304,7 @@ class InfinityBot:
                 logger.error(
                     "[%s] ♾️ BUY L%d: taker fallback échoué aussi — abandonné", ctx.symbol, level + 1,
                 )
+            if not self.dry_run:
                 try:
                     fb_log_event(
                         event_type="infinity_maker_no_fill",
@@ -1553,26 +1555,28 @@ class InfinityBot:
                 strategy=StrategyType.INFINITY,
                 tp_price=ctx.cycle.pmp * (1 + ctx.config.sell_levels[0]) if ctx.cycle.pmp > 0 else 0,
             )
-            fb_id = log_trade_opened(
-                position=fb_position,
-                fill_type="maker",
-                maker_wait_seconds=INF_MAKER_WAIT_SECONDS,
-                risk_pct=ctx.config.stop_loss_pct,
-                risk_amount_usd=cost * ctx.config.stop_loss_pct,
-                fiat_balance=equity,
-                current_equity=equity,
-                portfolio_risk_before=0.0,
-                exchange="revolut-infinity",
-                dry_run=self.dry_run,
-            )
-            if fb_id:
-                ctx.cycle.firebase_trade_ids.append(fb_id)
-                self._save_state(ctx)
+            if not self.dry_run:
+                fb_id = log_trade_opened(
+                    position=fb_position,
+                    fill_type="maker",
+                    maker_wait_seconds=INF_MAKER_WAIT_SECONDS,
+                    risk_pct=ctx.config.stop_loss_pct,
+                    risk_amount_usd=cost * ctx.config.stop_loss_pct,
+                    fiat_balance=equity,
+                    current_equity=equity,
+                    portfolio_risk_before=0.0,
+                    exchange="revolut-infinity",
+                )
+                if fb_id:
+                    ctx.cycle.firebase_trade_ids.append(fb_id)
+                    self._save_state(ctx)
         except Exception as e:
             logger.warning("[%s] 🔥 Firebase log_trade_opened échoué: %s", ctx.symbol, e)
 
     def _log_cycle_close_firebase(self, ctx: PairContext, exit_price: float, pnl_usd: float, reason: str) -> None:
         """Close tous les trade docs Firebase du cycle."""
+        if self.dry_run:
+            return
         equity = self._get_allocated_balance(ctx)
         for fb_id in ctx.cycle.firebase_trade_ids:
             try:
@@ -1784,17 +1788,17 @@ class InfinityBot:
             logger.warning("Telegram heartbeat failed", exc_info=True)
 
         # Firebase heartbeat
-        try:
-            fb_log_heartbeat(
-                open_positions=active_pairs,
-                total_equity=infinity_pool,
-                total_risk_pct=0.0,
-                pairs_count=len(self._pairs),
-                exchange="revolut-infinity",
-                dry_run=self.dry_run,
-            )
-        except Exception:
-            pass
+        if not self.dry_run:
+            try:
+                fb_log_heartbeat(
+                    open_positions=active_pairs,
+                    total_equity=infinity_pool,
+                    total_risk_pct=0.0,
+                    pairs_count=len(self._pairs),
+                    exchange="revolut-infinity",
+                )
+            except Exception:
+                pass
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 

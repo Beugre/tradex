@@ -450,19 +450,36 @@ BOTS = {
 
 @st.cache_data(ttl=55)
 def _load_all(days: int):
-    """Charge les données des 3 bots en un seul appel caché."""
+    """Charge les données des bots en un seul appel caché.
+    
+    Sépare les trades normaux des trades dry-run.
+    """
     data = {}
     for key, cfg in BOTS.items():
         ex = cfg["exchange"]
         trades = _fetch_trades(days=days, exchange=ex)
+
+        # ── Séparer dry-run / production ──
+        if not trades.empty and "dry_run" in trades.columns:
+            dr_mask = trades["dry_run"].fillna(False).astype(bool)
+            dry_run_trades = trades[dr_mask].copy()
+            trades = trades[~dr_mask].copy()
+        else:
+            dry_run_trades = pd.DataFrame()
+
         closed = trades[trades["closed_at"].notna()].copy() if not trades.empty else pd.DataFrame()
+        open_pos = _fetch_open_positions(exchange=ex)
+        # Exclure les positions dry-run des positions ouvertes
+        if not open_pos.empty and "dry_run" in open_pos.columns:
+            open_pos = open_pos[~open_pos["dry_run"].fillna(False).astype(bool)].copy()
         data[key] = {
             "trades": trades,
             "closed": closed,
             "snapshots": _fetch_daily_snapshots(days=days, exchange=ex),
-            "open": _fetch_open_positions(exchange=ex),
+            "open": open_pos,
             "stats": _compute_stats(closed),
             "heartbeat": _fetch_last_heartbeat(ex),
+            "dry_run_trades": dry_run_trades,
         }
     return data
 
@@ -1366,6 +1383,44 @@ def render_overview():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  Dry Run Section (réutilisable par tous les onglets)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _render_dry_run_section(dry_run_trades: pd.DataFrame):
+    """Affiche les trades dry-run dans un expander si des données existent."""
+    if dry_run_trades.empty:
+        return
+
+    with st.expander(f"🧪 Trades Dry Run ({len(dry_run_trades)})", expanded=False):
+        st.caption("Ces trades ont été enregistrés en mode dry-run (simulation, aucun ordre réel).")
+
+        display_cols = [
+            "symbol", "side", "strategy", "status",
+            "entry_filled", "exit_price", "pnl_usd",
+            "opened_at", "closed_at",
+        ]
+        available = [c for c in display_cols if c in dry_run_trades.columns]
+        show = dry_run_trades[available].copy()
+        rename_map = {
+            "symbol": "Paire", "side": "Side", "strategy": "Stratégie",
+            "status": "Statut", "entry_filled": "Entrée", "exit_price": "Sortie",
+            "pnl_usd": "PnL $", "opened_at": "Ouvert le", "closed_at": "Fermé le",
+        }
+        show = show.rename(columns={k: v for k, v in rename_map.items() if k in show.columns})
+        st.dataframe(show, use_container_width=True, hide_index=True)
+
+        # KPIs rapides dry-run
+        if "pnl_usd" in dry_run_trades.columns:
+            pnl_vals = pd.to_numeric(dry_run_trades["pnl_usd"], errors="coerce").dropna()
+            if not pnl_vals.empty:
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Trades", len(dry_run_trades))
+                c2.metric("PnL total", f"${pnl_vals.sum():.2f}")
+                win_rate = (pnl_vals > 0).sum() / len(pnl_vals) * 100
+                c3.metric("Win Rate", f"{win_rate:.0f}%")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  TAB: Binance Range
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1393,6 +1448,8 @@ def render_binance_range():
 
     _render_last_trades(d["closed"])
     _render_pnl_distribution(d["closed"], cfg["color"], "strategy")
+    st.divider()
+    _render_dry_run_section(d["dry_run_trades"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1431,6 +1488,8 @@ def render_binance_crashbot():
     st.divider()
 
     _render_advanced_stats(d["closed"])
+    st.divider()
+    _render_dry_run_section(d["dry_run_trades"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1470,6 +1529,8 @@ def render_binance_listing():
     st.divider()
 
     _render_advanced_stats(d["closed"])
+    st.divider()
+    _render_dry_run_section(d["dry_run_trades"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1509,6 +1570,8 @@ def render_revolut_london():
     st.divider()
 
     _render_advanced_stats(d["closed"])
+    st.divider()
+    _render_dry_run_section(d["dry_run_trades"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1838,6 +1901,8 @@ def render_revolut_infinity():
     st.divider()
 
     _render_advanced_stats(d["closed"])
+    st.divider()
+    _render_dry_run_section(d["dry_run_trades"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
