@@ -283,7 +283,7 @@ def _fetch_revolut_prices() -> dict[str, float]:
             timeout=5,
         )
         resp.raise_for_status()
-        return {t["symbol"]: float(t["last"]) for t in resp.json() if "last" in t}
+        return {t["symbol"]: float(t["last_price"]) for t in resp.json() if "last_price" in t}
     except Exception:
         return {}
 
@@ -419,7 +419,7 @@ def _compute_stats(closed: pd.DataFrame) -> dict:
 
 st.sidebar.image("https://img.icons8.com/color/96/combo-chart.png", width=60)
 st.sidebar.title("TradeX")
-st.sidebar.caption("Dashboard unifié — 4 bots")
+st.sidebar.caption("Dashboard unifié — 6 bots")
 
 days_filter = st.sidebar.slider("Période (jours)", 1, 90, 30)
 
@@ -1379,7 +1379,7 @@ def render_overview():
         })
         st.dataframe(show, width='stretch', hide_index=True)
     else:
-        st.info("Aucune position ouverte sur les 4 bots")
+        st.info("Aucune position ouverte sur les 6 bots")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

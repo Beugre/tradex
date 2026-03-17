@@ -248,7 +248,7 @@ Quand une stratégie (bot) est **ajoutée, supprimée ou modifiée**, **TOUS** l
 ```env
 # ── Binance ──
 BINANCE_API_KEY=xxx
-BINANCE_API_SECRET=xxx
+BINANCE_SECRET_KEY=xxx
 
 # ── Revolut X ──
 REVOLUT_X_API_KEY=xxx                        # Clé API 64 chars obtenue sur exchange.revolut.com

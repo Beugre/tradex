@@ -341,6 +341,9 @@ class LondonBreakoutBot:
         self._last_cleanup_date: str = ""
         self._last_snapshot_date: str = ""
 
+        # Equity cache (fallback si API down)
+        self._last_known_equity: float = 0.0
+
         # Close failure tracking
         self._close_failures: dict[str, dict] = {}
 
@@ -1186,9 +1189,15 @@ class LondonBreakoutBot:
                     logger.warning("[%s] 🇬🇧 Maker no-fill → TAKER FALLBACK", symbol)
                     result = self._place_taker_order(order)
 
+            fill_type = result.get("fill_type", "unknown")
+
+            if fill_type == "no_fill":
+                logger.error("[%s] 🇬🇧 SELL taker fallback échoué — abandonné", symbol)
+                return False
+
             logger.info(
                 "[%s] 🇬🇧 ✅ SELL exécuté | @ %s | size=%s | %s",
-                symbol, price_str, size_str, result.get("fill_type", "?"),
+                symbol, price_str, size_str, fill_type,
             )
             return True
         except Exception as e:
@@ -1589,8 +1598,13 @@ class LondonBreakoutBot:
                 except Exception:
                     continue
 
-            return usd_total + positions_value
+            equity = usd_total + positions_value
+            self._last_known_equity = equity
+            return equity
         except Exception:
+            if self._last_known_equity > 0:
+                logger.warning("🇬🇧 API equity échoué — utilisation du cache: $%.2f", self._last_known_equity)
+                return self._last_known_equity
             return 0.0
 
     # ── Daily tasks ────────────────────────────────────────────────────────

@@ -203,6 +203,11 @@ class TradeXBinanceBot:
         self._last_cleanup_date: str = ""
         self._last_snapshot_date: str = ""
 
+        # Daily counters (reset daily via _check_day_rollover)
+        self._daily_pnl: float = 0.0
+        self._daily_trades: int = 0
+        self._daily_date: str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
         # Equity allouée
         self._cumulative_pnl: float = 0.0  # PnL cumulé (chargé depuis Firebase au démarrage)
         self._allocated_balance: float = config.BINANCE_RANGE_ALLOCATED_BALANCE
@@ -1584,6 +1589,8 @@ class TradeXBinanceBot:
 
         # Incrémenter le PnL cumulé en mémoire
         self._cumulative_pnl += pnl_net
+        self._daily_pnl += pnl_net
+        self._daily_trades += 1
 
         # Equity allouée
         equity_after = self._calculate_allocated_equity()
@@ -1962,14 +1969,8 @@ class TradeXBinanceBot:
                 "strategy": p.strategy.value,
             })
 
-        daily_pnl = sum(
-            p.pnl or 0 for p in self._positions.values()
-            if p.status == PositionStatus.CLOSED and p.pnl is not None
-        )
-        trades_today = sum(
-            1 for p in self._positions.values()
-            if p.status == PositionStatus.CLOSED
-        )
+        daily_pnl = self._daily_pnl
+        trades_today = self._daily_trades
 
         try:
             fb_log_daily_snapshot(
@@ -1983,6 +1984,11 @@ class TradeXBinanceBot:
             logger.info("📸 Snapshot quotidien → equity=$%.2f | %d positions", equity, len(open_pos))
         except Exception as e:
             logger.warning("Firebase snapshot échoué: %s", e)
+
+        # Reset daily counters after snapshot
+        self._daily_pnl = 0.0
+        self._daily_trades = 0
+        self._daily_date = today
 
     def _shutdown(self) -> None:
         logger.info("🛑 Arrêt de TradeX Binance...")

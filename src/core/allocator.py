@@ -132,7 +132,7 @@ def compute_profit_factor(pnl_list: list[float]) -> float:
     Si aucune perte → inf, si aucun gain → 0.0
     """
     gains = sum(p for p in pnl_list if p > 0)
-    losses = abs(sum(p for p in pnl_list if p <= 0))
+    losses = abs(sum(p for p in pnl_list if p < 0))
     if losses == 0:
         return float("inf") if gains > 0 else 0.0
     return gains / losses

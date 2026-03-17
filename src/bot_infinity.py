@@ -1304,15 +1304,15 @@ class InfinityBot:
                 logger.error(
                     "[%s] ♾️ BUY L%d: taker fallback échoué aussi — abandonné", ctx.symbol, level + 1,
                 )
-            if not self.dry_run:
-                try:
-                    fb_log_event(
-                        event_type="infinity_maker_no_fill",
-                        data={"level": level, "price": current_price, "side": "BUY", "retries": MAX_MAKER_RETRIES},
-                        symbol=ctx.symbol,
-                    )
-                except Exception:
-                    pass
+                if not self.dry_run:
+                    try:
+                        fb_log_event(
+                            event_type="infinity_maker_no_fill",
+                            data={"level": level, "price": current_price, "side": "BUY", "retries": MAX_MAKER_RETRIES},
+                            symbol=ctx.symbol,
+                        )
+                    except Exception:
+                        pass
                 return False
 
             logger.info(
@@ -1402,6 +1402,13 @@ class InfinityBot:
                     result = self._place_taker_order(order)
 
             fill_type = result.get("fill_type", "unknown")
+
+            if fill_type == "no_fill":
+                logger.error(
+                    "[%s] ♾️ SELL: taker fallback échoué — abandonné", ctx.symbol,
+                )
+                return False
+
             logger.info(
                 "[%s] ♾️ ✅ SELL exécuté | @ %s | size=%s | %s",
                 ctx.symbol, price_str, size_str, fill_type,

@@ -1953,14 +1953,8 @@ class TradeXBinanceCrashBot:
                 "trail_steps": self._trail_steps.get(p.symbol, 0),
             })
 
-        daily_pnl = sum(
-            p.pnl or 0 for p in self._positions.values()
-            if p.status == PositionStatus.CLOSED and p.pnl is not None
-        )
-        trades_today = sum(
-            1 for p in self._positions.values()
-            if p.status == PositionStatus.CLOSED
-        )
+        daily_pnl = self._daily_pnl
+        trades_today = self._daily_trades
 
         try:
             fb_log_daily_snapshot(

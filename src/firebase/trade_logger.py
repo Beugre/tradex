@@ -208,7 +208,7 @@ def log_trade_opened(
         "holding_time_hours": None,
 
         # Result (rempli à la clôture)
-        "fees_entry": _estimate_fee(position.size * position.entry_price, fill_type),
+        "fees_entry": _estimate_fee(position.size * position.entry_price, fill_type, exchange),
         "fees_exit": None,
         "fees_total": None,
         "pnl_usd": None,
@@ -263,9 +263,15 @@ def log_trade_closed(
     notional_entry = exit_size * position.entry_price
     pnl_pct = pnl_gross / notional_entry if notional_entry > 0 else 0
 
-    # Fees
-    fee_entry = _estimate_fee(exit_size * position.entry_price, "maker")
-    fee_exit = _estimate_fee(exit_size * exit_price, fill_type)
+    # Fees — récupérer l'exchange depuis le trade Firebase pour appliquer les bons frais
+    trade_exchange = ""
+    if trades:
+        trade_exchange = trades[0].get("exchange", "")
+        entry_fill_type = trades[0].get("entry_fill_type", "maker")
+    else:
+        entry_fill_type = "maker"
+    fee_entry = _estimate_fee(exit_size * position.entry_price, entry_fill_type, trade_exchange)
+    fee_exit = _estimate_fee(exit_size * exit_price, fill_type, trade_exchange)
     fees_total = fee_entry + fee_exit
 
     # PnL net = brut - fees
@@ -523,8 +529,15 @@ def cleanup_old_events(retention_days: Optional[int] = None) -> int:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _estimate_fee(notional_usd: float, fill_type: str) -> float:
-    """Estime les fees selon maker (0%) ou taker (0.09%)."""
+def _estimate_fee(notional_usd: float, fill_type: str, exchange: str = "revolut") -> float:
+    """Estime les fees selon maker/taker et exchange.
+
+    Revolut X : maker 0%, taker 0.09%
+    Binance   : maker 0.10%, taker 0.10%
+    """
+    if "binance" in exchange:
+        return round(notional_usd * 0.001, 4)  # 0.10% maker & taker
+    # Revolut X
     if fill_type == "maker":
         return 0.0
     return round(notional_usd * 0.0009, 4)  # taker 0.09%

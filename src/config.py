@@ -378,8 +378,8 @@ LISTING_HEARTBEAT_SECONDS: int = int(
 # ── DCA Bot (bot_dca.py) ──────────────────────────────────────────────────────
 # Budget dynamique : pourcentages du solde Revolut X (calculé au démarrage)
 DCA_CAPITAL_PCT: float = float(os.getenv("DCA_CAPITAL_PCT", "1.0"))     # Part du solde Revolut X allouée au DCA
-DCA_ACTIVE_PCT: float = float(os.getenv("DCA_ACTIVE_PCT", "0.80"))     # 80% du capital DCA → achats quotidiens
-DCA_CRASH_PCT: float = float(os.getenv("DCA_CRASH_PCT", "0.20"))       # 20% du capital DCA → crash reserve
+DCA_ACTIVE_PCT: float = float(os.getenv("DCA_ACTIVE_PCT", "0.85"))     # 85% du capital DCA → achats quotidiens
+DCA_CRASH_PCT: float = float(os.getenv("DCA_CRASH_PCT", "0.15"))       # 15% du capital DCA → crash reserve
 
 # Montant de base quotidien ($30, multiplié selon le bracket RSI)
 DCA_BASE_DAILY_AMOUNT: float = float(os.getenv("DCA_BASE_DAILY_AMOUNT", "30.0"))
@@ -437,5 +437,5 @@ DCA_CAPITULATION_THRESHOLD: float = float(os.getenv("DCA_CAPITULATION_THRESHOLD"
 # Timing
 DCA_EXECUTION_HOUR_UTC: int = int(os.getenv("DCA_EXECUTION_HOUR_UTC", "10"))
 DCA_POLLING_SECONDS: int = int(os.getenv("DCA_POLLING_SECONDS", "60"))
-DCA_HEARTBEAT_SECONDS: int = int(os.getenv("DCA_HEARTBEAT_SECONDS", "3600"))
+DCA_HEARTBEAT_SECONDS: int = int(os.getenv("DCA_HEARTBEAT_SECONDS", "600"))
 DCA_MAKER_WAIT_SECONDS: int = int(os.getenv("DCA_MAKER_WAIT_SECONDS", "60"))
