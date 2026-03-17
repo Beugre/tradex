@@ -381,34 +381,58 @@ DCA_CAPITAL_PCT: float = float(os.getenv("DCA_CAPITAL_PCT", "1.0"))     # Part d
 DCA_ACTIVE_PCT: float = float(os.getenv("DCA_ACTIVE_PCT", "0.80"))     # 80% du capital DCA → achats quotidiens
 DCA_CRASH_PCT: float = float(os.getenv("DCA_CRASH_PCT", "0.20"))       # 20% du capital DCA → crash reserve
 
-# Montant de base quotidien ($12, multiplié selon le bracket RSI)
-DCA_BASE_DAILY_AMOUNT: float = float(os.getenv("DCA_BASE_DAILY_AMOUNT", "12.0"))
+# Montant de base quotidien ($30, multiplié selon le bracket RSI)
+DCA_BASE_DAILY_AMOUNT: float = float(os.getenv("DCA_BASE_DAILY_AMOUNT", "30.0"))
+DCA_MAX_DAILY_BUY: float = float(os.getenv("DCA_MAX_DAILY_BUY", "150.0"))   # Cap journalier absolu
 
-# Allocation BTC/ETH
-DCA_BTC_ALLOC: float = float(os.getenv("DCA_BTC_ALLOC", "0.80"))  # 80% BTC
-DCA_ETH_ALLOC: float = float(os.getenv("DCA_ETH_ALLOC", "0.20"))  # 20% ETH
+# Allocation BTC/ETH (défaut — surchargée par le régime de marché)
+DCA_BTC_ALLOC: float = float(os.getenv("DCA_BTC_ALLOC", "0.90"))  # 90% BTC
+DCA_ETH_ALLOC: float = float(os.getenv("DCA_ETH_ALLOC", "0.10"))  # 10% ETH
+
+# Allocation dynamique par régime (MA200)
+DCA_ALLOC_NORMAL_BTC: float = float(os.getenv("DCA_ALLOC_NORMAL_BTC", "0.90"))
+DCA_ALLOC_NORMAL_ETH: float = float(os.getenv("DCA_ALLOC_NORMAL_ETH", "0.10"))
+DCA_ALLOC_WEAK_BTC: float = float(os.getenv("DCA_ALLOC_WEAK_BTC", "0.95"))
+DCA_ALLOC_WEAK_ETH: float = float(os.getenv("DCA_ALLOC_WEAK_ETH", "0.05"))
+DCA_ALLOC_CAPIT_BTC: float = float(os.getenv("DCA_ALLOC_CAPIT_BTC", "1.00"))
+DCA_ALLOC_CAPIT_ETH: float = float(os.getenv("DCA_ALLOC_CAPIT_ETH", "0.00"))
 
 # RSI thresholds (daily BTC)
 DCA_RSI_OVERBOUGHT: float = float(os.getenv("DCA_RSI_OVERBOUGHT", "70.0"))
 DCA_RSI_WARM: float = float(os.getenv("DCA_RSI_WARM", "55.0"))
 DCA_RSI_NEUTRAL_LOW: float = float(os.getenv("DCA_RSI_NEUTRAL_LOW", "45.0"))
 
-# Crash reserve levels (drop_pct, amount_usd)
+# Crash reserve levels (drop_pct, pct_of_reserve) — proportionnel
 DCA_CRASH_DROP_1: float = float(os.getenv("DCA_CRASH_DROP_1", "0.15"))   # -15%
-DCA_CRASH_AMOUNT_1: float = float(os.getenv("DCA_CRASH_AMOUNT_1", "150"))
+DCA_CRASH_PCT_1: float = float(os.getenv("DCA_CRASH_PCT_1", "0.25"))     # 25% de la réserve
 DCA_CRASH_DROP_2: float = float(os.getenv("DCA_CRASH_DROP_2", "0.25"))   # -25%
-DCA_CRASH_AMOUNT_2: float = float(os.getenv("DCA_CRASH_AMOUNT_2", "250"))
+DCA_CRASH_PCT_2: float = float(os.getenv("DCA_CRASH_PCT_2", "0.35"))     # 35% de la réserve
 DCA_CRASH_DROP_3: float = float(os.getenv("DCA_CRASH_DROP_3", "0.35"))   # -35%
-DCA_CRASH_AMOUNT_3: float = float(os.getenv("DCA_CRASH_AMOUNT_3", "350"))
+DCA_CRASH_PCT_3: float = float(os.getenv("DCA_CRASH_PCT_3", "0.40"))     # 40% de la réserve
 DCA_CRASH_LOOKBACK_DAYS: int = int(os.getenv("DCA_CRASH_LOOKBACK_DAYS", "90"))
+DCA_CRASH_ANCHOR_LONG_DAYS: int = int(os.getenv("DCA_CRASH_ANCHOR_LONG_DAYS", "180"))
 
-# MVRV deep value
+# MVRV multiplicateur progressif
 DCA_MVRV_ENABLED: bool = os.getenv("DCA_MVRV_ENABLED", "true").lower() in ("true", "1", "yes")
 DCA_MVRV_THRESHOLD: float = float(os.getenv("DCA_MVRV_THRESHOLD", "1.0"))
-DCA_MVRV_MULTIPLIER: float = float(os.getenv("DCA_MVRV_MULTIPLIER", "5.0"))
+DCA_MVRV_DEEP_THRESHOLD: float = float(os.getenv("DCA_MVRV_DEEP_THRESHOLD", "0.85"))
+DCA_MVRV_MULT_LOW: float = float(os.getenv("DCA_MVRV_MULT_LOW", "1.5"))
+DCA_MVRV_MULT_DEEP: float = float(os.getenv("DCA_MVRV_MULT_DEEP", "2.0"))
 
 # Crash reserve → 100% BTC
 DCA_CRASH_BTC_ONLY: bool = os.getenv("DCA_CRASH_BTC_ONLY", "true").lower() in ("true", "1", "yes")
+
+# Spending caps (montants fixes)
+DCA_MONTHLY_CAP: float = float(os.getenv("DCA_MONTHLY_CAP", "1500.0"))
+DCA_WEEKLY_CAP: float = float(os.getenv("DCA_WEEKLY_CAP", "400.0"))
+
+# Cooldown après achat boosté
+DCA_BOOST_COOLDOWN_HOURS: float = float(os.getenv("DCA_BOOST_COOLDOWN_HOURS", "24.0"))
+DCA_BOOST_THRESHOLD: float = float(os.getenv("DCA_BOOST_THRESHOLD", "120.0"))
+
+# Filtre de régime (MA200)
+DCA_REGIME_FILTER_ENABLED: bool = os.getenv("DCA_REGIME_FILTER_ENABLED", "true").lower() in ("true", "1", "yes")
+DCA_CAPITULATION_THRESHOLD: float = float(os.getenv("DCA_CAPITULATION_THRESHOLD", "0.85"))
 
 # Timing
 DCA_EXECUTION_HOUR_UTC: int = int(os.getenv("DCA_EXECUTION_HOUR_UTC", "10"))

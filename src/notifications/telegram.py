@@ -618,17 +618,33 @@ class TelegramNotifier:
         btc_accumulated: float,
         eth_accumulated: float,
         buy_count: int,
+        mvrv: float | None = None,
+        mvrv_mult: float = 1.0,
+        regime: str = "NORMAL",
+        reason: str = "",
+        monthly_spent: float = 0.0,
+        monthly_cap: float = 0.0,
+        weekly_spent: float = 0.0,
+        weekly_cap: float = 0.0,
     ) -> None:
-        """Notification d'achat DCA quotidien."""
-        message = (
-            f"📈 *DCA Buy #{buy_count}* 📈\n"
-            f"  RSI: `{rsi:.1f}` [{bracket}]\n"
-            f"  Montant: `${amount_usd:.2f}` → BTC `${btc_amount:.2f}` / ETH `${eth_amount:.2f}`\n"
-            f"  Total dépensé: `${total_spent:.0f}` | Restant: `${remaining:.0f}`\n"
-            f"  Accum: BTC `{btc_accumulated:.8f}` | ETH `{eth_accumulated:.6f}`\n"
-            f"[Dashboard]({DASHBOARD_URL})"
-        )
-        self._send(message)
+        """Notification d'achat DCA quotidien v2."""
+        mvrv_str = f"{mvrv:.4f}" if mvrv is not None else "N/A"
+        mult_str = f"×{mvrv_mult:.1f}" if mvrv_mult > 1.0 else ""
+        lines = [
+            f"📈 *DCA Buy #{buy_count}* 📈",
+            f"  RSI: `{rsi:.1f}` [{bracket}] | MVRV: `{mvrv_str}` {mult_str}",
+            f"  Regime: `{regime}` | Montant: `${amount_usd:.2f}`",
+            f"  → BTC `${btc_amount:.2f}` / ETH `${eth_amount:.2f}`",
+        ]
+        if reason:
+            lines.append(f"  📋 {reason}")
+        lines.extend([
+            f"  Caps: mois `${monthly_spent:.0f}/${monthly_cap:.0f}` | sem `${weekly_spent:.0f}/${weekly_cap:.0f}`",
+            f"  Total dépensé: `${total_spent:.0f}` | Restant: `${remaining:.0f}`",
+            f"  Accum: BTC `{btc_accumulated:.8f}` | ETH `{eth_accumulated:.6f}`",
+            f"[Dashboard]({DASHBOARD_URL})",
+        ])
+        self._send("\n".join(lines))
 
     def notify_dca_crash_buy(
         self,
@@ -673,13 +689,23 @@ class TelegramNotifier:
         crash_levels_triggered: list[str],
         days_active: int,
         mvrv: float | None = None,
+        mvrv_mult: float = 1.0,
+        regime: str = "NORMAL",
+        ma200: float = 0.0,
+        monthly_spent: float = 0.0,
+        monthly_cap: float = 0.0,
+        weekly_spent: float = 0.0,
+        weekly_cap: float = 0.0,
     ) -> None:
-        """Heartbeat périodique DCA Bot."""
+        """Heartbeat périodique DCA Bot v2."""
         pnl_emoji = "🟢" if pnl >= 0 else "🔴"
         mvrv_str = f"`{mvrv:.4f}`" if mvrv is not None else "`N/A`"
+        mult_str = f" (×{mvrv_mult:.1f})" if mvrv_mult > 1.0 else ""
+        ma200_str = f"`{_fp(ma200)}`" if ma200 > 0 else "`N/A`"
         lines = [
-            f"💓 *DCA Bot* 📈",
-            f"  RSI BTC: `{rsi:.1f}` [{bracket}] | MVRV: {mvrv_str}",
+            f"💓 *DCA Bot v2* 📈",
+            f"  RSI BTC: `{rsi:.1f}` [{bracket}] | MVRV: {mvrv_str}{mult_str}",
+            f"  Regime: `{regime}` | MA200: {ma200_str}",
             f"  BTC: `{_fp(btc_price)}` | ETH: `{_fp(eth_price)}`",
             f"",
             f"  📊 Portfolio: `${portfolio_value:,.2f}`",
@@ -687,9 +713,10 @@ class TelegramNotifier:
             f"  Buys: `{buy_count}` DCA + `{crash_buy_count}` crash | Jours: `{days_active}`",
             f"",
             f"  💰 Accum: BTC `{btc_accumulated:.8f}` | ETH `{eth_accumulated:.6f}`",
-            f"  Budget DCA restant: `${dca_remaining:,.0f}` | Crash: `${crash_remaining:,.0f}`",
+            f"  Budget DCA: `${dca_remaining:,.0f}` | Crash: `${crash_remaining:,.0f}`",
+            f"  Caps: mois `${monthly_spent:.0f}/${monthly_cap:.0f}` | sem `${weekly_spent:.0f}/${weekly_cap:.0f}`",
             f"",
-            f"  📉 High 90j: `{_fp(rolling_high)}` | Drop: `{drop_pct:.1f}%`",
+            f"  📉 High: `{_fp(rolling_high)}` | Drop: `{drop_pct:.1f}%`",
             f"  Crash niveaux: `{', '.join(crash_levels_triggered) if crash_levels_triggered else 'aucun'}`",
             f"[Dashboard]({DASHBOARD_URL})",
         ]

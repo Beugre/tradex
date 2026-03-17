@@ -47,11 +47,17 @@ from src.core.models import (
 from src.core.dca_engine import (
     DCAConfig,
     DCAState,
+    DCADecision,
     RSIBracket,
+    MarketRegime,
     classify_rsi,
     compute_daily_amount,
+    compute_mvrv_multiplier,
+    classify_regime,
+    compute_regime_allocation,
+    reset_period_counters,
     split_allocation,
-    compute_rolling_high,
+    compute_crash_anchor,
     check_crash_triggers,
     reset_crash_levels_if_recovered,
     remaining_dca_budget,
@@ -60,7 +66,7 @@ from src.core.dca_engine import (
     compute_buy_size,
     format_summary,
 )
-from src.core.indicators import rsi_series
+from src.core.indicators import rsi_series, sma
 from src.core.onchain import fetch_mvrv
 from src.exchange.revolut_client import RevolutXClient
 from src.exchange.data_provider import DataProvider
@@ -196,27 +202,45 @@ class DCABot:
             active_budget=active_budget,
             crash_reserve=crash_reserve,
             base_daily_amount=config.DCA_BASE_DAILY_AMOUNT,
+            max_daily_buy=config.DCA_MAX_DAILY_BUY,
             btc_alloc=config.DCA_BTC_ALLOC,
             eth_alloc=config.DCA_ETH_ALLOC,
+            regime_alloc={
+                "NORMAL": (config.DCA_ALLOC_NORMAL_BTC, config.DCA_ALLOC_NORMAL_ETH),
+                "WEAK": (config.DCA_ALLOC_WEAK_BTC, config.DCA_ALLOC_WEAK_ETH),
+                "CAPITULATION": (config.DCA_ALLOC_CAPIT_BTC, config.DCA_ALLOC_CAPIT_ETH),
+            },
             rsi_overbought=config.DCA_RSI_OVERBOUGHT,
             rsi_warm=config.DCA_RSI_WARM,
             rsi_neutral_low=config.DCA_RSI_NEUTRAL_LOW,
             crash_levels=[
-                (config.DCA_CRASH_DROP_1, config.DCA_CRASH_AMOUNT_1),
-                (config.DCA_CRASH_DROP_2, config.DCA_CRASH_AMOUNT_2),
-                (config.DCA_CRASH_DROP_3, config.DCA_CRASH_AMOUNT_3),
+                (config.DCA_CRASH_DROP_1, config.DCA_CRASH_PCT_1),
+                (config.DCA_CRASH_DROP_2, config.DCA_CRASH_PCT_2),
+                (config.DCA_CRASH_DROP_3, config.DCA_CRASH_PCT_3),
             ],
             crash_lookback_days=config.DCA_CRASH_LOOKBACK_DAYS,
+            crash_anchor_long_days=config.DCA_CRASH_ANCHOR_LONG_DAYS,
             execution_hour_utc=DCA_EXECUTION_HOUR_UTC,
             maker_wait_seconds=DCA_MAKER_WAIT_SECONDS,
             mvrv_enabled=config.DCA_MVRV_ENABLED,
             mvrv_threshold=config.DCA_MVRV_THRESHOLD,
-            mvrv_multiplier=config.DCA_MVRV_MULTIPLIER,
+            mvrv_deep_threshold=config.DCA_MVRV_DEEP_THRESHOLD,
+            mvrv_mult_low=config.DCA_MVRV_MULT_LOW,
+            mvrv_mult_deep=config.DCA_MVRV_MULT_DEEP,
             crash_btc_only=config.DCA_CRASH_BTC_ONLY,
+            monthly_cap=config.DCA_MONTHLY_CAP,
+            weekly_cap=config.DCA_WEEKLY_CAP,
+            boost_cooldown_hours=config.DCA_BOOST_COOLDOWN_HOURS,
+            boost_threshold=config.DCA_BOOST_THRESHOLD,
+            regime_filter_enabled=config.DCA_REGIME_FILTER_ENABLED,
+            capitulation_threshold=config.DCA_CAPITULATION_THRESHOLD,
         )
 
         # MVRV cache
         self._last_mvrv: float | None = None
+        # MA200 cache
+        self._ma200: float = 0.0
+        self._regime: MarketRegime = MarketRegime.NORMAL
 
         # State
         data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
@@ -230,6 +254,8 @@ class DCABot:
 
         # Daily candle highs for rolling high calculation
         self._daily_highs: list[float] = []
+        # Daily closes for MA200
+        self._daily_closes: list[float] = []
 
         # Heartbeat
         self._last_heartbeat: float = 0.0
@@ -251,11 +277,12 @@ class DCABot:
         self._running = True
 
         logger.info("═" * 60)
-        logger.info("📈 DCA Bot démarré — RSI-based daily buying")
+        logger.info("📈 DCA Bot v2 démarré — RSI + MVRV + Regime + Caps")
         logger.info("   Capital  : $%.0f total ($%.0f DCA + $%.0f crash)",
                      self._cfg.total_capital, self._cfg.active_budget, self._cfg.crash_reserve)
-        logger.info("   Base     : $%.0f/jour | Alloc: BTC %.0f%% / ETH %.0f%%",
-                     self._cfg.base_daily_amount, self._cfg.btc_alloc * 100, self._cfg.eth_alloc * 100)
+        logger.info("   Base     : $%.0f/jour | Max: $%.0f | Alloc: BTC %.0f%% / ETH %.0f%%",
+                     self._cfg.base_daily_amount, self._cfg.max_daily_buy,
+                     self._cfg.btc_alloc * 100, self._cfg.eth_alloc * 100)
         logger.info("   RSI bands: >%.0f→$0 | %.0f-%.0f→$%.0f | %.0f-%.0f→$%.0f | <%.0f→$%.0f",
                      self._cfg.rsi_overbought,
                      self._cfg.rsi_warm, self._cfg.rsi_overbought,
@@ -264,15 +291,22 @@ class DCABot:
                      self._cfg.base_daily_amount * 2,
                      self._cfg.rsi_neutral_low,
                      self._cfg.base_daily_amount * 3)
-        logger.info("   Crash    : -15%%→$%.0f | -25%%→$%.0f | -35%%→$%.0f (lookback %dd) | BTC only: %s",
-                     self._cfg.crash_levels[0][1],
-                     self._cfg.crash_levels[1][1],
-                     self._cfg.crash_levels[2][1],
-                     self._cfg.crash_lookback_days,
-                     self._cfg.crash_btc_only)
-        logger.info("   MVRV     : %s | threshold=%.2f | mult=×%.0f",
+        logger.info("   MVRV     : %s | <%.2f→×%.1f | <%.2f→×%.1f",
                      "ON" if self._cfg.mvrv_enabled else "OFF",
-                     self._cfg.mvrv_threshold, self._cfg.mvrv_multiplier)
+                     self._cfg.mvrv_threshold, self._cfg.mvrv_mult_low,
+                     self._cfg.mvrv_deep_threshold, self._cfg.mvrv_mult_deep)
+        logger.info("   Regime   : %s | capit_threshold=%.2f",
+                     "ON" if self._cfg.regime_filter_enabled else "OFF",
+                     self._cfg.capitulation_threshold)
+        logger.info("   Crash    : -15%%→%.0f%% | -25%%→%.0f%% | -35%%→%.0f%% of reserve (anchor %d/%dd)",
+                     self._cfg.crash_levels[0][1] * 100,
+                     self._cfg.crash_levels[1][1] * 100,
+                     self._cfg.crash_levels[2][1] * 100,
+                     self._cfg.crash_lookback_days,
+                     self._cfg.crash_anchor_long_days)
+        logger.info("   Caps     : monthly=$%.0f | weekly=$%.0f | cooldown=%.0fh (seuil $%.0f)",
+                     self._cfg.monthly_cap, self._cfg.weekly_cap,
+                     self._cfg.boost_cooldown_hours, self._cfg.boost_threshold)
         logger.info("   Exec     : %02d:00 UTC | Polling: %ds | Maker wait: %ds",
                      DCA_EXECUTION_HOUR_UTC, DCA_POLLING_SECONDS, DCA_MAKER_WAIT_SECONDS)
         logger.info("   Spent    : DCA $%.2f / $%.0f | Crash $%.2f / $%.0f",
@@ -321,25 +355,40 @@ class DCABot:
             return 0.0
 
     def _initialize(self) -> None:
-        """Charge les bougies daily pour le RSI et le rolling high."""
+        """Charge les bougies daily pour le RSI, rolling high et MA200."""
         try:
             candles = self._fetch_daily_candles(self._cfg.btc_symbol)
             if candles:
                 self._daily_highs = [c.high for c in candles]
-                # Update rolling high
-                self._state.rolling_high_price = compute_rolling_high(
-                    self._daily_highs, self._cfg.crash_lookback_days
+                self._daily_closes = [c.close for c in candles]
+                # Crash anchor = max(90j, 180j)
+                self._state.rolling_high_price = compute_crash_anchor(
+                    self._daily_highs,
+                    self._cfg.crash_lookback_days,
+                    self._cfg.crash_anchor_long_days,
                 )
+                # MA200
+                if len(self._daily_closes) >= 200:
+                    ma200_vals = sma(self._daily_closes, 200)
+                    self._ma200 = ma200_vals[-1]
+                    self._regime = classify_regime(
+                        self._daily_closes[-1], self._ma200, self._cfg
+                    )
+                else:
+                    self._ma200 = 0.0
+                    self._regime = MarketRegime.NORMAL
                 logger.info(
-                    "📊 %d bougies chargées | Rolling high 90j: %s",
+                    "📊 %d bougies chargées | Crash anchor: %s | MA200: %s | Regime: %s",
                     len(candles), _fmt(self._state.rolling_high_price),
+                    _fmt(self._ma200) if self._ma200 > 0 else "N/A",
+                    self._regime.value,
                 )
             else:
                 logger.warning("⚠️ Aucune bougie BTC reçue à l'init")
         except Exception as e:
             logger.error("❌ Erreur chargement bougies init: %s", e)
 
-        logger.info("── Init DCA terminée ──")
+        logger.info("── Init DCA v2 terminée ──")
 
     def _fetch_daily_candles(self, symbol: str) -> list[Candle]:
         """Récupère les bougies daily depuis Revolut X.
@@ -359,7 +408,7 @@ class DCABot:
         # Fallback: fetch H4 candles and aggregate to daily
         logger.info("📊 Daily non dispo, agrégation depuis H4...")
         try:
-            # Fetch ~120 days of H4 (6 candles/day × 120 days = 720)
+            # Fetch ~220 days of H4 (6 candles/day × 220 days = 1320) for MA200
             h4_candles = self._client.get_candles(symbol, interval=H4_INTERVAL)
             h4_candles.sort(key=lambda c: c.timestamp)
             if not h4_candles:
@@ -401,6 +450,11 @@ class DCABot:
 
         now_utc = datetime.now(timezone.utc)
         today_str = now_utc.strftime("%Y-%m-%d")
+
+        # 0. Reset period counters (month/week) if needed
+        current_month = now_utc.strftime("%Y-%m")
+        current_week = now_utc.strftime("%G-W%V")
+        reset_period_counters(self._state, current_month, current_week)
 
         # 1. Check crash triggers (every tick)
         self._check_crash_reserve()
@@ -457,9 +511,11 @@ class DCABot:
             )
 
     def _execute_daily_dca(self, today_str: str) -> None:
-        """Exécute l'achat DCA quotidien basé sur le RSI du BTC."""
+        """Exécute l'achat DCA quotidien v2 : RSI → MVRV mult → caps → regime → execute."""
         logger.info("═" * 40)
-        logger.info("📅 DCA quotidien — %s", today_str)
+        logger.info("📅 DCA quotidien v2 — %s", today_str)
+
+        now_ts = time.time()
 
         # 0. Mark today as executed BEFORE placing orders (restart-safe)
         self._last_execution_date = today_str
@@ -469,69 +525,131 @@ class DCABot:
         # 0b. Refresh budget from live balance
         self._refresh_budget()
 
+        # 0c. Refresh MA200 and regime
+        try:
+            candles = self._fetch_daily_candles(self._cfg.btc_symbol)
+            if candles:
+                self._daily_highs = [c.high for c in candles]
+                self._daily_closes = [c.close for c in candles]
+                self._state.rolling_high_price = compute_crash_anchor(
+                    self._daily_highs,
+                    self._cfg.crash_lookback_days,
+                    self._cfg.crash_anchor_long_days,
+                )
+                if len(self._daily_closes) >= 200:
+                    ma200_vals = sma(self._daily_closes, 200)
+                    self._ma200 = ma200_vals[-1]
+                    self._regime = classify_regime(
+                        self._daily_closes[-1], self._ma200, self._cfg
+                    )
+        except Exception as e:
+            logger.warning("⚠️ Erreur refresh candles: %s", e)
+
         # 1. Fetch MVRV (if enabled)
         mvrv = None
         if self._cfg.mvrv_enabled:
             mvrv = fetch_mvrv()
             self._last_mvrv = mvrv
             if mvrv is not None:
-                logger.info("   📊 MVRV BTC: %.4f (seuil < %.1f)", mvrv, self._cfg.mvrv_threshold)
+                logger.info("   📊 MVRV BTC: %.4f", mvrv)
             else:
                 logger.warning("   ⚠️ MVRV indisponible — fallback RSI seul")
 
         # 2. Fetch RSI
         rsi = self._get_btc_daily_rsi()
-        bracket = classify_rsi(rsi, self._cfg, mvrv=mvrv)
+        bracket = classify_rsi(rsi, self._cfg)
         logger.info("   RSI BTC daily: %.1f → bracket %s", rsi, bracket.value)
 
-        # 3. Compute amount
-        total_amount = compute_daily_amount(rsi, self._cfg, mvrv=mvrv)
+        # 3. Compute amount v2 (RSI → MVRV mult → caps → cooldown)
+        total_amount, reason, mvrv_mult = compute_daily_amount(
+            rsi, self._cfg, mvrv=mvrv, state=self._state, now_ts=now_ts
+        )
 
-        # Cap to remaining budget
+        # Cap to remaining DCA budget
         remaining = remaining_dca_budget(self._state, self._cfg)
         if total_amount > remaining:
             total_amount = remaining
-            logger.info("   ⚠️ Budget DCA limité à $%.2f (reste)", remaining)
+            reason += f" | BUDGET_CAP (${remaining:.0f})"
+
+        logger.info("   Décision: $%.2f | %s", total_amount, reason)
+        logger.info("   Regime: %s | MA200: %s | MVRV mult: ×%.1f",
+                     self._regime.value,
+                     _fmt(self._ma200) if self._ma200 > 0 else "N/A",
+                     mvrv_mult)
+
+        # Build DCADecision for observability
+        btc_pct, eth_pct = compute_regime_allocation(self._regime, self._cfg)
+        decision = DCADecision(
+            date=today_str,
+            rsi=rsi,
+            bracket=bracket.value,
+            mvrv=mvrv,
+            mvrv_mult=mvrv_mult,
+            regime=self._regime.value,
+            base_amount=self._cfg.base_daily_amount * self._cfg.rsi_multipliers.get(bracket.value, 0),
+            mvrv_amount=self._cfg.base_daily_amount * self._cfg.rsi_multipliers.get(bracket.value, 0) * mvrv_mult,
+            capped_amount=total_amount,
+            reason=reason,
+            monthly_spent=self._state.monthly_spent,
+            weekly_spent=self._state.weekly_spent,
+            monthly_cap=self._cfg.monthly_cap,
+            weekly_cap=self._cfg.weekly_cap,
+            cap_limited="CAP" in reason,
+            cooldown_active="COOLDOWN" in reason,
+            btc_alloc=btc_pct,
+            eth_alloc=eth_pct,
+            skipped=(total_amount <= 0),
+        )
+
+        # Log decision to Firebase
+        try:
+            fb_log_event("DCA_DECISION", decision.to_dict(), exchange="revolut-dca")
+        except Exception:
+            pass
 
         if total_amount <= 0:
-            logger.info("   ⏭️ RSI bracket = %s → pas d'achat aujourd'hui", bracket.value)
-            self._last_execution_date = today_str
-            self._state.last_buy_date = today_str
+            logger.info("   ⏭️ Pas d'achat aujourd'hui: %s", reason)
             self._state.last_buy_rsi = rsi
             self._state.last_buy_bracket = bracket.value
             self._state.total_days_active += 1
             self._save_state()
             return
 
-        # 3. Split BTC/ETH
-        allocations = split_allocation(total_amount, self._cfg)
-        logger.info("   Montant: $%.2f → BTC $%.2f / ETH $%.2f",
-                     total_amount, allocations[self._cfg.btc_symbol],
-                     allocations[self._cfg.eth_symbol])
+        # 4. Split BTC/ETH with regime-based allocation
+        allocations = split_allocation(total_amount, self._cfg, regime=self._regime)
+        logger.info("   Montant: $%.2f → BTC $%.2f (%.0f%%) / ETH $%.2f (%.0f%%)",
+                     total_amount,
+                     allocations[self._cfg.btc_symbol], btc_pct * 100,
+                     allocations[self._cfg.eth_symbol], eth_pct * 100)
 
-        # 4. Execute buys
+        # 5. Execute buys
         bought_any = False
         for symbol, amount_usd in allocations.items():
             if amount_usd < 1.0:
                 continue
-            success = self._execute_buy(symbol, amount_usd, "DCA", rsi, bracket)
+            success = self._execute_buy(symbol, amount_usd, reason, rsi, bracket)
             if success:
                 bought_any = True
 
-        # 5. Update state
+        # 6. Update state
         if bought_any:
             self._state.total_spent_dca += total_amount
             self._state.buy_count += 1
+            self._state.monthly_spent += total_amount
+            self._state.weekly_spent += total_amount
+            # Track boost timestamp
+            if total_amount >= self._cfg.boost_threshold:
+                self._state.last_boost_ts = now_ts
 
-        self._last_execution_date = today_str
-        self._state.last_buy_date = today_str
         self._state.last_buy_rsi = rsi
         self._state.last_buy_bracket = bracket.value
         self._state.total_days_active += 1
         self._save_state()
 
-        logger.info("   ✅ DCA jour terminé | Total dépensé: $%.2f / $%.0f",
-                     self._state.total_spent_dca, self._cfg.active_budget)
+        logger.info("   ✅ DCA jour terminé | Dépensé: $%.2f | Mois: $%.0f/$%.0f | Sem: $%.0f/$%.0f",
+                     total_amount,
+                     self._state.monthly_spent, self._cfg.monthly_cap,
+                     self._state.weekly_spent, self._cfg.weekly_cap)
 
         # Telegram notification
         summary = format_summary(self._state, self._cfg)
@@ -546,6 +664,14 @@ class DCABot:
             btc_accumulated=self._state.total_btc_bought,
             eth_accumulated=self._state.total_eth_bought,
             buy_count=self._state.buy_count,
+            mvrv=mvrv,
+            mvrv_mult=mvrv_mult,
+            regime=self._regime.value,
+            reason=reason,
+            monthly_spent=self._state.monthly_spent,
+            monthly_cap=self._cfg.monthly_cap,
+            weekly_spent=self._state.weekly_spent,
+            weekly_cap=self._cfg.weekly_cap,
         )
 
     # ── Crash reserve ──────────────────────────────────────────────────────────
@@ -571,8 +697,11 @@ class DCABot:
                 candles = self._fetch_daily_candles(self._cfg.btc_symbol)
                 if candles:
                     self._daily_highs = [c.high for c in candles]
-                    self._state.rolling_high_price = compute_rolling_high(
-                        self._daily_highs, self._cfg.crash_lookback_days
+                    self._daily_closes = [c.close for c in candles]
+                    self._state.rolling_high_price = compute_crash_anchor(
+                        self._daily_highs,
+                        self._cfg.crash_lookback_days,
+                        self._cfg.crash_anchor_long_days,
                     )
             except Exception:
                 pass
@@ -946,10 +1075,12 @@ class DCABot:
         # RSI + MVRV
         rsi = self._get_btc_daily_rsi()
         mvrv = None
+        mvrv_mult = 1.0
         if self._cfg.mvrv_enabled:
             mvrv = fetch_mvrv()
             self._last_mvrv = mvrv
-        bracket = classify_rsi(rsi, self._cfg, mvrv=mvrv)
+            mvrv_mult = compute_mvrv_multiplier(mvrv, self._cfg)
+        bracket = classify_rsi(rsi, self._cfg)
 
         # Rolling high & crash info
         rolling_high = self._state.rolling_high_price
@@ -959,17 +1090,23 @@ class DCABot:
 
         # Console heartbeat
         logger.info("═" * 40)
-        logger.info("💓 DCA Heartbeat | tick=%d", self._tick_count)
+        logger.info("💓 DCA Heartbeat v2 | tick=%d", self._tick_count)
         mvrv_str = f"{mvrv:.4f}" if mvrv is not None else "N/A"
-        logger.info("   RSI: %.1f [%s] | MVRV: %s | BTC: %s | ETH: %s",
-                     rsi, bracket.value, mvrv_str, _fmt(btc_price), _fmt(eth_price))
+        logger.info("   RSI: %.1f [%s] | MVRV: %s (×%.1f) | Regime: %s",
+                     rsi, bracket.value, mvrv_str, mvrv_mult, self._regime.value)
+        logger.info("   BTC: %s | ETH: %s | MA200: %s",
+                     _fmt(btc_price), _fmt(eth_price),
+                     _fmt(self._ma200) if self._ma200 > 0 else "N/A")
         logger.info("   Portfolio: $%.2f (BTC $%.2f + ETH $%.2f)",
                      portfolio_value, btc_value, eth_value)
         logger.info("   Dépensé: $%.2f | PnL: $%+.2f (%+.1f%%)",
                      total_spent, pnl, pnl_pct)
         logger.info("   Budget DCA: $%.0f restant | Crash: $%.0f restant",
                      summary["dca_remaining"], summary["crash_remaining"])
-        logger.info("   Rolling high 90j: %s | Drop: %.1f%%",
+        logger.info("   Caps: mois $%.0f/$%.0f | sem $%.0f/$%.0f",
+                     self._state.monthly_spent, self._cfg.monthly_cap,
+                     self._state.weekly_spent, self._cfg.weekly_cap)
+        logger.info("   Rolling high: %s | Drop: %.1f%%",
                      _fmt(rolling_high), drop_pct)
         logger.info("   Crash levels triggered: %s",
                      ", ".join(self._state.crash_levels_triggered) or "aucun")
@@ -998,6 +1135,13 @@ class DCABot:
             crash_levels_triggered=self._state.crash_levels_triggered,
             days_active=self._state.total_days_active,
             mvrv=mvrv,
+            mvrv_mult=mvrv_mult,
+            regime=self._regime.value,
+            ma200=self._ma200,
+            monthly_spent=self._state.monthly_spent,
+            monthly_cap=self._cfg.monthly_cap,
+            weekly_spent=self._state.weekly_spent,
+            weekly_cap=self._cfg.weekly_cap,
         )
 
         # Firebase heartbeat (use log_event directly — DCA has different data shape)
@@ -1015,6 +1159,9 @@ class DCABot:
                     "dca_remaining": summary["dca_remaining"],
                     "crash_remaining": summary["crash_remaining"],
                     "mvrv": mvrv,
+                    "mvrv_mult": mvrv_mult,
+                    "regime": self._regime.value,
+                    "ma200": self._ma200,
                     "equity": portfolio_value,
                     "rolling_high": rolling_high,
                     "drop_pct": drop_pct,
@@ -1022,6 +1169,10 @@ class DCABot:
                     "buy_count": self._state.buy_count,
                     "crash_buy_count": self._state.crash_buy_count,
                     "days_active": self._state.total_days_active,
+                    "monthly_spent": self._state.monthly_spent,
+                    "monthly_cap": self._cfg.monthly_cap,
+                    "weekly_spent": self._state.weekly_spent,
+                    "weekly_cap": self._cfg.weekly_cap,
                 },
                 symbol="DCA",
                 exchange="revolut-dca",

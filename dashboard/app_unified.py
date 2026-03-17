@@ -1846,10 +1846,11 @@ def render_revolut_infinity():
 
 
 def render_revolut_dca():
-    """Onglet DCA RSI Bot — achats quotidiens BTC/ETH basés sur le RSI."""
-    st.header("📈 DCA Bot — RSI-based daily buying")
+    """Onglet DCA RSI Bot v2 — achats quotidiens BTC/ETH basés sur le RSI."""
+    st.header("📈 DCA Bot v2 — RSI + MVRV + Regime")
     st.caption(
-        "DCA quotidien BTC/ETH piloté par le RSI + crash reserve — Revolut X, maker-only"
+        "DCA quotidien BTC/ETH piloté par RSI, multiplicateur MVRV progressif, "
+        "filtre régime MA200, spending caps — Revolut X, maker-only"
     )
 
     db = _get_db()
@@ -1883,6 +1884,21 @@ def render_revolut_dca():
         dca_hb = [doc.to_dict() for doc in hb_docs]
     except Exception:
         dca_hb = []
+
+    # ── Fetch DCA decision events (v2 observability) ───────────────────────────
+    try:
+        dec_docs = (
+            db.collection("events")
+            .where("event_type", "==", "DCA_DECISION")
+            .where("exchange", "==", "revolut-dca")
+            .where("timestamp", ">=", since)
+            .order_by("timestamp", direction=firestore.Query.DESCENDING)
+            .limit(500)
+            .stream()
+        )
+        decision_events = [doc.to_dict() for doc in dec_docs]
+    except Exception:
+        decision_events = []
 
     # ── Parse buy events into DataFrame ────────────────────────────────────────
     buy_rows = []
@@ -1939,21 +1955,60 @@ def render_revolut_dca():
     pnl = portfolio_value - total_spent if total_spent > 0 else 0
     pnl_pct = (pnl / total_spent * 100) if total_spent > 0 else 0
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1:
+    # ── v2 regime / MVRV cockpit ───────────────────────────────────────────────
+    regime_val = hb_data.get("regime", "NORMAL")
+    mvrv_val = hb_data.get("mvrv", None)
+    mvrv_mult_val = hb_data.get("mvrv_mult", 1.0)
+    ma200_val = hb_data.get("ma200", 0)
+    regime_emojis = {"NORMAL": "🟢", "WEAK": "🟡", "CAPITULATION": "🔴"}
+    regime_emoji = regime_emojis.get(regime_val, "⚪")
+
+    rc1, rc2, rc3, rc4 = st.columns(4)
+    with rc1:
+        st.metric("Régime", f"{regime_emoji} {regime_val}")
+    with rc2:
+        mvrv_str = f"{mvrv_val:.4f}" if mvrv_val else "—"
+        st.metric("MVRV", mvrv_str, f"×{mvrv_mult_val:.1f}")
+    with rc3:
+        st.metric("MA200 BTC", f"${ma200_val:,.0f}" if ma200_val else "—")
+    with rc4:
         rsi_val = hb_data.get("rsi", 0)
         bracket_val = hb_data.get("bracket", "—")
         st.metric("RSI BTC", f"{rsi_val:.1f}" if rsi_val else "—", bracket_val)
-    with c2:
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
         st.metric("Total investi", f"${total_spent:,.0f}")
-    with c3:
+    with c2:
         st.metric("Valeur portfolio", f"${portfolio_value:,.0f}")
-    with c4:
+    with c3:
         st.metric("PnL", f"${pnl:+,.2f}", f"{pnl_pct:+.1f}%")
-    with c5:
+    with c4:
         n_buys = len(df_buys) if not df_buys.empty else 0
         crash_count = len(df_buys[df_buys["reason"].str.contains("CRASH", na=False)]) if not df_buys.empty else 0
         st.metric("Achats", f"{n_buys}", f"dont {crash_count} crash")
+    with c5:
+        alloc_btc = hb_data.get("btc_alloc", 0.90)
+        alloc_eth = hb_data.get("eth_alloc", 0.10)
+        st.metric("Allocation", f"BTC {alloc_btc*100:.0f}% / ETH {alloc_eth*100:.0f}%")
+
+    st.divider()
+
+    # ── Spending caps progress ─────────────────────────────────────────────────
+    monthly_spent = hb_data.get("monthly_spent", 0)
+    monthly_cap = hb_data.get("monthly_cap", 1500)
+    weekly_spent = hb_data.get("weekly_spent", 0)
+    weekly_cap = hb_data.get("weekly_cap", 400)
+
+    cap1, cap2 = st.columns(2)
+    with cap1:
+        m_pct = min(monthly_spent / monthly_cap, 1.0) if monthly_cap > 0 else 0
+        st.markdown(f"**📅 Cap mensuel** — ${monthly_spent:,.0f} / ${monthly_cap:,.0f}")
+        st.progress(m_pct, text=f"{m_pct*100:.0f}%")
+    with cap2:
+        w_pct = min(weekly_spent / weekly_cap, 1.0) if weekly_cap > 0 else 0
+        st.markdown(f"**📆 Cap hebdo** — ${weekly_spent:,.0f} / ${weekly_cap:,.0f}")
+        st.progress(w_pct, text=f"{w_pct*100:.0f}%")
 
     st.divider()
 
@@ -2202,6 +2257,157 @@ def render_revolut_dca():
     else:
         st.info("Aucun achat DCA enregistré.")
 
+    # ── v2 Analytics: DCA Decisions ────────────────────────────────────────────
+    st.divider()
+    st.subheader("🔬 Analytics v2 — Décisions DCA")
+
+    if decision_events:
+        dec_rows = []
+        for ev in decision_events:
+            d = ev.get("data", {})
+            ts_raw = ev.get("timestamp", "")
+            if hasattr(ts_raw, "isoformat"):
+                ts_str = ts_raw.isoformat()
+            else:
+                ts_str = str(ts_raw)
+            try:
+                ts = pd.Timestamp(ts_str)
+            except Exception:
+                ts = pd.NaT
+            dec_rows.append({
+                "timestamp": ts,
+                "date": d.get("date", ""),
+                "rsi": float(d.get("rsi", 0)),
+                "bracket": d.get("bracket", ""),
+                "mvrv": d.get("mvrv"),
+                "mvrv_mult": float(d.get("mvrv_mult", 1.0)),
+                "regime": d.get("regime", "NORMAL"),
+                "base_amount": float(d.get("base_amount", 0)),
+                "mvrv_amount": float(d.get("mvrv_amount", 0)),
+                "capped_amount": float(d.get("capped_amount", 0)),
+                "reason": d.get("reason", ""),
+                "cap_limited": d.get("cap_limited", False),
+                "cooldown_active": d.get("cooldown_active", False),
+                "skipped": d.get("skipped", False),
+                "monthly_spent": float(d.get("monthly_spent", 0)),
+                "weekly_spent": float(d.get("weekly_spent", 0)),
+            })
+
+        df_dec = pd.DataFrame(dec_rows)
+        if not df_dec.empty:
+            df_dec = df_dec.sort_values("timestamp").reset_index(drop=True)
+
+            # ── MVRV multiplier over time ──────────────────────────────────
+            if df_dec["mvrv"].notna().any():
+                fig_mvrv = go.Figure()
+
+                # MVRV value
+                mvrv_valid = df_dec[df_dec["mvrv"].notna()]
+                fig_mvrv.add_trace(go.Scatter(
+                    x=mvrv_valid["timestamp"],
+                    y=mvrv_valid["mvrv"].astype(float),
+                    mode="lines+markers",
+                    name="MVRV",
+                    line=dict(color="#14d8c4", width=2),
+                    marker=dict(size=6),
+                ))
+
+                # Threshold lines
+                fig_mvrv.add_hline(y=1.0, line_dash="dash", line_color="#ff9f43",
+                                   opacity=0.6, annotation_text="Seuil (×1.5)")
+                fig_mvrv.add_hline(y=0.85, line_dash="dash", line_color="#ff6b6b",
+                                   opacity=0.6, annotation_text="Deep (×2.0)")
+
+                fig_mvrv.update_layout(
+                    height=300,
+                    yaxis_title="MVRV",
+                    title="MVRV & multiplicateur dans le temps",
+                )
+                _apply_mobile_chart_theme(fig_mvrv, show_legend=True)
+                st.plotly_chart(fig_mvrv, use_container_width=True)
+
+            # ── Amount breakdown: base vs final ────────────────────────────
+            fig_amounts = go.Figure()
+            fig_amounts.add_trace(go.Bar(
+                x=df_dec["timestamp"],
+                y=df_dec["base_amount"],
+                name="Base (RSI)",
+                marker_color="#9aa7b3",
+                opacity=0.6,
+            ))
+            fig_amounts.add_trace(go.Bar(
+                x=df_dec["timestamp"],
+                y=df_dec["capped_amount"],
+                name="Final (après caps)",
+                marker_color="#14d8c4",
+            ))
+            fig_amounts.update_layout(
+                height=300,
+                barmode="overlay",
+                yaxis_title="Montant ($)",
+                yaxis_tickformat="$,.0f",
+                title="Montants: base RSI vs final (caps + MVRV)",
+            )
+            _apply_mobile_chart_theme(fig_amounts, show_legend=True)
+            st.plotly_chart(fig_amounts, use_container_width=True)
+
+            # ── Decision log table ─────────────────────────────────────────
+            st.markdown("**📊 Journal des décisions**")
+            dec_display = []
+            for _, row in df_dec.sort_values("timestamp", ascending=False).head(50).iterrows():
+                ts = row["timestamp"]
+                ts_str = ts.strftime("%Y-%m-%d %H:%M") if pd.notna(ts) else "—"
+                regime_em = regime_emojis.get(row["regime"], "⚪")
+                flags = []
+                if row.get("cap_limited"):
+                    flags.append("🔒CAP")
+                if row.get("cooldown_active"):
+                    flags.append("⏳CD")
+                if row.get("skipped"):
+                    flags.append("⏭️SKIP")
+                mvrv_str = f"{row['mvrv']:.4f}" if row["mvrv"] is not None else "—"
+                dec_display.append({
+                    "Date": ts_str,
+                    "RSI": f"{row['rsi']:.1f}",
+                    "Bracket": row["bracket"],
+                    "MVRV": mvrv_str,
+                    "×": f"×{row['mvrv_mult']:.1f}",
+                    "Régime": f"{regime_em} {row['regime']}",
+                    "Base $": f"${row['base_amount']:.0f}",
+                    "Final $": f"${row['capped_amount']:.0f}",
+                    "Flags": " ".join(flags) if flags else "—",
+                    "Raison": row["reason"][:60],
+                })
+            st.dataframe(dec_display, use_container_width=True, hide_index=True)
+
+            # ── Regime distribution pie ────────────────────────────────────
+            regime_counts = df_dec["regime"].value_counts()
+            if len(regime_counts) > 0:
+                col_r1, col_r2 = st.columns(2)
+                with col_r1:
+                    fig_regime = go.Figure(go.Pie(
+                        labels=regime_counts.index.tolist(),
+                        values=regime_counts.values.tolist(),
+                        marker_colors=["#14d8c4", "#ff9f43", "#ff6b6b"],
+                        hole=0.4,
+                    ))
+                    fig_regime.update_layout(height=280, title="Répartition régimes")
+                    _apply_mobile_chart_theme(fig_regime)
+                    st.plotly_chart(fig_regime, use_container_width=True)
+                with col_r2:
+                    # Bracket distribution
+                    bracket_counts = df_dec["bracket"].value_counts()
+                    fig_bkt = go.Figure(go.Pie(
+                        labels=bracket_counts.index.tolist(),
+                        values=bracket_counts.values.tolist(),
+                        marker_colors=["#ff6b6b", "#ff9f43", "#14d8c4", "#4ecdc4"],
+                        hole=0.4,
+                    ))
+                    fig_bkt.update_layout(height=280, title="Répartition brackets RSI")
+                    _apply_mobile_chart_theme(fig_bkt)
+                    st.plotly_chart(fig_bkt, use_container_width=True)
+    else:
+        st.info("Aucune décision DCA enregistrée — les analytics apparaîtront après les premiers cycles v2.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Main — Tabs
