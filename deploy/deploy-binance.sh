@@ -25,10 +25,18 @@ echo ""
 
 # ── 1. Sync des fichiers ────────────────────────────────────────────────
 echo "📦 Synchronisation des fichiers..."
+# --exclude : empêche le transfert local→VPS (protège aussi de --delete)
+# --filter='P' : protection supplémentaire contre --delete-excluded
+# ⚠ Ne JAMAIS lancer rsync manuellement sans ces flags (risque d'écraser data/, .env, .venv)
 rsync -avz --delete \
     --filter='P .venv/' \
     --filter='P data/' \
     --filter='P logs/' \
+    --filter='P .env' \
+    --filter='P private.pem' \
+    --filter='P public.pem' \
+    --filter='P firebase-credentials.json' \
+    --filter='P firebase-key.json' \
     --exclude='.venv' \
     --exclude='__pycache__' \
     --exclude='.git' \
@@ -37,12 +45,13 @@ rsync -avz --delete \
     --exclude='.env' \
     --exclude='private.pem' \
     --exclude='public.pem' \
+    --exclude='firebase-credentials.json' \
+    --exclude='firebase-key.json' \
     --exclude='test_*.py' \
     --exclude='preflight.py' \
     --exclude='.DS_Store' \
     --exclude='logs/' \
     --exclude='data/' \
-    --exclude='firebase-credentials.json' \
     "$PROJECT_DIR/" "$VPS_HOST:$APP_DIR/"
 
 echo "   Fichiers synchronisés ✅"
