@@ -118,6 +118,62 @@ class DCAConfig:
     btc_symbol: str = "BTC-USD"
     eth_symbol: str = "ETH-USD"
 
+    # ── Factory ──────────────────────────────────────────────────────────────
+
+    @classmethod
+    def from_settings(
+        cls,
+        cfg,  # le module src.config (ou tout objet avec les attrs DCA_*)
+        *,
+        total_capital: float,
+        active_budget: float,
+        crash_reserve: float,
+    ) -> "DCAConfig":
+        """Construit un DCAConfig à partir du module config + budgets calculés.
+
+        Le module ``cfg`` fournit tous les paramètres lus depuis ``.env``.
+        Les 3 champs budget sont calculés au runtime par le bot à partir du
+        solde réel du compte, ils doivent donc être passés explicitement.
+        """
+        return cls(
+            total_capital=total_capital,
+            active_budget=active_budget,
+            crash_reserve=crash_reserve,
+            base_daily_amount=cfg.DCA_BASE_DAILY_AMOUNT,
+            max_daily_buy=cfg.DCA_MAX_DAILY_BUY,
+            btc_alloc=cfg.DCA_BTC_ALLOC,
+            eth_alloc=cfg.DCA_ETH_ALLOC,
+            regime_alloc={
+                "NORMAL": (cfg.DCA_ALLOC_NORMAL_BTC, cfg.DCA_ALLOC_NORMAL_ETH),
+                "WEAK": (cfg.DCA_ALLOC_WEAK_BTC, cfg.DCA_ALLOC_WEAK_ETH),
+                "CAPITULATION": (cfg.DCA_ALLOC_CAPIT_BTC, cfg.DCA_ALLOC_CAPIT_ETH),
+            },
+            rsi_overbought=cfg.DCA_RSI_OVERBOUGHT,
+            rsi_warm=cfg.DCA_RSI_WARM,
+            rsi_neutral_low=cfg.DCA_RSI_NEUTRAL_LOW,
+            crash_levels=[
+                (cfg.DCA_CRASH_DROP_1, cfg.DCA_CRASH_PCT_1),
+                (cfg.DCA_CRASH_DROP_2, cfg.DCA_CRASH_PCT_2),
+                (cfg.DCA_CRASH_DROP_3, cfg.DCA_CRASH_PCT_3),
+            ],
+            crash_lookback_days=cfg.DCA_CRASH_LOOKBACK_DAYS,
+            crash_anchor_long_days=cfg.DCA_CRASH_ANCHOR_LONG_DAYS,
+            execution_hour_utc=cfg.DCA_EXECUTION_HOUR_UTC,
+            maker_wait_seconds=cfg.DCA_MAKER_WAIT_SECONDS,
+            mvrv_enabled=cfg.DCA_MVRV_ENABLED,
+            mvrv_threshold=cfg.DCA_MVRV_THRESHOLD,
+            mvrv_deep_threshold=cfg.DCA_MVRV_DEEP_THRESHOLD,
+            mvrv_mult_low=cfg.DCA_MVRV_MULT_LOW,
+            mvrv_mult_deep=cfg.DCA_MVRV_MULT_DEEP,
+            crash_btc_only=cfg.DCA_CRASH_BTC_ONLY,
+            monthly_cap=cfg.DCA_MONTHLY_CAP,
+            weekly_cap=cfg.DCA_WEEKLY_CAP,
+            boost_cooldown_hours=cfg.DCA_BOOST_COOLDOWN_HOURS,
+            boost_threshold=cfg.DCA_BOOST_THRESHOLD,
+            regime_filter_enabled=cfg.DCA_REGIME_FILTER_ENABLED,
+            capitulation_threshold=cfg.DCA_CAPITULATION_THRESHOLD,
+        )
+
 
 # ── DCADecision — structured log ──────────────────────────────────────────────────────────
 

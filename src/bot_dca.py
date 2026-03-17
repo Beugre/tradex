@@ -196,44 +196,12 @@ class DCABot:
             config.DCA_CRASH_PCT * 100, crash_reserve,
         )
 
-        # Build config from computed budgets
-        self._cfg = DCAConfig(
+        # Build config from .env settings + computed budgets
+        self._cfg = DCAConfig.from_settings(
+            config,
             total_capital=dca_capital,
             active_budget=active_budget,
             crash_reserve=crash_reserve,
-            base_daily_amount=config.DCA_BASE_DAILY_AMOUNT,
-            max_daily_buy=config.DCA_MAX_DAILY_BUY,
-            btc_alloc=config.DCA_BTC_ALLOC,
-            eth_alloc=config.DCA_ETH_ALLOC,
-            regime_alloc={
-                "NORMAL": (config.DCA_ALLOC_NORMAL_BTC, config.DCA_ALLOC_NORMAL_ETH),
-                "WEAK": (config.DCA_ALLOC_WEAK_BTC, config.DCA_ALLOC_WEAK_ETH),
-                "CAPITULATION": (config.DCA_ALLOC_CAPIT_BTC, config.DCA_ALLOC_CAPIT_ETH),
-            },
-            rsi_overbought=config.DCA_RSI_OVERBOUGHT,
-            rsi_warm=config.DCA_RSI_WARM,
-            rsi_neutral_low=config.DCA_RSI_NEUTRAL_LOW,
-            crash_levels=[
-                (config.DCA_CRASH_DROP_1, config.DCA_CRASH_PCT_1),
-                (config.DCA_CRASH_DROP_2, config.DCA_CRASH_PCT_2),
-                (config.DCA_CRASH_DROP_3, config.DCA_CRASH_PCT_3),
-            ],
-            crash_lookback_days=config.DCA_CRASH_LOOKBACK_DAYS,
-            crash_anchor_long_days=config.DCA_CRASH_ANCHOR_LONG_DAYS,
-            execution_hour_utc=DCA_EXECUTION_HOUR_UTC,
-            maker_wait_seconds=DCA_MAKER_WAIT_SECONDS,
-            mvrv_enabled=config.DCA_MVRV_ENABLED,
-            mvrv_threshold=config.DCA_MVRV_THRESHOLD,
-            mvrv_deep_threshold=config.DCA_MVRV_DEEP_THRESHOLD,
-            mvrv_mult_low=config.DCA_MVRV_MULT_LOW,
-            mvrv_mult_deep=config.DCA_MVRV_MULT_DEEP,
-            crash_btc_only=config.DCA_CRASH_BTC_ONLY,
-            monthly_cap=config.DCA_MONTHLY_CAP,
-            weekly_cap=config.DCA_WEEKLY_CAP,
-            boost_cooldown_hours=config.DCA_BOOST_COOLDOWN_HOURS,
-            boost_threshold=config.DCA_BOOST_THRESHOLD,
-            regime_filter_enabled=config.DCA_REGIME_FILTER_ENABLED,
-            capitulation_threshold=config.DCA_CAPITULATION_THRESHOLD,
         )
 
         # MVRV cache
