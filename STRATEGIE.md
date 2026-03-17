@@ -68,7 +68,7 @@ Les bots fonctionnent sur **2 exchanges** avec **6 stratégies complémentaires*
 > **🆕 Listing Bot** (Binance) : "Quand un nouveau token est listé sur Binance, j'achète le momentum initial et je sécurise via OCO dynamique."
 > **🇬🇧 London Breakout** (Revolut X) : "Quand le prix casse le range de la session de Londres (08-16 UTC), j'entre long avec un SL basé sur l'ATR."
 > **♾️ Infinity** (Revolut X) : "Quand une crypto baisse de X% par rapport à son plus haut récent, j'accumule par paliers DCA puis je revends progressivement."
-> **📈 DCA RSI** (Revolut X) : "Chaque jour, j'achète BTC et ETH selon le niveau du RSI, avec une réserve crash pour les baisses brutales."
+> **📈 DCA RSI** (Revolut X) : "Chaque jour, j'achète BTC et ETH selon le RSI et le MVRV on-chain, avec une réserve crash pour les baisses brutales."
 
 Aucun bot ne prédit l'avenir. Chacun **constate** un pattern spécifique et agit en conséquence.
 
@@ -602,20 +602,23 @@ L'objectif est d'**accumuler progressivement** sur 12 mois, en achetant plus qua
 
 ### Brackets RSI
 
-Le RSI quotidien de BTC détermine le montant d'achat du jour :
+Le RSI quotidien de BTC détermine le montant d'achat du jour. Le **MVRV** (Market Value to Realized Value) peut override le bracket RSI :
 
 ```
-RSI > 70 (Overbought)   →  0$ (on n'achète pas, trop cher)
-55 < RSI ≤ 70 (Warm)    → 12$ (achat léger)
-45 ≤ RSI ≤ 55 (Neutral) → 24$ (achat normal)
-RSI < 45 (Oversold)     → 36$ (achat agressif)
+MVRV < 1.0 ET RSI ≤ 70  → 150$ (DEEP_VALUE, ×5)
+RSI > 70 (Overbought)   →   0$ (on n'achète pas, trop cher)
+55 < RSI ≤ 70 (Warm)    →  30$ (achat léger)
+45 ≤ RSI ≤ 55 (Neutral) →  60$ (achat normal)
+RSI < 45 (Oversold)     →  90$ (achat agressif)
 ```
 
-Le montant est ensuite réparti **80% BTC** / **20% ETH** :
+Le MVRV est récupéré via **CoinMetrics Community API** (gratuit, sans clé API), caché 1h. Quand MVRV < 1.0, le marché est en "deep value" (prix spot < prix moyen d'achat du réseau).
+
+Le montant est ensuite réparti **90% BTC** / **10% ETH** :
 ```
-Exemple : RSI = 48 → Bracket NEUTRAL → 24$
-  → BTC : 24 × 0.80 = 19.20$
-  → ETH : 24 × 0.20 =  4.80$
+Exemple : RSI = 48 → Bracket NEUTRAL → 60$
+  → BTC : 60 × 0.90 = 54.00$
+  → ETH : 60 × 0.10 =  6.00$
 ```
 
 ### Crash Reserve
@@ -904,7 +907,8 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 │     └─ Placer ordres maker (0% frais)                    │
 │                                                          │
 │ TOUTES LES 10 MINUTES                                    │
-│    └─ 💓 Heartbeat : RSI, budget restant, cumul BTC/ETH │
+│    └─ 💓 Heartbeat : RSI, MVRV, budget restant,           │
+│       cumul BTC/ETH, Firebase + Telegram                 │
 │                                                          │
 │ BUDGET ÉPUISÉ → Bot s'arrête automatiquement           │
 └──────────────────────────────────────────────────────────┘
@@ -934,8 +938,9 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 | `bot_london.py`           | 🇬🇧 Boucle principale London Breakout (Revolut X, 8 paires, maker-only)  |
 | `bot_infinity.py`         | ♾️ Boucle principale Infinity (Revolut X, BTC+AAVE+XLM, DCA inversé) |
 | `infinity_engine.py`      | ♾️ Logique DCA inversé : check_first_entry, paliers, trailing high   |
-| `dca_engine.py`           | 📈 Logique DCA RSI : brackets RSI, crash reserve, budget tracking       |
+| `dca_engine.py`           | 📈 Logique DCA RSI : brackets RSI, MVRV deep-value, crash reserve, budget tracking |
 | `bot_dca.py`              | 📈 Boucle principale DCA RSI (Revolut X, BTC+ETH, maker-only)           |
+| `onchain.py`              | 📈 Métriques on-chain (MVRV via CoinMetrics Community API, cache 1h) |
 | `bot.py`                  | (legacy) Ancien bot Dow Theory Revolut X                                |
 | `binance_client.py`       | Communique avec l'API Binance (OCO, market, balances)                   |
 | `revolut_client.py`       | Communique avec l'API Revolut X (Ed25519, limit orders)                 |
@@ -1451,8 +1456,9 @@ BTC remonte à 65 520$ → Drop = -9.0% (< 10%)
 | `tradex-listing`           | Bot Listing (nouveaux listings USDC, OCO dynamique) | —   |
 | `tradex-london`          | Bot London Breakout (8 paires USD, Revolut X)   | —   |
 | `tradex-infinity`          | Bot Infinity (BTC+AAVE+XLM, DCA inversé, Revolut X)   | —   |
-| `tradex-dca`               | Bot DCA RSI (BTC+ETH, achat quotidien, Revolut X)     | —   |
+| `tradex-dca`               | Bot DCA RSI (BTC+ETH, achat quotidien, MVRV, Revolut X) | —   |
 | `tradex-dashboard-unified` | Dashboard Streamlit unifié                     | 8502 |
+| `tradex-dca-dashboard`     | Dashboard DCA standalone (Plotly)               | 8503 |
 | `tradex-telegram-commands` | Bot Telegram de pilotage opérateur             | —   |
 
 ### Commandes utiles
@@ -1467,7 +1473,7 @@ ssh BOT-VPS 'sudo journalctl -u tradex-infinity -f'
 ssh BOT-VPS 'sudo journalctl -u tradex-dca -f'
 
 # État de tous les services
-ssh BOT-VPS 'for svc in tradex-binance tradex-binance-crashbot tradex-listing tradex-london tradex-infinity tradex-dca tradex-dashboard-unified; do echo -n "$svc: "; sudo systemctl is-active $svc; done'
+ssh BOT-VPS 'for svc in tradex-binance tradex-binance-crashbot tradex-listing tradex-london tradex-infinity tradex-dca tradex-dashboard-unified tradex-dca-dashboard; do echo -n "$svc: "; sudo systemctl is-active $svc; done'
 
 # Redémarrer un bot
 ssh BOT-VPS 'sudo systemctl restart tradex-binance'
