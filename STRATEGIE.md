@@ -34,40 +34,47 @@
    - [Paliers d&#39;achat](#paliers-dachat-dca-inversé)
    - [Paliers de vente](#paliers-de-vente-distribution-progressive)
    - [Sécurités](#sécurités)
-9. [Allocation dynamique du capital](#allocation-dynamique-du-capital)
+9. [Bot 6 — DCA RSI (Revolut X)](#bot-6--dca-rsi-revolut-x)
+   - [L&#39;idée](#lidée-dca)
+   - [Brackets RSI](#brackets-rsi)
+   - [Crash Reserve](#crash-reserve)
+   - [Budget et horizon](#budget-et-horizon)
+10. [Allocation dynamique du capital](#allocation-dynamique-du-capital)
    - [Comment ça marche](#comment-ça-marche)
    - [Pourquoi cette logique](#pourquoi-cette-logique)
-10. [Gestion du risque (Money Management)](#gestion-du-risque-money-management)
-11. [La boucle de chaque bot](#la-boucle-de-chaque-bot)
-12. [Les fichiers et qui fait quoi](#les-fichiers-et-qui-fait-quoi)
-13. [Exemple concret — Trade RANGE](#exemple-concret--trade-range)
-14. [Exemple concret — Trade CRASH](#exemple-concret--trade-crash)
-15. [Exemple concret — Trade LISTING](#exemple-concret--trade-listing)
-16. [Exemple concret — Trade LONDON BREAKOUT](#exemple-concret--trade-london-breakout)
-17. [Exemple concret — Trade INFINITY](#exemple-concret--trade-infinity)
-18. [Ce que les bots ne font PAS](#ce-que-les-bots-ne-font-pas)
-19. [Les paramètres importants](#les-paramètres-importants-fichier-env)
-20. [Infrastructure &amp; Déploiement](#infrastructure--déploiement)
+11. [Gestion du risque (Money Management)](#gestion-du-risque-money-management)
+12. [La boucle de chaque bot](#la-boucle-de-chaque-bot)
+13. [Les fichiers et qui fait quoi](#les-fichiers-et-qui-fait-quoi)
+14. [Exemple concret — Trade RANGE](#exemple-concret--trade-range)
+15. [Exemple concret — Trade CRASH](#exemple-concret--trade-crash)
+16. [Exemple concret — Trade LISTING](#exemple-concret--trade-listing)
+17. [Exemple concret — Trade LONDON BREAKOUT](#exemple-concret--trade-london-breakout)
+18. [Exemple concret — Trade INFINITY](#exemple-concret--trade-infinity)
+19. [Exemple concret — Trade DCA RSI](#exemple-concret--trade-dca-rsi)
+20. [Ce que les bots ne font PAS](#ce-que-les-bots-ne-font-pas)
+21. [Les paramètres importants](#les-paramètres-importants-fichier-env)
+22. [Infrastructure &amp; Déploiement](#infrastructure--déploiement)
 
 ---
 
 ## L'idée générale
 
-TradeX est un **écosystème de 5 bots** qui surveillent le marché crypto **24h/24** et tradent automatiquement quand les conditions sont réunies.
+TradeX est un **écosystème de 6 bots** qui surveillent le marché crypto **24h/24** et tradent automatiquement quand les conditions sont réunies.
 
-Les bots fonctionnent sur **2 exchanges** avec **5 stratégies complémentaires** :
+Les bots fonctionnent sur **2 exchanges** avec **6 stratégies complémentaires** :
 
 > **🔄 Trail Range** (Binance) : "Quand le prix oscille dans un couloir, je joue les rebonds entre le plafond et le plancher."
 > **💥 CrashBot** (Binance) : "Quand une crypto s'effondre brutalement, j'achète le dip et je laisse remonter."
 > **🆕 Listing Bot** (Binance) : "Quand un nouveau token est listé sur Binance, j'achète le momentum initial et je sécurise via OCO dynamique."
 > **🇬🇧 London Breakout** (Revolut X) : "Quand le prix casse le range de la session de Londres (08-16 UTC), j'entre long avec un SL basé sur l'ATR."
 > **♾️ Infinity** (Revolut X) : "Quand une crypto baisse de X% par rapport à son plus haut récent, j'accumule par paliers DCA puis je revends progressivement."
+> **📈 DCA RSI** (Revolut X) : "Chaque jour, j'achète BTC et ETH selon le niveau du RSI, avec une réserve crash pour les baisses brutales."
 
 Aucun bot ne prédit l'avenir. Chacun **constate** un pattern spécifique et agit en conséquence.
 
 ---
 
-## Les cinq bots
+## Les six bots
 
 | Bot                     | Exchange        | Paires                                 | Logique                              | Side                | Capital                     |
 | ----------------------- | --------------- | -------------------------------------- | ------------------------------------ | ------------------- | --------------------------- |
@@ -76,6 +83,7 @@ Aucun bot ne prédit l'avenir. Chacun **constate** un pattern spécifique et agi
 | 🆕**Listing Bot** | Binance (USDC)  | Auto-discovery nouveaux USDC           | Listing event + momentum + OCO       | **Long Only** | 30% Binance (fixe) |
 | 🇬🇧**London Breakout** | Revolut X (USD) | 8 (BTC, ETH, SOL, BNB, LINK, ADA, DOT, AVAX) | Session breakout (08-16 UTC) → long | **Long Only** | 20% Revolut X |
 | ♾️**Infinity**  | Revolut X (USD) | BTC, AAVE, XLM (configs optimisées) | DCA inversé + vente paliers         | **Long Only** | 65% Revolut X (~22% par paire) |
+| 📈**DCA RSI**    | Revolut X (USD) | BTC, ETH                               | DCA quotidien RSI-based + MVRV deep-value + crash reserve | **Long Only** | DCA_CAPITAL_PCT du solde RevX (85/15) |
 
 ---
 
@@ -418,7 +426,7 @@ Bougie H4 16:00 :
 
 ---
 
-## Exécution des ordres Revolut X (London + Infinity)
+## Exécution des ordres Revolut X (London + Infinity + DCA RSI)
 
 📄 **Fichier : `revolut_client.py`**
 
@@ -443,6 +451,10 @@ Taker fallback              → fill immédiat ✅ (0.09% fee)
 ### London Bot — maker + taker fallback
 
 1 tentative maker (60s via `LON_MAKER_WAIT_SECONDS`), puis fallback en taker (0.09%).
+
+### DCA RSI Bot — maker + taker fallback
+
+1 tentative maker (60s via `DCA_MAKER_WAIT_SECONDS`), puis fallback en taker (0.09%). Même logique que London.
 
 ---
 
@@ -578,6 +590,66 @@ Stops     : 0
 
 ---
 
+## Bot 6 — DCA RSI (Revolut X)
+
+📄 **Fichiers : `dca_engine.py` (logique pure), `bot_dca.py` (boucle)**
+
+### L'idée (DCA)
+
+Au lieu de timer le marché, le bot **achète BTC et ETH chaque jour** pour un montant qui dépend du RSI quotidien de BTC et du ratio **MVRV on-chain**. Plus le RSI est bas (marché survendu) ou le MVRV est bas (sous-évaluation fondamentale), plus le montant est élevé. En cas de crash majeur, une **réserve de crash** permet des achats bonus.
+
+L'objectif est d'**accumuler progressivement** sur 12 mois, en achetant plus quand le marché est en solde.
+
+### Brackets RSI
+
+Le RSI quotidien de BTC détermine le montant d'achat du jour :
+
+```
+RSI > 70 (Overbought)   →  0$ (on n'achète pas, trop cher)
+55 < RSI ≤ 70 (Warm)    → 12$ (achat léger)
+45 ≤ RSI ≤ 55 (Neutral) → 24$ (achat normal)
+RSI < 45 (Oversold)     → 36$ (achat agressif)
+```
+
+Le montant est ensuite réparti **80% BTC** / **20% ETH** :
+```
+Exemple : RSI = 48 → Bracket NEUTRAL → 24$
+  → BTC : 24 × 0.80 = 19.20$
+  → ETH : 24 × 0.20 =  4.80$
+```
+
+### Crash Reserve
+
+Une réserve de **15% du capital DCA** est dédiée aux crashes majeurs de BTC, mesurés par rapport au **rolling high 90 jours** :
+
+| Drop BTC vs High 90j | Montant bonus | Cumulé |
+| --------------------- | ------------- | ------ |
+| -15%                  | 500$ (100% BTC) | 500$   |
+| -25%                  | 700$ (100% BTC) | 1200$  |
+| -35%                  | 800$ (100% BTC) | 2000$  |
+
+- Chaque niveau ne se déclenche qu'**une seule fois** par crash
+- Quand le prix remonte au-dessus de -10% du high → les niveaux se **réinitialisent**
+
+### Budget et horizon
+
+```
+Capital DCA      : solde Revolut X × DCA_CAPITAL_PCT (défaut 100%)
+├─ DCA actif     : 85% du capital DCA (achats quotidiens)
+└─ Crash reserve : 15% du capital DCA (achats bonus)
+
+  Budget calculé dynamiquement au démarrage du bot.
+  Rythme max : 150$/jour (MVRV deep value) ou 90$/jour (RSI < 45)
+  Rythme moyen : ~30-60$/jour
+
+Signaux on-chain : MVRV via CoinMetrics Community API (gratuit)
+Exécution : 1×/jour à 10:00 UTC, maker-only (0% frais Revolut X)
+```
+
+Le bot s'arrête automatiquement quand le budget (DCA actif ou crash reserve) est épuisé.
+
+---
+
 ## Allocation dynamique du capital
 
 📄 **Fichier : `allocator.py`**
@@ -617,9 +689,9 @@ Exemple : Capital Binance = 3 226 USDC, PF Trail = 0.47
 - Quand le Trail Range **prouve** qu'il gagne (PF > 1.1), on lui donne plus de capital
 - Quand il perd, on réduit son exposition et CrashBot prend le relais
 
-### Les bots Revolut X (London + Infinity)
+### Les bots Revolut X (London + Infinity + DCA RSI)
 
-Les bots London et Infinity partagent le capital Revolut X avec une allocation fixe : **80% Infinity** / **20% London Breakout**. Ils sont **indépendants** de l'allocation Binance — les deux exchanges sont complètement séparés.
+Les bots London et Infinity partagent le capital Revolut X avec une allocation fixe : **80% Infinity** / **20% London Breakout**. Le **DCA RSI** opère avec un **budget dynamique** (`DCA_CAPITAL_PCT` du solde Revolut X, réparti 85% actif / 15% crash reserve). Les deux exchanges sont complètement séparés.
 
 ---
 
@@ -646,6 +718,7 @@ position_size = risk_amount / sl_distance # ex: 150 / 5 = 30 unités
 | � Listing Bot | Binance   | N/A (market) | 3             | 30% / slots            |
 | �🇬🇧 London Breakout | Revolut X | 5%           | 1             | 50%                    |
 | ♾️ Infinity  | Revolut X | 15-25% (SL)  | 3 cycles max  | 70% (max investi/paire) |
+| 📈 DCA RSI   | Revolut X | N/A (DCA)    | N/A            | DCA_CAPITAL_PCT du solde |
 
 ### Calcul d'equity
 
@@ -804,6 +877,39 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 └──────────────────────────────────────────────────────────┘
 ```
 
+### 📈 DCA RSI (`bot_dca.py`)
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ TOUTES LES 60 SECONDES (tick)                            │
+│                                                          │
+│  1. Vérifier la crash reserve (en permanence)            │
+│     ├─ Calculer rolling high BTC (90 jours)              │
+│     ├─ Drop -15% ? → Achat bonus 500$ BTC               │
+│     ├─ Drop -25% ? → Achat bonus 700$ BTC               │
+│     ├─ Drop -35% ? → Achat bonus 800$ BTC               │
+│     └─ Remonté > -10% ? → Reset des niveaux crash       │
+│                                                          │
+│  2. DCA quotidien (1×/jour à 10:00 UTC)                  │
+│     ├─ Déjà acheté aujourd'hui ? → Skip                 │
+│     ├─ Budget DCA épuisé ? → Skip                       │
+│     ├─ Fetch MVRV (CoinMetrics, cache 1h)               │
+│     ├─ Calculer RSI daily BTC                            │
+│     │   ├─ MVRV < 1.0 ET RSI ≤ 70 → 150$ (deep value)  │
+│     │   ├─ RSI > 70 → 0$ (overbought, skip)             │
+│     │   ├─ 55 < RSI ≤ 70 → 30$ (warm)                   │
+│     │   ├─ 45 ≤ RSI ≤ 55 → 60$ (neutral)                │
+│     │   └─ RSI < 45 → 90$ (oversold)                     │
+│     ├─ Split 90% BTC / 10% ETH                          │
+│     └─ Placer ordres maker (0% frais)                    │
+│                                                          │
+│ TOUTES LES 10 MINUTES                                    │
+│    └─ 💓 Heartbeat : RSI, budget restant, cumul BTC/ETH │
+│                                                          │
+│ BUDGET ÉPUISÉ → Bot s'arrête automatiquement           │
+└──────────────────────────────────────────────────────────┘
+```
+
 ---
 
 ## Les fichiers et qui fait quoi
@@ -828,6 +934,8 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 | `bot_london.py`           | 🇬🇧 Boucle principale London Breakout (Revolut X, 8 paires, maker-only)  |
 | `bot_infinity.py`         | ♾️ Boucle principale Infinity (Revolut X, BTC+AAVE+XLM, DCA inversé) |
 | `infinity_engine.py`      | ♾️ Logique DCA inversé : check_first_entry, paliers, trailing high   |
+| `dca_engine.py`           | 📈 Logique DCA RSI : brackets RSI, crash reserve, budget tracking       |
+| `bot_dca.py`              | 📈 Boucle principale DCA RSI (Revolut X, BTC+ETH, maker-only)           |
 | `bot.py`                  | (legacy) Ancien bot Dow Theory Revolut X                                |
 | `binance_client.py`       | Communique avec l'API Binance (OCO, market, balances)                   |
 | `revolut_client.py`       | Communique avec l'API Revolut X (Ed25519, limit orders)                 |
@@ -840,7 +948,7 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 
 | Dashboard            | Port | Description                                           |
 | -------------------- | ---- | ----------------------------------------------------- |
-| 📊 Dashboard unifié | 8502 | 6 onglets : Overview, Trail Range, CrashBot, Listing, Infinity, London |
+| 📊 Dashboard unifié | 8502 | 7 onglets : Overview, Trail Range, CrashBot, Listing, Infinity, London, DCA |
 
 ---
 
@@ -1129,6 +1237,69 @@ Prix crash à 58 100$ → SL touché ❌
 
 ---
 
+## Exemple concret — Trade DCA RSI
+
+Imaginons le bot DCA au jour 45 de son fonctionnement :
+
+### 1️⃣ Achat quotidien normal
+
+```
+🕐 10:00 UTC — Tick DCA
+RSI(14) daily BTC = 48.2
+
+  Bracket = NEUTRAL (45 ≤ 48.2 ≤ 55) → Montant = 60$
+  Split : BTC 90% = 54.00$ | ETH 10% = 6.00$
+
+📈 Achat BTC-USD :
+  Prix : 67 500$ | Size = 54.00 / 67 500 = 0.00080000 BTC
+  → Ordre limit maker (0% frais) ✅
+
+📈 Achat ETH-USD :
+  Prix : 3 400$ | Size = 6.00 / 3 400 = 0.00176471 ETH
+  → Ordre limit maker (0% frais) ✅
+
+Budget DCA restant : 3 876$ / 4 250$ (85% du capital DCA)
+```
+
+### 2️⃣ RSI élevé → skip
+
+```
+🕐 10:00 UTC — Tick DCA
+RSI(14) daily BTC = 73.5
+
+  Bracket = OVERBOUGHT (73.5 > 70) → Montant = 0$
+  → ⏭️ Pas d'achat aujourd'hui (marché trop cher)
+```
+
+### 3️⃣ Crash reserve — BTC crashe
+
+```
+BTC chute brutalement. Rolling high 90j = 72 000$
+
+Prix actuel = 60 120$ → Drop = -16.5%
+
+  Drop ≥ 15% → 🚨 CRASH LEVEL 1
+  → Achat bonus 500$ BTC
+  Size = 500 / 60 120 = 0.00831672 BTC
+  → Ordre limit maker ✅
+  Crash reserve restante : 1 500$ / 2 000$
+
+Prix continue à 53 280$ → Drop = -26.0%
+  Drop ≥ 25% → 🚨 CRASH LEVEL 2
+  → Achat bonus 700$ BTC
+  → Crash reserve restante : 800$ / 2 000$
+```
+
+### 4️⃣ Récupération → reset crash levels
+
+```
+BTC remonte à 65 520$ → Drop = -9.0% (< 10%)
+  → ✅ Crash levels réinitialisés
+  → Les niveaux -15%, -25%, -35% pourront se redéclencher
+```
+
+---
+
 ## Ce que les bots ne font PAS
 
 | ❌ Ne fait pas        | ✅ Fait à la place                                          |
@@ -1231,6 +1402,31 @@ Prix crash à 58 100$ → SL touché ❌
 | `PF_HIGH`    | 1.1    | Seuil haut du PF (au-dessus → Agressif)     |
 | `MIN_TRADES` | 20     | Nombre minimum de trades pour évaluer le PF |
 
+### DCA RSI 📈
+
+| Paramètre                    | Valeur     | Ce que ça fait                                |
+| ----------------------------- | ---------- | ---------------------------------------------- |
+| `DCA_CAPITAL_PCT`           | 1.0 (100%) | Part du solde Revolut X allouée au DCA         |
+| `DCA_ACTIVE_PCT`            | 0.85 (85%) | Part du capital DCA → achats quotidiens        |
+| `DCA_CRASH_PCT`             | 0.15 (15%) | Part du capital DCA → crash reserve            |
+| `DCA_BASE_DAILY_AMOUNT`     | 30$        | Montant de base (bracket WARM, RSI 55-70)      |
+| `DCA_BTC_ALLOC`             | 90%        | Part allouée au BTC                            |
+| `DCA_ETH_ALLOC`             | 10%        | Part allouée à l'ETH                            |
+| `DCA_RSI_OVERBOUGHT`        | 70         | Seuil RSI overbought (skip)                    |
+| `DCA_RSI_WARM`              | 55         | Seuil RSI warm (montant ×1)                    |
+| `DCA_RSI_NEUTRAL_LOW`       | 45         | Seuil RSI oversold (montant ×3)                |
+| `DCA_CRASH_DROP_1/2/3`      | 15/25/35%  | Seuils de drop pour crash reserve              |
+| `DCA_CRASH_AMOUNT_1/2/3`    | 500/700/800$ | Montants bonus crash                         |
+| `DCA_CRASH_BTC_ONLY`        | true       | Crash reserve 100% BTC                         |
+| `DCA_CRASH_LOOKBACK_DAYS`   | 90 jours   | Fenêtre pour le rolling high                   |
+| `DCA_EXECUTION_HOUR_UTC`    | 10         | Heure d'exécution quotidienne (UTC)            |
+| `DCA_POLLING_SECONDS`       | 60s        | Fréquence de polling                           |
+| `DCA_HEARTBEAT_SECONDS`     | 600s       | Heartbeat Telegram (10 min)                    |
+| `DCA_MAKER_WAIT_SECONDS`    | 60s        | Attente max pour fill maker                    |
+| `DCA_MVRV_ENABLED`          | true       | Active le signal MVRV on-chain                 |
+| `DCA_MVRV_THRESHOLD`        | 1.0        | Seuil MVRV pour deep value (×5)               |
+| `DCA_MVRV_MULTIPLIER`       | 5.0        | Multiplicateur montant si MVRV < seuil         |
+
 ---
 
 ## Infrastructure & Déploiement
@@ -1255,6 +1451,7 @@ Prix crash à 58 100$ → SL touché ❌
 | `tradex-listing`           | Bot Listing (nouveaux listings USDC, OCO dynamique) | —   |
 | `tradex-london`          | Bot London Breakout (8 paires USD, Revolut X)   | —   |
 | `tradex-infinity`          | Bot Infinity (BTC+AAVE+XLM, DCA inversé, Revolut X)   | —   |
+| `tradex-dca`               | Bot DCA RSI (BTC+ETH, achat quotidien, Revolut X)     | —   |
 | `tradex-dashboard-unified` | Dashboard Streamlit unifié                     | 8502 |
 | `tradex-telegram-commands` | Bot Telegram de pilotage opérateur             | —   |
 
@@ -1267,9 +1464,10 @@ ssh BOT-VPS 'sudo journalctl -u tradex-binance-crashbot -f'
 ssh BOT-VPS 'sudo journalctl -u tradex-listing -f'
 ssh BOT-VPS 'sudo journalctl -u tradex-london -f'
 ssh BOT-VPS 'sudo journalctl -u tradex-infinity -f'
+ssh BOT-VPS 'sudo journalctl -u tradex-dca -f'
 
 # État de tous les services
-ssh BOT-VPS 'for svc in tradex-binance tradex-binance-crashbot tradex-listing tradex-london tradex-infinity tradex-dashboard-unified; do echo -n "$svc: "; sudo systemctl is-active $svc; done'
+ssh BOT-VPS 'for svc in tradex-binance tradex-binance-crashbot tradex-listing tradex-london tradex-infinity tradex-dca tradex-dashboard-unified; do echo -n "$svc: "; sudo systemctl is-active $svc; done'
 
 # Redémarrer un bot
 ssh BOT-VPS 'sudo systemctl restart tradex-binance'

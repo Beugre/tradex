@@ -22,6 +22,7 @@ BOT_LABELS = {
     "infinity": "Infinity",
     "london-breakout": "London Breakout",
     "listing": "Listing Event",
+    "dca": "DCA RSI",
     "trend-legacy": "Trend Legacy",
     "unknown": "UNKNOWN",
 }
@@ -45,6 +46,8 @@ def classify_bot(trade: dict) -> str:
         return "infinity"
     if strategy == "LONDON" or exchange == "revolut-london":
         return "london-breakout"
+    if strategy == "DCA" or exchange == "revolut-dca":
+        return "dca"
     if strategy == "RANGE":
         if symbol.endswith("USDC"):
             return "trail-range"

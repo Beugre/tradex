@@ -316,6 +316,7 @@ class LondonBreakoutBot:
         self._telegram = TelegramNotifier(
             bot_token=config.TELEGRAM_BOT_TOKEN,
             chat_id=config.TELEGRAM_CHAT_ID,
+            silent=self.dry_run,
         )
 
         # State
@@ -1141,6 +1142,7 @@ class LondonBreakoutBot:
                 current_equity=available,
                 portfolio_risk_before=0.0,
                 exchange="revolut-london",
+                dry_run=self.dry_run,
             )
             if fb_id:
                 pos.firebase_trade_id = fb_id
@@ -1557,6 +1559,7 @@ class LondonBreakoutBot:
                 total_risk_pct=0.0,
                 pairs_count=len(LON_TRADING_PAIRS),
                 exchange="revolut-london",
+                dry_run=self.dry_run,
             )
         except Exception:
             pass
@@ -1621,6 +1624,7 @@ class LondonBreakoutBot:
                     daily_pnl=0.0,
                     trades_today=0,
                     exchange="revolut-london",
+                    dry_run=self.dry_run,
                 )
                 logger.info("📸 Daily snapshot Firebase loggé")
             except Exception:

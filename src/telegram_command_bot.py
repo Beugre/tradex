@@ -44,6 +44,11 @@ BOTS = {
         "label": "London Breakout",
         "heartbeat_default": config.LON_HEARTBEAT_SECONDS,
     },
+    "dca": {
+        "exchange": "revolut-dca",
+        "label": "DCA RSI",
+        "heartbeat_default": config.DCA_HEARTBEAT_SECONDS,
+    },
 }
 
 ALIAS = {
@@ -56,6 +61,9 @@ ALIAS = {
     "infinity": "infinity",
     "lon": "london",
     "london": "london",
+    "dca": "dca",
+    "dcasri": "dca",
+    "dcarsi": "dca",
 }
 
 

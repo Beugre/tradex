@@ -31,6 +31,7 @@ _STRATEGY_LABEL = {
     StrategyType.INFINITY: "♾️ INFINITY",
     StrategyType.LONDON: "🇬🇧 LONDON",
     StrategyType.LISTING: "🆕 LISTING",
+    StrategyType.DCA: "📈 DCA",
 }
 
 logger = logging.getLogger(__name__)
@@ -57,13 +58,18 @@ def _fp(price: float) -> str:
 class TelegramNotifier:
     """Envoie des notifications via Telegram Bot API."""
 
-    def __init__(self, bot_token: str, chat_id: str) -> None:
+    def __init__(self, bot_token: str, chat_id: str, silent: bool = False) -> None:
         self._bot_token = bot_token
         self._chat_id = chat_id
         self._client = httpx.Client(timeout=10.0)
-        self._enabled = bool(bot_token and chat_id)
+        self._enabled = bool(bot_token and chat_id) and not silent
 
-        if not self._enabled:
+        if silent:
+            logger.info(
+                "Telegram silencieux (dry-run). "
+                "Les notifications seront désactivées."
+            )
+        elif not self._enabled:
             logger.warning(
                 "Telegram non configuré (token ou chat_id manquant). "
                 "Les notifications seront désactivées."
@@ -596,6 +602,97 @@ class TelegramNotifier:
         else:
             lines.append("\n  🔎 Aucune évaluation encore")
         lines.append(f"[Dashboard]({DASHBOARD_URL})")
+        self._send("\n".join(lines))
+
+    # ── DCA Bot ────────────────────────────────────────────────────────────
+
+    def notify_dca_buy(
+        self,
+        rsi: float,
+        bracket: str,
+        amount_usd: float,
+        btc_amount: float,
+        eth_amount: float,
+        total_spent: float,
+        remaining: float,
+        btc_accumulated: float,
+        eth_accumulated: float,
+        buy_count: int,
+    ) -> None:
+        """Notification d'achat DCA quotidien."""
+        message = (
+            f"📈 *DCA Buy #{buy_count}* 📈\n"
+            f"  RSI: `{rsi:.1f}` [{bracket}]\n"
+            f"  Montant: `${amount_usd:.2f}` → BTC `${btc_amount:.2f}` / ETH `${eth_amount:.2f}`\n"
+            f"  Total dépensé: `${total_spent:.0f}` | Restant: `${remaining:.0f}`\n"
+            f"  Accum: BTC `{btc_accumulated:.8f}` | ETH `{eth_accumulated:.6f}`\n"
+            f"[Dashboard]({DASHBOARD_URL})"
+        )
+        self._send(message)
+
+    def notify_dca_crash_buy(
+        self,
+        drop_pct: float,
+        price: float,
+        rolling_high: float,
+        amount_usd: float,
+        crash_spent: float,
+        crash_remaining: float,
+        levels_triggered: list[str],
+    ) -> None:
+        """Notification d'achat crash reserve DCA."""
+        message = (
+            f"🚨 *DCA CRASH Buy* 🚨\n"
+            f"  BTC drop: `-{drop_pct*100:.0f}%` du high 90j\n"
+            f"  Prix: `{_fp(price)}` | High 90j: `{_fp(rolling_high)}`\n"
+            f"  Montant: `${amount_usd:.0f}` (100% BTC)\n"
+            f"  Crash dépensé: `${crash_spent:.0f}` | Restant: `${crash_remaining:.0f}`\n"
+            f"  Levels triggered: `{', '.join(levels_triggered)}`\n"
+            f"[Dashboard]({DASHBOARD_URL})"
+        )
+        self._send(message)
+
+    def notify_dca_heartbeat(
+        self,
+        rsi: float,
+        bracket: str,
+        btc_price: float,
+        eth_price: float,
+        portfolio_value: float,
+        total_spent: float,
+        pnl: float,
+        pnl_pct: float,
+        dca_remaining: float,
+        crash_remaining: float,
+        btc_accumulated: float,
+        eth_accumulated: float,
+        buy_count: int,
+        crash_buy_count: int,
+        rolling_high: float,
+        drop_pct: float,
+        crash_levels_triggered: list[str],
+        days_active: int,
+        mvrv: float | None = None,
+    ) -> None:
+        """Heartbeat périodique DCA Bot."""
+        pnl_emoji = "🟢" if pnl >= 0 else "🔴"
+        mvrv_str = f"`{mvrv:.4f}`" if mvrv is not None else "`N/A`"
+        lines = [
+            f"💓 *DCA Bot* 📈",
+            f"  RSI BTC: `{rsi:.1f}` [{bracket}] | MVRV: {mvrv_str}",
+            f"  BTC: `{_fp(btc_price)}` | ETH: `{_fp(eth_price)}`",
+            f"",
+            f"  📊 Portfolio: `${portfolio_value:,.2f}`",
+            f"  Dépensé: `${total_spent:,.0f}` | {pnl_emoji} PnL: `${pnl:+,.2f}` (`{pnl_pct:+.1f}%`)",
+            f"  Buys: `{buy_count}` DCA + `{crash_buy_count}` crash | Jours: `{days_active}`",
+            f"",
+            f"  💰 Accum: BTC `{btc_accumulated:.8f}` | ETH `{eth_accumulated:.6f}`",
+            f"  Budget DCA restant: `${dca_remaining:,.0f}` | Crash: `${crash_remaining:,.0f}`",
+            f"",
+            f"  📉 High 90j: `{_fp(rolling_high)}` | Drop: `{drop_pct:.1f}%`",
+            f"  Crash niveaux: `{', '.join(crash_levels_triggered) if crash_levels_triggered else 'aucun'}`",
+            f"[Dashboard]({DASHBOARD_URL})",
+        ]
         self._send("\n".join(lines))
 
     def send_raw(self, text: str) -> None:

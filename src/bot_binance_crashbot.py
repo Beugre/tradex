@@ -153,6 +153,7 @@ class TradeXBinanceCrashBot:
         self._telegram = TelegramNotifier(
             bot_token=config.TELEGRAM_BOT_TOKEN,
             chat_id=config.TELEGRAM_CHAT_ID,
+            silent=self.dry_run,
         )
 
         # Persistance séparée
@@ -1332,6 +1333,7 @@ class TradeXBinanceCrashBot:
                 current_equity=equity,
                 portfolio_risk_before=portfolio_risk,
                 exchange=EXCHANGE_NAME,
+                dry_run=self.dry_run,
             )
             if fb_id:
                 position.firebase_trade_id = fb_id
@@ -1906,6 +1908,7 @@ class TradeXBinanceCrashBot:
                 total_risk_pct=exposure_pct / 100 if exposure_pct > 0 else 0,
                 pairs_count=len(self._trading_pairs),
                 exchange=EXCHANGE_NAME,
+                dry_run=self.dry_run,
             )
         except Exception:
             pass
@@ -1963,6 +1966,7 @@ class TradeXBinanceCrashBot:
                 daily_pnl=daily_pnl,
                 trades_today=trades_today,
                 exchange=EXCHANGE_NAME,
+                dry_run=self.dry_run,
             )
             logger.info("📸 Snapshot quotidien → equity=$%.2f | %d positions", equity, len(open_pos))
         except Exception as e:

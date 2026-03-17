@@ -1841,16 +1841,380 @@ def render_revolut_infinity():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  DCA RSI Bot
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def render_revolut_dca():
+    """Onglet DCA RSI Bot — achats quotidiens BTC/ETH basés sur le RSI."""
+    st.header("📈 DCA Bot — RSI-based daily buying")
+    st.caption(
+        "DCA quotidien BTC/ETH piloté par le RSI + crash reserve — Revolut X, maker-only"
+    )
+
+    db = _get_db()
+
+    # ── Fetch DCA buy events from Firebase ─────────────────────────────────────
+    try:
+        since = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+        docs = (
+            db.collection("events")
+            .where("event_type", "==", "DCA_BUY")
+            .where("exchange", "==", "revolut-dca")
+            .where("timestamp", ">=", since)
+            .order_by("timestamp", direction=firestore.Query.DESCENDING)
+            .limit(500)
+            .stream()
+        )
+        events = [doc.to_dict() for doc in docs]
+    except Exception:
+        events = []
+
+    # ── Fetch latest DCA heartbeat ─────────────────────────────────────────────
+    try:
+        hb_docs = (
+            db.collection("events")
+            .where("event_type", "==", "DCA_HEARTBEAT")
+            .where("exchange", "==", "revolut-dca")
+            .order_by("timestamp", direction=firestore.Query.DESCENDING)
+            .limit(1)
+            .stream()
+        )
+        dca_hb = [doc.to_dict() for doc in hb_docs]
+    except Exception:
+        dca_hb = []
+
+    # ── Parse buy events into DataFrame ────────────────────────────────────────
+    buy_rows = []
+    for ev in events:
+        d = ev.get("data", {})
+        ts_raw = ev.get("timestamp", "")
+        if hasattr(ts_raw, "isoformat"):
+            ts_str = ts_raw.isoformat()
+        else:
+            ts_str = str(ts_raw)
+        try:
+            ts = pd.Timestamp(ts_str)
+        except Exception:
+            ts = pd.NaT
+        buy_rows.append({
+            "timestamp": ts,
+            "symbol": d.get("symbol", ev.get("symbol", "")),
+            "reason": d.get("reason", ""),
+            "amount_usd": float(d.get("amount_usd", 0)),
+            "price": float(d.get("price", 0)),
+            "size": float(d.get("size", 0)),
+            "rsi": float(d.get("rsi", 0)),
+            "bracket": d.get("bracket", ""),
+            "fill_type": d.get("fill_type", ""),
+        })
+
+    df_buys = pd.DataFrame(buy_rows)
+    if not df_buys.empty:
+        df_buys = df_buys.sort_values("timestamp").reset_index(drop=True)
+        df_buys["cumulative_usd"] = df_buys["amount_usd"].cumsum()
+        df_buys["cumulative_btc"] = df_buys.loc[
+            df_buys["symbol"].str.startswith("BTC"), "size"
+        ].cumsum()
+        df_buys["cumulative_btc"] = df_buys["cumulative_btc"].ffill().fillna(0)
+        df_buys["cumulative_eth"] = df_buys.loc[
+            df_buys["symbol"].str.startswith("ETH"), "size"
+        ].cumsum()
+        df_buys["cumulative_eth"] = df_buys["cumulative_eth"].ffill().fillna(0)
+
+    # ── KPI Row ────────────────────────────────────────────────────────────────
+    has_hb = bool(dca_hb)
+    hb_data = dca_hb[0].get("data", {}) if has_hb else {}
+
+    # Compute totals from buy events if available, fallback to heartbeat
+    total_spent = df_buys["amount_usd"].sum() if not df_buys.empty else hb_data.get("total_spent", 0)
+    total_btc = df_buys.loc[df_buys["symbol"].str.startswith("BTC"), "size"].sum() if not df_buys.empty else hb_data.get("btc_accumulated", 0)
+    total_eth = df_buys.loc[df_buys["symbol"].str.startswith("ETH"), "size"].sum() if not df_buys.empty else hb_data.get("eth_accumulated", 0)
+
+    # Current prices for PnL
+    rev_prices = _fetch_revolut_prices()
+    btc_price = rev_prices.get("BTC-USD", 0)
+    eth_price = rev_prices.get("ETH-USD", 0)
+    portfolio_value = total_btc * btc_price + total_eth * eth_price
+    pnl = portfolio_value - total_spent if total_spent > 0 else 0
+    pnl_pct = (pnl / total_spent * 100) if total_spent > 0 else 0
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        rsi_val = hb_data.get("rsi", 0)
+        bracket_val = hb_data.get("bracket", "—")
+        st.metric("RSI BTC", f"{rsi_val:.1f}" if rsi_val else "—", bracket_val)
+    with c2:
+        st.metric("Total investi", f"${total_spent:,.0f}")
+    with c3:
+        st.metric("Valeur portfolio", f"${portfolio_value:,.0f}")
+    with c4:
+        st.metric("PnL", f"${pnl:+,.2f}", f"{pnl_pct:+.1f}%")
+    with c5:
+        n_buys = len(df_buys) if not df_buys.empty else 0
+        crash_count = len(df_buys[df_buys["reason"].str.contains("CRASH", na=False)]) if not df_buys.empty else 0
+        st.metric("Achats", f"{n_buys}", f"dont {crash_count} crash")
+
+    st.divider()
+
+    # ── Accumulation metrics ───────────────────────────────────────────────────
+    c6, c7, c8, c9 = st.columns(4)
+    with c6:
+        st.metric("BTC accumulés", f"{total_btc:.8f}")
+    with c7:
+        st.metric("BTC valeur", f"${total_btc * btc_price:,.2f}" if btc_price else "—")
+    with c8:
+        st.metric("ETH accumulés", f"{total_eth:.6f}")
+    with c9:
+        st.metric("ETH valeur", f"${total_eth * eth_price:,.2f}" if eth_price else "—")
+
+    # Budget info from heartbeat
+    if has_hb:
+        dca_rem = hb_data.get("dca_remaining", 0)
+        crash_rem = hb_data.get("crash_remaining", 0)
+        levels = hb_data.get("crash_levels_triggered", [])
+        c10, c11, c12 = st.columns(3)
+        with c10:
+            st.metric("Budget DCA restant", f"${dca_rem:,.0f}")
+        with c11:
+            st.metric("Crash reserve restante", f"${crash_rem:,.0f}")
+        with c12:
+            st.metric("Crash levels déclenchés", ", ".join(levels) if levels else "Aucun")
+
+    st.divider()
+
+    # ── Purchase curve (like the Revolut app) ──────────────────────────────────
+    if not df_buys.empty and btc_price > 0:
+        st.subheader("📊 Courbe d'accumulation")
+
+        # Build cumulative value over time using buy prices
+        df_chart = df_buys.copy()
+        df_chart["portfolio_value_at_buy"] = df_chart["cumulative_usd"]  # cost basis line
+        # Current value line: re-evaluate all accumulated crypto at each point's current market price
+        # For a time-series chart, use cumulative amounts × current price
+        df_chart["current_value"] = df_chart["cumulative_btc"] * btc_price + df_chart["cumulative_eth"] * eth_price
+
+        # Determine marker colors based on reason
+        marker_colors = []
+        for _, row in df_chart.iterrows():
+            if "CRASH" in str(row.get("reason", "")):
+                marker_colors.append("#ff9f43")  # orange for crash buys
+            else:
+                marker_colors.append("#14d8c4")  # cyan for regular DCA
+
+        fig = go.Figure()
+
+        # Cost basis line (invested amount)
+        fig.add_trace(go.Scatter(
+            x=df_chart["timestamp"],
+            y=df_chart["cumulative_usd"],
+            mode="lines",
+            name="Investi ($)",
+            line=dict(color="#9aa7b3", width=2, dash="dot"),
+            opacity=0.7,
+        ))
+
+        # Current portfolio value line
+        fig.add_trace(go.Scatter(
+            x=df_chart["timestamp"],
+            y=df_chart["current_value"],
+            mode="lines",
+            name="Valeur actuelle ($)",
+            line=dict(color="#14d8c4", width=3),
+            fill="tonexty",
+            fillcolor="rgba(20,216,196,0.08)",
+        ))
+
+        # Buy markers
+        fig.add_trace(go.Scatter(
+            x=df_chart["timestamp"],
+            y=df_chart["current_value"],
+            mode="markers",
+            name="Achats",
+            marker=dict(
+                size=10,
+                color=marker_colors,
+                line=dict(width=1.5, color="#111"),
+                symbol="circle",
+            ),
+            text=[
+                f"{r['reason']}<br>${r['amount_usd']:.0f} @ ${r['price']:,.0f}"
+                for _, r in df_chart.iterrows()
+            ],
+            hovertemplate="%{text}<extra></extra>",
+        ))
+
+        fig.update_layout(
+            height=400,
+            yaxis_tickformat="$,.0f",
+            yaxis_title="Valeur ($)",
+        )
+        _apply_mobile_chart_theme(fig, show_legend=True)
+        fig.update_layout(
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1,
+                font=dict(size=11),
+            )
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # ── BTC Price chart with buy markers ───────────────────────────────────
+        st.subheader("₿ Prix BTC & points d'achat")
+
+        btc_buys = df_chart[df_chart["symbol"].str.startswith("BTC")].copy()
+        if not btc_buys.empty:
+            btc_marker_colors = [
+                "#ff9f43" if "CRASH" in str(r) else "#14d8c4"
+                for r in btc_buys["reason"]
+            ]
+            btc_marker_sizes = [
+                max(8, min(18, a / 20))  # Scale marker size by amount
+                for a in btc_buys["amount_usd"]
+            ]
+
+            fig_btc = go.Figure()
+            fig_btc.add_trace(go.Scatter(
+                x=btc_buys["timestamp"],
+                y=btc_buys["price"],
+                mode="lines+markers",
+                name="Prix d'achat BTC",
+                line=dict(color="#14d8c4", width=2),
+                marker=dict(
+                    size=btc_marker_sizes,
+                    color=btc_marker_colors,
+                    line=dict(width=1.5, color="#111"),
+                ),
+                text=[
+                    f"{r['reason']}<br>${r['amount_usd']:.0f} — {r['size']:.8f} BTC"
+                    for _, r in btc_buys.iterrows()
+                ],
+                hovertemplate="%{text}<br>Prix: $%{y:,.2f}<extra></extra>",
+            ))
+
+            # Add current price reference line
+            fig_btc.add_hline(
+                y=btc_price,
+                line_dash="dash",
+                line_color="#14d8c4",
+                opacity=0.4,
+                annotation_text=f"Prix actuel: ${btc_price:,.0f}",
+                annotation_position="top right",
+                annotation_font_color="#14d8c4",
+            )
+
+            # Average buy price
+            if total_btc > 0:
+                btc_spent = btc_buys["amount_usd"].sum()
+                avg_price = btc_spent / total_btc
+                fig_btc.add_hline(
+                    y=avg_price,
+                    line_dash="dot",
+                    line_color="#ff9f43",
+                    opacity=0.5,
+                    annotation_text=f"PMP: ${avg_price:,.0f}",
+                    annotation_position="bottom right",
+                    annotation_font_color="#ff9f43",
+                )
+
+            fig_btc.update_layout(
+                height=350,
+                yaxis_tickformat="$,.0f",
+                yaxis_title="Prix BTC ($)",
+            )
+            _apply_mobile_chart_theme(fig_btc, show_legend=False)
+            st.plotly_chart(fig_btc, use_container_width=True)
+
+        # ── Spend breakdown bar chart ──────────────────────────────────────────
+        st.subheader("💰 Répartition des achats")
+
+        c_dca = df_chart[~df_chart["reason"].str.contains("CRASH", na=False)]["amount_usd"].sum()
+        c_crash15 = df_chart[df_chart["reason"].str.contains("15", na=False)]["amount_usd"].sum()
+        c_crash25 = df_chart[df_chart["reason"].str.contains("25", na=False)]["amount_usd"].sum()
+        c_crash35 = df_chart[df_chart["reason"].str.contains("35", na=False)]["amount_usd"].sum()
+
+        categories = []
+        values = []
+        colors = []
+        if c_dca > 0:
+            categories.append("DCA régulier")
+            values.append(c_dca)
+            colors.append("#14d8c4")
+        if c_crash15 > 0:
+            categories.append("Crash -15%")
+            values.append(c_crash15)
+            colors.append("#ff9f43")
+        if c_crash25 > 0:
+            categories.append("Crash -25%")
+            values.append(c_crash25)
+            colors.append("#ff6b6b")
+        if c_crash35 > 0:
+            categories.append("Crash -35%")
+            values.append(c_crash35)
+            colors.append("#ee5a5a")
+
+        if categories:
+            fig_bar = go.Figure(go.Bar(
+                x=categories,
+                y=values,
+                marker_color=colors,
+                text=[f"${v:,.0f}" for v in values],
+                textposition="auto",
+            ))
+            fig_bar.update_layout(
+                height=280,
+                yaxis_tickformat="$,.0f",
+                yaxis_title="Montant ($)",
+            )
+            _apply_mobile_chart_theme(fig_bar)
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+    elif df_buys.empty:
+        st.info("Aucune donnée d'achat — les graphiques apparaîtront après le premier achat DCA.")
+
+    st.divider()
+
+    # ── Buy history table ──────────────────────────────────────────────────────
+    if not df_buys.empty:
+        st.subheader(f"📋 Historique des achats ({len(df_buys)})")
+        display_data = []
+        for _, row in df_buys.sort_values("timestamp", ascending=False).iterrows():
+            ts = row["timestamp"]
+            ts_str = ts.strftime("%Y-%m-%d %H:%M") if pd.notna(ts) else "—"
+            reason = row["reason"]
+            emoji = "🚨" if "CRASH" in reason else "📈"
+            display_data.append({
+                "Date": ts_str,
+                "": emoji,
+                "Symbole": row["symbol"],
+                "Raison": reason,
+                "Montant": f"${row['amount_usd']:.2f}",
+                "Prix": f"${row['price']:,.2f}",
+                "Taille": f"{row['size']:.8f}",
+                "RSI": f"{row['rsi']:.1f}",
+                "Bracket": row["bracket"],
+                "Fill": row["fill_type"],
+            })
+        st.dataframe(display_data, use_container_width=True, hide_index=True)
+    else:
+        st.info("Aucun achat DCA enregistré.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  Main — Tabs
 # ══════════════════════════════════════════════════════════════════════════════
 
-tab_overview, tab_binance, tab_crashbot, tab_listing, tab_infinity, tab_london = st.tabs([
+tab_overview, tab_binance, tab_crashbot, tab_listing, tab_infinity, tab_london, tab_dca = st.tabs([
     "🏠 Overview",
     "🟡 Binance Range",
     "💥 Binance CrashBot",
     "🆕 Binance Listing",
     "♾️ Revolut Infinity",
     "🇬🇧 Revolut London",
+    "📈 Revolut DCA",
 ])
 
 with tab_overview:
@@ -1870,6 +2234,9 @@ with tab_infinity:
 
 with tab_london:
     render_revolut_london()
+
+with tab_dca:
+    render_revolut_dca()
 
 # ── Footer ─────────────────────────────────────────────────────────────────────
 

@@ -68,6 +68,12 @@ _BOT_META_BY_STRATEGY: dict[str, dict[str, str]] = {
         "exchange_venue": "revolut",
         "exchange_key": "revolut",
     },
+    "DCA": {
+        "bot_id": "dca",
+        "bot_label": "DCA RSI",
+        "exchange_venue": "revolut",
+        "exchange_key": "revolut-dca",
+    },
 }
 
 
@@ -129,6 +135,8 @@ def log_trade_opened(
     current_equity: float,
     portfolio_risk_before: float,
     exchange: str = "revolut",
+    dry_run: bool = False,
+    **kwargs: Any,
 ) -> Optional[str]:
     """
     Log l'ouverture d'un trade dans Firebase.
@@ -209,7 +217,7 @@ def log_trade_opened(
 
         # Metadata
         "bot_version": "1.0",
-        "dry_run": False,
+        "dry_run": dry_run,
         "created_at": now.isoformat(),
         "updated_at": now.isoformat(),
     }
@@ -359,6 +367,7 @@ def log_event(
     data: dict[str, Any],
     symbol: Optional[str] = None,
     exchange: str = "revolut",
+    dry_run: bool = False,
 ) -> Optional[str]:
     """Log un événement système dans la collection `events`."""
     now = datetime.now(timezone.utc)
@@ -367,6 +376,7 @@ def log_event(
         "symbol": symbol,
         "exchange": exchange,
         "timestamp": now.isoformat(),
+        "dry_run": dry_run,
         "data": data,
     }
     return add_document("events", doc)
@@ -391,6 +401,7 @@ def log_heartbeat(
     total_risk_pct: float,
     pairs_count: int,
     exchange: str = "revolut",
+    dry_run: bool = False,
 ) -> Optional[str]:
     """Log un heartbeat périodique."""
     return log_event("HEARTBEAT", {
@@ -398,7 +409,7 @@ def log_heartbeat(
         "total_equity": total_equity,
         "total_risk_pct": round(total_risk_pct, 4),
         "pairs_count": pairs_count,
-    }, exchange=exchange)
+    }, exchange=exchange, dry_run=dry_run)
 
 
 def log_close_failure(
@@ -455,6 +466,7 @@ def log_daily_snapshot(
     daily_pnl: float,
     trades_today: int,
     exchange: str = "revolut",
+    dry_run: bool = False,
 ) -> Optional[str]:
     """Sauvegarde un snapshot quotidien."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -466,6 +478,7 @@ def log_daily_snapshot(
         "daily_pnl": round(daily_pnl, 4),
         "trades_today": trades_today,
         "exchange": exchange,
+        "dry_run": dry_run,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     return add_document("daily_snapshots", doc, doc_id=doc_id)

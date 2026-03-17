@@ -386,6 +386,7 @@ class InfinityBot:
         self._telegram = TelegramNotifier(
             bot_token=config.TELEGRAM_BOT_TOKEN,
             chat_id=config.TELEGRAM_CHAT_ID,
+            silent=self.dry_run,
         )
 
         # Build per-pair contexts
@@ -1562,6 +1563,7 @@ class InfinityBot:
                 current_equity=equity,
                 portfolio_risk_before=0.0,
                 exchange="revolut-infinity",
+                dry_run=self.dry_run,
             )
             if fb_id:
                 ctx.cycle.firebase_trade_ids.append(fb_id)
@@ -1789,6 +1791,7 @@ class InfinityBot:
                 total_risk_pct=0.0,
                 pairs_count=len(self._pairs),
                 exchange="revolut-infinity",
+                dry_run=self.dry_run,
             )
         except Exception:
             pass
@@ -1833,6 +1836,7 @@ class InfinityBot:
                     daily_pnl=0.0,
                     trades_today=0,
                     exchange="revolut-infinity",
+                    dry_run=self.dry_run,
                 )
                 logger.info("📸 Daily snapshot Firebase loggé")
             except Exception:

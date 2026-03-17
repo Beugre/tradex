@@ -73,6 +73,7 @@ from src.firebase.trade_logger import (
     get_cumulative_pnl as fb_get_cumulative_pnl,
     get_trail_range_pnl_list as fb_get_trail_range_pnl_list,
     log_allocation as fb_log_allocation,
+    log_daily_snapshot as fb_log_daily_snapshot,
 )
 from src.core.allocator import compute_allocation, compute_profit_factor
 from src.runtime_overrides import (
@@ -161,6 +162,7 @@ class TradeXBinanceBot:
         self._telegram = TelegramNotifier(
             bot_token=config.TELEGRAM_BOT_TOKEN,
             chat_id=config.TELEGRAM_CHAT_ID,
+            silent=self.dry_run,
         )
 
         # Persistance séparée (state_binance.json)
@@ -199,6 +201,7 @@ class TradeXBinanceBot:
 
         # Firebase cleanup
         self._last_cleanup_date: str = ""
+        self._last_snapshot_date: str = ""
 
         # Equity allouée
         self._cumulative_pnl: float = 0.0  # PnL cumulé (chargé depuis Firebase au démarrage)
@@ -644,6 +647,7 @@ class TradeXBinanceBot:
                 # Générer les signaux d'entrée au close de la bougie clôturée
                 self._generate_pending_range_signals()
                 self._firebase_daily_cleanup()
+                self._maybe_daily_snapshot()
         except Exception as e:
             logger.debug("Erreur check H4: %s", e)
 
@@ -1393,6 +1397,7 @@ class TradeXBinanceBot:
                 current_equity=current_equity,
                 portfolio_risk_before=portfolio_risk,
                 exchange=EXCHANGE_NAME,
+                dry_run=self.dry_run,
             )
             if fb_id:
                 position.firebase_trade_id = fb_id
@@ -1891,6 +1896,7 @@ class TradeXBinanceBot:
                 total_risk_pct=0,
                 pairs_count=len(self._trading_pairs),
                 exchange=EXCHANGE_NAME,
+                dry_run=self.dry_run,
             )
         except Exception:
             pass
@@ -1923,6 +1929,54 @@ class TradeXBinanceBot:
             fb_cleanup_events()
         except Exception:
             pass
+
+    def _maybe_daily_snapshot(self) -> None:
+        """Log un snapshot quotidien dans Firebase (1x/jour)."""
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if today == self._last_snapshot_date:
+            return
+        self._last_snapshot_date = today
+
+        equity = self._calculate_allocated_equity()
+
+        open_pos = [
+            p for p in self._positions.values()
+            if p.status in (PositionStatus.OPEN, PositionStatus.ZERO_RISK)
+        ]
+        positions_data = []
+        for p in open_pos:
+            positions_data.append({
+                "symbol": p.symbol,
+                "side": p.side.value,
+                "entry_price": p.entry_price,
+                "sl_price": p.sl_price,
+                "tp_price": p.tp_price,
+                "size": p.size,
+                "strategy": p.strategy.value,
+            })
+
+        daily_pnl = sum(
+            p.pnl or 0 for p in self._positions.values()
+            if p.status == PositionStatus.CLOSED and p.pnl is not None
+        )
+        trades_today = sum(
+            1 for p in self._positions.values()
+            if p.status == PositionStatus.CLOSED
+        )
+
+        try:
+            fb_log_daily_snapshot(
+                equity=equity,
+                positions=positions_data,
+                daily_pnl=daily_pnl,
+                trades_today=trades_today,
+                exchange=EXCHANGE_NAME,
+                dry_run=self.dry_run,
+            )
+            logger.info("📸 Snapshot quotidien → equity=$%.2f | %d positions", equity, len(open_pos))
+        except Exception as e:
+            logger.warning("Firebase snapshot échoué: %s", e)
 
     def _shutdown(self) -> None:
         logger.info("🛑 Arrêt de TradeX Binance...")

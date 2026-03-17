@@ -56,6 +56,7 @@ class StrategyType(Enum):
     INFINITY = "INFINITY"      # DCA inversé + vente paliers (Infinity Bot)
     LONDON = "LONDON"          # London Breakout (session 08-16 UTC)
     LISTING = "LISTING"        # Listing Event (achat au listing + OCO dynamique)
+    DCA = "DCA"                # DCA RSI-based (achat quotidien BTC/ETH)
 
 
 # ── Structures de données ──────────────────────────────────────────────────────

@@ -132,6 +132,7 @@ class TradeXBinanceListingBot:
         self._telegram = TelegramNotifier(
             bot_token=config.TELEGRAM_BOT_TOKEN,
             chat_id=config.TELEGRAM_CHAT_ID,
+            silent=self.dry_run,
         )
 
         # Persistance
@@ -548,6 +549,7 @@ class TradeXBinanceListingBot:
                 position=position,
                 exchange=EXCHANGE_NAME,
                 account_equity=equity,
+                dry_run=self.dry_run,
             )
             pos_data["firebase_trade_id"] = fb_id
             self._save_positions()
@@ -965,6 +967,7 @@ class TradeXBinanceListingBot:
                 total_risk_pct=0.0,
                 pairs_count=len(self._known_symbols),
                 open_positions=n_positions,
+                dry_run=self.dry_run,
             )
         except Exception:
             logger.exception("Firebase heartbeat échoué")
