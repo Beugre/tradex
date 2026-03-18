@@ -167,6 +167,8 @@ class TelegramCommandBot:
                 return self._cmd_health(args)
             if cmd == "hb":
                 return self._cmd_hb(args)
+            if cmd == "dca":
+                return self._cmd_dca(args)
             if cmd == "open":
                 return self._cmd_open(args)
             if cmd == "last":
@@ -297,6 +299,17 @@ class TelegramCommandBot:
                 "  /last all 5\n"
                 "  /last infinity 3"
             )
+        if topic in ("dca",):
+            return (
+                "Aide /dca\n"
+                "- Usage: /dca [status|buys]\n"
+                "- /dca ou /dca status : resume complet (accum, PnL, RSI, MVRV, caps)\n"
+                "- /dca buys [n] : derniers achats DCA (n=1..10, defaut 5)\n"
+                "- Exemples:\n"
+                "  /dca\n"
+                "  /dca status\n"
+                "  /dca buys 5"
+            )
         if topic in ("logs",):
             return (
                 "Aide /logs\n"
@@ -320,6 +333,7 @@ class TelegramCommandBot:
             "TradeX Commands\n"
             "- /pnl <bot|all> [today|7d|30d|90d]\n"
             "- /perf <bot|all> [7d|30d|90d]\n"
+            "- /dca [status|buys [n]]\n"
             "- /alloc get\n"
             "- /alloc set <crashbot|range|infinity|london> <pct_decimal>\n"
             "- /health <bot|all>\n"
@@ -334,7 +348,7 @@ class TelegramCommandBot:
             "- /confirm <token>\n"
             "- /sl set <bot> <symbol> <price>\n"
             "- /tp set <bot> <symbol> <price>\n"
-            "Tips: /help alloc | /help hb | /help logs | /help cmdlog | /help close | /help confirm\n"
+            "Tips: /help dca | /help alloc | /help hb | /help logs | /help cmdlog | /help close | /help confirm\n"
             "Exemple: /pnl crashbot today"
         )
 
@@ -707,6 +721,129 @@ class TelegramCommandBot:
             return f"Heartbeat reset pour {BOTS[bot]['label']} (retour config)."
 
         return "Usage: /hb <get|set|reset> ..."
+
+    # ── DCA-specific command ──────────────────────────────────────────────────
+
+    def _cmd_dca(self, args: list[str]) -> str:
+        subcmd = (args[0].lower() if args else "status")
+
+        if subcmd == "buys":
+            return self._cmd_dca_buys(args[1:])
+
+        # Default: status from latest DCA_HEARTBEAT
+        return self._cmd_dca_status()
+
+    def _cmd_dca_status(self) -> str:
+        hb_docs = get_documents(
+            "events",
+            filters=[
+                ("event_type", "==", "DCA_HEARTBEAT"),
+                ("exchange", "==", "revolut-dca"),
+            ],
+            order_by="timestamp",
+            limit=1,
+        )
+        if not hb_docs:
+            return "DCA: aucun heartbeat disponible."
+
+        d = (hb_docs[0].get("data") or {})
+        ts = self._fmt_ts(hb_docs[0].get("timestamp"))
+
+        rsi = d.get("rsi", 0)
+        bracket = d.get("bracket", "?")
+        mvrv = d.get("mvrv")
+        mvrv_mult = d.get("mvrv_mult", 1.0)
+        regime = d.get("regime", "?")
+        ma200 = d.get("ma200", 0)
+
+        total_spent = d.get("total_spent", 0)
+        equity = d.get("equity", 0)
+        pnl = d.get("pnl", 0)
+        pnl_pct = d.get("pnl_pct", 0)
+
+        btc_acc = d.get("btc_accumulated", 0)
+        eth_acc = d.get("eth_accumulated", 0)
+        dca_rem = d.get("dca_remaining", 0)
+        crash_rem = d.get("crash_remaining", 0)
+
+        buy_count = d.get("buy_count", 0)
+        crash_buy_count = d.get("crash_buy_count", 0)
+        days_active = d.get("days_active", 0)
+
+        monthly_spent = d.get("monthly_spent", 0)
+        monthly_cap = d.get("monthly_cap", 0)
+        weekly_spent = d.get("weekly_spent", 0)
+        weekly_cap = d.get("weekly_cap", 0)
+
+        rolling_high = d.get("rolling_high", 0)
+        drop_pct = d.get("drop_pct", 0)
+        crash_levels = d.get("crash_levels_triggered", [])
+
+        mvrv_str = f"{mvrv:.4f} (x{mvrv_mult:.1f})" if mvrv is not None else "N/A"
+        crash_str = ", ".join(crash_levels) if crash_levels else "aucun"
+
+        lines = [
+            f"DCA RSI v2 ({ts})",
+            f"RSI: {rsi:.1f} [{bracket}] | MVRV: {mvrv_str}",
+            f"Regime: {regime} | MA200: {ma200:,.0f}",
+            "",
+            f"Accum: BTC {btc_acc:.8f} | ETH {eth_acc:.8f}",
+            f"Valeur: ${equity:,.2f} | Depense: ${total_spent:,.2f}",
+            f"PnL: ${pnl:+,.2f} ({pnl_pct:+.1f}%)",
+            "",
+            f"Budget DCA: ${dca_rem:,.0f} restant",
+            f"Crash reserve: ${crash_rem:,.0f} restant",
+            f"Caps: mois ${monthly_spent:,.0f}/${monthly_cap:,.0f} | sem ${weekly_spent:,.0f}/${weekly_cap:,.0f}",
+            "",
+            f"Achats: {buy_count} DCA + {crash_buy_count} crash | {days_active}j actif",
+            f"Rolling high: {rolling_high:,.0f} | Drop: {drop_pct:.1f}%",
+            f"Crash levels: {crash_str}",
+        ]
+        return "\n".join(lines)
+
+    def _cmd_dca_buys(self, args: list[str]) -> str:
+        n = 5
+        if args:
+            try:
+                n = int(args[0])
+            except Exception:
+                return "Usage: /dca buys [n]"
+        n = max(1, min(n, 10))
+
+        buy_events = get_documents(
+            "events",
+            filters=[
+                ("event_type", "==", "DCA_BUY"),
+                ("exchange", "==", "revolut-dca"),
+            ],
+        )
+        if not buy_events:
+            return "DCA: aucun achat enregistre."
+
+        def _sort_key(row: dict) -> float:
+            dt = self._parse_ts(row.get("timestamp"))
+            return dt.timestamp() if dt else 0.0
+
+        sorted_buys = sorted(buy_events, key=_sort_key, reverse=True)[:n]
+
+        lines = [f"Derniers achats DCA (n={len(sorted_buys)})"]
+        for ev in sorted_buys:
+            d = ev.get("data") or {}
+            ts = self._fmt_ts(ev.get("timestamp"))
+            symbol = d.get("symbol", "?")
+            reason = d.get("reason", "?")
+            amount = d.get("amount_usd", 0)
+            price = d.get("price", 0)
+            size = d.get("size", 0)
+            bracket_val = d.get("bracket", "?")
+            fill = d.get("fill_type", "?")
+
+            lines.append(
+                f"  {ts} | {symbol} | ${amount:.0f} @ {price:,.2f}\n"
+                f"    {size:.8f} | {bracket_val} | {reason} | {fill}"
+            )
+
+        return "\n".join(lines)
 
     def _cmd_open(self, args: list[str]) -> str:
         target = (args[0] if args else "all").lower()
