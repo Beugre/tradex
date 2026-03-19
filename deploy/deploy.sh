@@ -72,7 +72,7 @@ ssh "$VPS_HOST" << 'REMOTE'
     sudo chown -R tradex:tradex /opt/tradex
 
     # Redémarrer tous les services actifs (sauf le legacy 'tradex' qui est désactivé)
-    SERVICES="tradex-binance tradex-binance-crashbot tradex-infinity tradex-london tradex-dca tradex-dashboard-unified"
+    SERVICES="tradex-binance tradex-binance-crashbot tradex-listing tradex-infinity tradex-london tradex-dca tradex-breakout tradex-dashboard-unified"
     for svc in $SERVICES; do
         if sudo systemctl is-enabled --quiet "$svc" 2>/dev/null; then
             sudo systemctl restart "$svc"
