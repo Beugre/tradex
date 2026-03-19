@@ -1325,21 +1325,21 @@ class TradeXBinanceCrashBot:
                 fiat_balance, 1.0,
             ) if fiat_balance > 0 else 0.0
 
-            if not self.dry_run:
-                fb_id = log_trade_opened(
-                    position=position,
-                    fill_type="taker",
-                    maker_wait_seconds=0,
-                    risk_pct=risk_pct,
-                    risk_amount_usd=risk_amount,
-                    fiat_balance=fiat_balance,
-                    current_equity=equity,
-                    portfolio_risk_before=portfolio_risk,
-                    exchange=EXCHANGE_NAME,
-                )
-                if fb_id:
-                    position.firebase_trade_id = fb_id
-                    self._save_state()
+            fb_id = log_trade_opened(
+                position=position,
+                fill_type="taker",
+                maker_wait_seconds=0,
+                risk_pct=risk_pct,
+                risk_amount_usd=risk_amount,
+                fiat_balance=fiat_balance,
+                current_equity=equity,
+                portfolio_risk_before=portfolio_risk,
+                exchange=EXCHANGE_NAME,
+                dry_run=self.dry_run,
+            )
+            if fb_id:
+                position.firebase_trade_id = fb_id
+                self._save_state()
         except Exception as e:
             logger.warning("🔥 Firebase log échoué: %s", e)
 
@@ -1663,7 +1663,7 @@ class TradeXBinanceCrashBot:
         # Firebase
         equity_after = self._calculate_allocated_equity()
 
-        if not self.dry_run and position.firebase_trade_id:
+        if position.firebase_trade_id:
             try:
                 log_trade_closed(
                     trade_id=position.firebase_trade_id,

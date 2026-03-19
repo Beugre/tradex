@@ -774,7 +774,7 @@ class LondonBreakoutBot:
         )
 
         # Firebase
-        if not self.dry_run and pos.firebase_trade_id:
+        if pos.firebase_trade_id:
             try:
                 fb_position = Position(
                     symbol=symbol,
@@ -1139,21 +1139,21 @@ class LondonBreakoutBot:
                 strategy=StrategyType.LONDON,
                 tp_price=tp2_price,
             )
-            if not self.dry_run:
-                fb_id = log_trade_opened(
-                    position=fb_position,
-                    fill_type=fill_type,
-                    maker_wait_seconds=LON_MAKER_WAIT_SECONDS,
-                    risk_pct=LON_RISK_PCT,
-                    risk_amount_usd=risk_amount,
-                    fiat_balance=available,
-                    current_equity=available,
-                    portfolio_risk_before=0.0,
-                    exchange="revolut-london",
-                )
-                if fb_id:
-                    pos.firebase_trade_id = fb_id
-                    self._save_state()
+            fb_id = log_trade_opened(
+                position=fb_position,
+                fill_type=fill_type,
+                maker_wait_seconds=LON_MAKER_WAIT_SECONDS,
+                risk_pct=LON_RISK_PCT,
+                risk_amount_usd=risk_amount,
+                fiat_balance=available,
+                current_equity=available,
+                portfolio_risk_before=0.0,
+                exchange="revolut-london",
+                dry_run=self.dry_run,
+            )
+            if fb_id:
+                pos.firebase_trade_id = fb_id
+                self._save_state()
         except Exception as e:
             logger.warning("🔥 Firebase log_trade_opened échoué: %s", e)
 
