@@ -57,6 +57,7 @@ class StrategyType(Enum):
     LONDON = "LONDON"          # London Breakout (session 08-16 UTC)
     LISTING = "LISTING"        # Listing Event (achat au listing + OCO dynamique)
     DCA = "DCA"                # DCA RSI-based (achat quotidien BTC/ETH)
+    BREAKOUT = "BREAKOUT"      # Breakout Momentum 15m (trailing stop, Revolut X)
 
 
 # ── Structures de données ──────────────────────────────────────────────────────

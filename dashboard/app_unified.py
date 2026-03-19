@@ -445,6 +445,7 @@ BOTS = {
     "listing": {"label": "Binance Listing", "icon": "🆕", "exchange": "binance-listing", "color": "#00e676", "max_pos": 3},
     "infinity": {"label": "Revolut Infinity", "icon": "♾️", "exchange": "revolut-infinity", "color": "#ff6d00", "max_pos": 6},
     "london": {"label": "Revolut London", "icon": "🇬🇧", "exchange": "revolut-london", "color": "#2196f3", "max_pos": 1},
+    "breakout": {"label": "Revolut Breakout", "icon": "⚡", "exchange": "revolut-breakout", "color": "#e040fb", "max_pos": 3},
 }
 
 
@@ -2474,11 +2475,55 @@ def render_revolut_dca():
     else:
         st.info("Aucune décision DCA enregistrée — les analytics apparaîtront après les premiers cycles v2.")
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Breakout Momentum Tab
+# ══════════════════════════════════════════════════════════════════════════════
+
+def render_revolut_breakout():
+    """Onglet Breakout Momentum — 15m, trailing stop, Revolut X."""
+    d = all_data["breakout"]
+    cfg = BOTS["breakout"]
+
+    st.title(f"{cfg['icon']} Revolut Breakout Momentum")
+    st.caption(
+        f"Breakout high(12) sur 15m — trailing stop ATR, "
+        f"budget isolé ${app_config.BRK_ALLOCATED_BALANCE:.0f}, maker-only"
+    )
+    _render_last_heartbeat_cockpit("breakout", d, cfg["max_pos"])
+    st.divider()
+    _render_kpis(d["stats"], len(d["open"]), cfg["max_pos"])
+    st.divider()
+
+    _render_positions(d["open"], bot_type="breakout", exchange="revolut")
+    _render_alerts(d["open"], cfg["exchange"])
+    st.divider()
+
+    _render_equity_curve(d["snapshots"], d["closed"], cfg["color"])
+    _render_cumulative_pnl(d["closed"], cfg["color"])
+    st.divider()
+
+    _render_daily_pnl(d["closed"])
+    _render_pair_performance(d["closed"])
+    st.divider()
+
+    _render_exit_reasons(d["closed"])
+    st.divider()
+
+    _render_last_trades(d["closed"])
+    _render_pnl_distribution(d["closed"], cfg["color"], "exit_reason")
+    st.divider()
+
+    _render_advanced_stats(d["closed"])
+    st.divider()
+    _render_dry_run_section(d["dry_run_trades"])
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  Main — Tabs
 # ══════════════════════════════════════════════════════════════════════════════
 
-tab_overview, tab_binance, tab_crashbot, tab_listing, tab_infinity, tab_london, tab_dca = st.tabs([
+tab_overview, tab_binance, tab_crashbot, tab_listing, tab_infinity, tab_london, tab_dca, tab_breakout = st.tabs([
     "🏠 Overview",
     "🟡 Binance Range",
     "💥 Binance CrashBot",
@@ -2486,6 +2531,7 @@ tab_overview, tab_binance, tab_crashbot, tab_listing, tab_infinity, tab_london, 
     "♾️ Revolut Infinity",
     "🇬🇧 Revolut London",
     "📈 Revolut DCA",
+    "⚡ Revolut Breakout",
 ])
 
 with tab_overview:
@@ -2508,6 +2554,9 @@ with tab_london:
 
 with tab_dca:
     render_revolut_dca()
+
+with tab_breakout:
+    render_revolut_breakout()
 
 # ── Footer ─────────────────────────────────────────────────────────────────────
 

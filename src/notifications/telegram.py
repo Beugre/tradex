@@ -32,6 +32,7 @@ _STRATEGY_LABEL = {
     StrategyType.LONDON: "🇬🇧 LONDON",
     StrategyType.LISTING: "🆕 LISTING",
     StrategyType.DCA: "📈 DCA",
+    StrategyType.BREAKOUT: "⚡ BREAKOUT",
 }
 
 logger = logging.getLogger(__name__)

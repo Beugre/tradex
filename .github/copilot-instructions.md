@@ -2,7 +2,7 @@
 
 ## Aperçu du projet
 
-Écosystème de **6 bots de trading crypto automatisés** déployés sur un VPS Contabo, opérant sur **2 exchanges** :
+Écosystème de **7 bots de trading crypto automatisés** déployés sur un VPS Contabo, opérant sur **2 exchanges** :
 
 | Bot | Exchange | Stratégie | Timeframe | Paires |
 |-----|----------|-----------|-----------|--------|
@@ -12,11 +12,12 @@
 | **Infinity** | Revolut X (USD) | DCA inversé multi-paires (trailing high → achat → vente paliers) | H4 | BTC, AAVE, XLM, ADA, DOT, LTC |
 | **London Breakout** | Revolut X (USD) | Session breakout (range 08-16 UTC → breakout LONG) | H4 | BTC, ETH, SOL, BNB, LINK, ADA, DOT, AVAX |
 | **DCA RSI v2** | Revolut X (USD) | DCA quotidien RSI + MVRV progressif + régime MA200 + spending caps + crash reserve | Daily | BTC, ETH |
+| **Breakout Momentum** | Revolut X (USD) | Breakout high(12) 15m + trailing stop ATR + anti-tilt | 15m | ETH, SOL, ARB |
 
 - **Langage** : Python 3.10+ (VPS), Python 3.12+ (dev local)
 - **Notifications** : Telegram Bot API (entrée, SL, TP, clôture, heartbeat)
 - **Persistance** : Firebase Firestore (trades, positions, heartbeats, allocation, snapshots)
-- **Dashboard** : Streamlit unifié (port 8502) — 7 onglets (Overview, Range, CrashBot, Listing, Infinity, London, DCA)
+- **Dashboard** : Streamlit unifié (port 8502) — 8 onglets (Overview, Range, CrashBot, Listing, Infinity, London, DCA, Breakout)
 - **Déploiement** : VPS Contabo (SSH alias `BOT-VPS`, path `/opt/tradex/`)
 
 ## Architecture
@@ -31,6 +32,7 @@ src/
 │   ├── infinity_engine.py      # Logique DCA inversé (paliers achat/vente, RSI gate, trailing high)
 │   ├── indicators.py           # Indicateurs techniques réutilisables (EMA, SMA, ATR, RSI, rolling min/max)
 │   ├── listing_detector.py     # Détection de nouveaux listings Binance + momentum filter + OCO levels
+│   ├── breakout_engine.py      # Logique breakout momentum : détection breakout high(12), trailing stop, ATR/volume filters
 │   ├── models.py               # Modèles de données partagés (dataclass/Pydantic)
 │   ├── onchain.py              # Métriques on-chain (MVRV via CoinMetrics Community API)
 │   ├── position_store.py       # Gestion en mémoire des positions ouvertes
@@ -54,10 +56,11 @@ src/
 ├── bot_infinity.py             # Bot Infinity — Revolut X (DCA inversé multi-paires, maker-only)
 ├── bot_london.py               # Bot London Breakout — Revolut X (session breakout H4, maker-only)
 ├── bot_dca.py                  # Bot DCA RSI v2 — Revolut X (achat quotidien BTC/ETH, MVRV+regime+caps, maker-only)
+├── bot_breakout.py             # Bot Breakout Momentum — Revolut X (breakout 15m, trailing stop, anti-tilt, maker-only)
 ├── bot.py                      # (legacy) Bot Dow Theory Revolut X
 └── config.py                   # Chargement .env (clés API, paramètres de risque)
 dashboard/
-└── app_unified.py              # Dashboard Streamlit unifié (7 tabs, 2 exchanges)
+└── app_unified.py              # Dashboard Streamlit unifié (8 tabs, 2 exchanges)
 tests/
 ├── test_swing_detector.py
 ├── test_trend_engine.py
@@ -103,6 +106,10 @@ Les bots **Infinity** et **London Breakout** partagent le même compte Revolut X
 |-----|---------------------------|
 | **Infinity** | 80% (`INF_CAPITAL_PCT=0.80`) |
 | **London Breakout** | 20% (`LON_CAPITAL_PCT=0.20`) |
+
+### Revolut X — Breakout Momentum (capital isolé)
+
+Le bot **Breakout Momentum** utilise un **budget fixe isolé** de 100€ (`BRK_ALLOCATED_BALANCE=100`), sans lien avec le capital des autres bots Revolut X. Il ne touche pas au solde DCA/Infinity/London.
 
 ## Bot 1 — Trail Range (`bot_binance.py`)
 
@@ -204,6 +211,25 @@ Les bots **Infinity** et **London Breakout** partagent le même compte Revolut X
 - **State** : Persisté dans `data/state_dca.json` (rétrocompatible v1 → v2 via `.get()` defaults)
 - **On-chain** : `src/core/onchain.py` — fetch MVRV via CoinMetrics (gratuit, sans clé API)
 
+## Bot 7 — Breakout Momentum (`bot_breakout.py`)
+
+- **Exchange** : Revolut X (USD) — Maker 0% fees, Taker 0.09%
+- **Stratégie** : Breakout Momentum court terme :
+  1. **Rolling high(12)** : Plus haut des 12 dernières bougies 15m (~3h)
+  2. **Breakout** : Close > rolling high + ATR expansion + volume spike → signal LONG
+  3. **Trailing stop** : Activation à +0.3×ATR du prix d'entrée, distance 0.2×ATR du peak
+  4. **TP/SL** : TP = entry + 2.0×ATR, SL = entry - 0.8×ATR (R:R ≈ 2.5:1)
+  5. **Anti-tilt** : 3 pertes consécutives → cooldown renforcé 8 bougies (2h)
+- **Paires** : `BRK_TRADING_PAIRS` (ETH-USD, SOL-USD, ARB-USD — walk-forward validées)
+- **Exécution** : Maker 2 retry → taker fallback (même logique que les autres bots Revolut X)
+- **Risk** : 3% par trade (`BRK_RISK_PERCENT`), max 3 positions simultanées
+- **Capital** : Budget fixe 100€ isolé (`BRK_ALLOCATED_BALANCE=100`), pas un % du solde
+- **Cooldown** : 4 bougies 15m (1h) entre deux trades sur la même paire
+- **Polling** : Toutes les 15s
+- **Heartbeat** : Toutes les 10 minutes
+- **State** : Persisté dans `data/state_breakout.json` (positions, buffers, cooldowns, consecutive_losses)
+- **Backtest** : PF 4.51, WR 67.1%, +764$/an sur $1,500, walk-forward 3/3 OOS positifs
+
 ### Money management (`risk_manager.py`)
 ```python
 # Calcul de taille partagé par tous les bots — NE PAS changer sans validation
@@ -217,7 +243,7 @@ position_size = risk_amount / sl_distance      # en unités de base (ex: ETH)
 
 - **Séparation stricte I/O / logique** : `src/core/` ne fait AUCUN appel réseau. Les tests de `core/` doivent tourner sans mock d'API.
 - **Types** : utiliser des `dataclass` ou `Pydantic BaseModel` pour toutes les structures de données.
-- **Enums** pour les états : `AllocationRegime(Enum): DEFENSIVE, NEUTRAL, AGGRESSIVE`, `StrategyType(Enum): TREND, RANGE, CRASHBOT, LISTING, INFINITY, LONDON, DCA`
+- **Enums** pour les états : `AllocationRegime(Enum): DEFENSIVE, NEUTRAL, AGGRESSIVE`, `StrategyType(Enum): TREND, RANGE, CRASHBOT, LISTING, INFINITY, LONDON, DCA, BREAKOUT`
 - **Logging** : module `logging` standard avec le format `[%(asctime)s] %(levelname)s %(name)s: %(message)s`.
 - **Config** : toutes les valeurs sensibles et paramètres dans `.env`, chargés via `python-dotenv`. Ne jamais hardcoder de clé API ou de paramètre de risque.
 - **Firebase** : Toute persistance passe par `src/firebase/`. Les trades, heartbeats, allocations, et snapshots sont stockés dans Firestore.
@@ -350,6 +376,30 @@ DCA_MVRV_THRESHOLD=1.0
 DCA_MVRV_DEEP_THRESHOLD=0.85
 DCA_MVRV_MULT_LOW=1.5
 DCA_MVRV_MULT_DEEP=2.0
+
+# ── Breakout Momentum (bot_breakout.py) ──
+BRK_ALLOCATED_BALANCE=100
+BRK_TRADING_PAIRS=ETH-USD,SOL-USD,ARB-USD
+BRK_RISK_PERCENT=0.03
+BRK_MAX_POSITIONS=3
+BRK_MAX_POSITION_PERCENT=0.50
+BRK_CANDLE_INTERVAL=15
+BRK_LOOKBACK=12
+BRK_ATR_PERIOD=14
+BRK_TP_ATR_MULT=2.0
+BRK_SL_ATR_MULT=0.8
+BRK_TRAIL_ACTIVATION_ATR=0.3
+BRK_TRAIL_DISTANCE_ATR=0.2
+BRK_ATR_EXPANSION_LOOKBACK=8
+BRK_ATR_EXPANSION_RATIO=1.05
+BRK_VOLUME_SPIKE_MULT=1.0
+BRK_MIN_ATR_PCT=0.001
+BRK_COOLDOWN_BARS=4
+BRK_MAX_CONSECUTIVE_LOSSES=3
+BRK_COOLDOWN_BARS_AFTER_TILT=8
+BRK_POLLING_SECONDS=15
+BRK_HEARTBEAT_SECONDS=600
+BRK_MAKER_WAIT_SECONDS=60
 ```
 
 ## APIs – Points clés
@@ -360,7 +410,7 @@ DCA_MVRV_MULT_DEEP=2.0
 - **Ordres** : OCO orders natifs (TP + SL simultanés), limit, market
 - **Symboles** : Format `BASEUSDC` (ex: `BTCUSDC`, `ETHUSDC`)
 
-### Revolut X (Infinity + London Breakout + DCA RSI)
+### Revolut X (Infinity + London Breakout + DCA RSI + Breakout Momentum)
 - **Base URL** : `https://revx.revolut.com/api/1.0/`
 - **Rate limit** : 1000 requêtes/minute
 - **Auth** : signature Ed25519 par requête (PAS de token/session) :
@@ -391,6 +441,7 @@ tradex-listing              # Bot Listing (Binance, listing event)
 tradex-infinity             # Bot Infinity (Revolut X)
 tradex-london               # Bot London Breakout (Revolut X)
 tradex-dca                  # Bot DCA RSI (Revolut X)
+tradex-breakout             # Bot Breakout Momentum (Revolut X)
 tradex-dashboard-unified    # Dashboard Streamlit (port 8502)
 ```
 
@@ -410,6 +461,7 @@ python -m src.bot_binance_listing --dry-run
 python -m src.bot_infinity --dry-run
 python -m src.bot_london --dry-run
 python -m src.bot_dca --dry-run
+python -m src.bot_breakout --dry-run
 
 # Lancer le dashboard en local
 streamlit run dashboard/app_unified.py --server.port 8502
@@ -424,6 +476,7 @@ sudo journalctl -u tradex-listing -f
 sudo journalctl -u tradex-infinity -f
 sudo journalctl -u tradex-london -f
 sudo journalctl -u tradex-dca -f
+sudo journalctl -u tradex-breakout -f
 
 # Redémarrer un service
 sudo systemctl restart tradex-binance
@@ -431,7 +484,7 @@ sudo systemctl restart tradex-binance
 
 ## Dashboard unifié (`dashboard/app_unified.py`)
 
-Dashboard Streamlit avec 7 onglets :
+Dashboard Streamlit avec 8 onglets :
 1. **Overview** : Allocation Binance (gauge CrashBot/Trail), allocation Revolut X (Infinity 80%/London 20%), KPIs globaux, equity cumulée
 2. **Trail Range** : Positions ouvertes, trades récents, PnL journalier
 3. **CrashBot** : Positions ouvertes, trades récents, statistiques de dip-buy
@@ -439,6 +492,7 @@ Dashboard Streamlit avec 7 onglets :
 5. **Infinity** : Cycles par paire, V-curves, paliers achat/vente
 6. **London** : Positions Revolut X, sessions détectées, breakouts
 7. **DCA** : RSI courant, régime (NORMAL/WEAK/CAPITULATION), MVRV (×mult), MA200, spending caps (mois/sem), budget restant (DCA actif + crash reserve), cumul BTC/ETH, PnL latent, Analytics (MVRV chart, decision log, distribution brackets/régime)
+8. **Breakout** : Positions ouvertes, trailing stop status, PnL par paire, anti-tilt status, statistiques breakout
 
 L'Overview affiche la répartition dynamique du capital Binance entre CrashBot et Trail Range, et la répartition statique 80/20 du capital Revolut X entre Infinity et London Breakout.
 
@@ -473,3 +527,14 @@ Alertes listing : détection (🔔), momentum skip (⏭️), entrée (🆕🛒),
   Caps: mois $960/$1500 | sem $260/$400
 ```
 Alertes DCA : achat quotidien (📈), crash reserve trigger (🚨📈), heartbeat (💓📈 avec RSI, MVRV ×mult, régime, MA200, caps mois/sem, budget restant, cumul BTC/ETH).
+
+### Breakout Momentum — Notifications spécifiques
+```
+⚡ BUY — ETH-USD BREAKOUT MOMENTUM
+  Entrée: 3502.30 | SL: 3495.90 (-0.18%)
+  TP: 3518.30 (+0.46%) | ATR: 8.00
+  Trail activation: 3504.70 | Trail dist: 1.60
+  Size: 0.01400000 ETH ($49.03)
+  Risque: 3% ($3.00)
+```
+Alertes breakout : entrée (⚡), trailing activé (🔄⚡), trailing SL touché (❌⚡), TP atteint (✅⚡), SL touché (❌⚡), heartbeat (💓⚡ avec positions ouvertes, P&L latent).

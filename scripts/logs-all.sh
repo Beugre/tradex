@@ -48,6 +48,11 @@ tmux select-pane -t "$SESSION:logs.3"
 tmux split-window -v -t "$SESSION:logs.3" \
     "echo -ne '\033]2;📈 DCA\033\\'; ssh $VPS 'sudo journalctl -u tradex-dca -f --no-pager -n 30'"
 
+# Ajouter un 7ème pane pour Breakout
+tmux select-pane -t "$SESSION:logs.4"
+tmux split-window -v -t "$SESSION:logs.4" \
+    "echo -ne '\033]2;⚡ Breakout\033\\'; ssh $VPS 'sudo journalctl -u tradex-breakout -f --no-pager -n 30'"
+
 # Activer les titres de panes (utilise le titre défini par echo)
 tmux set -t "$SESSION" pane-border-status top
 tmux set -t "$SESSION" pane-border-format " #T "

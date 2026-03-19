@@ -3,7 +3,7 @@
 ## Table des matières
 
 1. [L&#39;idée générale](#lidée-générale)
-2. [Les cinq bots](#les-cinq-bots)
+2. [Les sept bots](#les-sept-bots)
 3. [Bot 1 — Trail Range (Binance)](#bot-1--trail-range-binance)
    - [Détecter le range](#détecter-le-range)
    - [Décider quand entrer](#décider-quand-entrer-range)
@@ -41,29 +41,36 @@
    - [Spending Caps](#spending-caps)
    - [Crash Reserve](#crash-reserve)
    - [Budget et horizon](#budget-et-horizon)
-10. [Allocation dynamique du capital](#allocation-dynamique-du-capital)
+10. [Bot 7 — Breakout Momentum (Revolut X)](#bot-7--breakout-momentum-revolut-x)
+    - [L&#39;idée](#lidée-breakout)
+    - [Détection du breakout](#détection-du-breakout)
+    - [Entrée et sizing](#entrée-et-sizing-breakout)
+    - [Trailing stop](#trailing-stop)
+    - [Anti-tilt](#anti-tilt)
+11. [Allocation dynamique du capital](#allocation-dynamique-du-capital)
    - [Comment ça marche](#comment-ça-marche)
    - [Pourquoi cette logique](#pourquoi-cette-logique)
-11. [Gestion du risque (Money Management)](#gestion-du-risque-money-management)
-12. [La boucle de chaque bot](#la-boucle-de-chaque-bot)
-13. [Les fichiers et qui fait quoi](#les-fichiers-et-qui-fait-quoi)
-14. [Exemple concret — Trade RANGE](#exemple-concret--trade-range)
-15. [Exemple concret — Trade CRASH](#exemple-concret--trade-crash)
-16. [Exemple concret — Trade LISTING](#exemple-concret--trade-listing)
-17. [Exemple concret — Trade LONDON BREAKOUT](#exemple-concret--trade-london-breakout)
-18. [Exemple concret — Trade INFINITY](#exemple-concret--trade-infinity)
-19. [Exemple concret — Trade DCA RSI](#exemple-concret--trade-dca-rsi)
-20. [Ce que les bots ne font PAS](#ce-que-les-bots-ne-font-pas)
-21. [Les paramètres importants](#les-paramètres-importants-fichier-env)
-22. [Infrastructure &amp; Déploiement](#infrastructure--déploiement)
+12. [Gestion du risque (Money Management)](#gestion-du-risque-money-management)
+13. [La boucle de chaque bot](#la-boucle-de-chaque-bot)
+14. [Les fichiers et qui fait quoi](#les-fichiers-et-qui-fait-quoi)
+15. [Exemple concret — Trade RANGE](#exemple-concret--trade-range)
+16. [Exemple concret — Trade CRASH](#exemple-concret--trade-crash)
+17. [Exemple concret — Trade LISTING](#exemple-concret--trade-listing)
+18. [Exemple concret — Trade LONDON BREAKOUT](#exemple-concret--trade-london-breakout)
+19. [Exemple concret — Trade INFINITY](#exemple-concret--trade-infinity)
+20. [Exemple concret — Trade DCA RSI](#exemple-concret--trade-dca-rsi)
+21. [Exemple concret — Trade BREAKOUT MOMENTUM](#exemple-concret--trade-breakout-momentum)
+22. [Ce que les bots ne font PAS](#ce-que-les-bots-ne-font-pas)
+23. [Les paramètres importants](#les-paramètres-importants-fichier-env)
+24. [Infrastructure &amp; Déploiement](#infrastructure--déploiement)
 
 ---
 
 ## L'idée générale
 
-TradeX est un **écosystème de 6 bots** qui surveillent le marché crypto **24h/24** et tradent automatiquement quand les conditions sont réunies.
+TradeX est un **écosystème de 7 bots** qui surveillent le marché crypto **24h/24** et tradent automatiquement quand les conditions sont réunies.
 
-Les bots fonctionnent sur **2 exchanges** avec **6 stratégies complémentaires** :
+Les bots fonctionnent sur **2 exchanges** avec **7 stratégies complémentaires** :
 
 > **🔄 Trail Range** (Binance) : "Quand le prix oscille dans un couloir, je joue les rebonds entre le plafond et le plancher."
 > **💥 CrashBot** (Binance) : "Quand une crypto s'effondre brutalement, j'achète le dip et je laisse remonter."
@@ -71,12 +78,13 @@ Les bots fonctionnent sur **2 exchanges** avec **6 stratégies complémentaires*
 > **🇬🇧 London Breakout** (Revolut X) : "Quand le prix casse le range de la session de Londres (08-16 UTC), j'entre long avec un SL basé sur l'ATR."
 > **♾️ Infinity** (Revolut X) : "Quand une crypto baisse de X% par rapport à son plus haut récent, j'accumule par paliers DCA puis je revends progressivement."
 > **📈 DCA RSI v2** (Revolut X) : "Chaque jour, j'achète BTC et ETH selon le RSI, le régime de marché (MA200) et le MVRV on-chain (progressif), avec des spending caps et une réserve crash."
+> **⚡ Breakout Momentum** (Revolut X) : "Quand le prix casse son plus haut récent sur 15 min avec du volume et une expansion ATR, j'entre long avec un trailing stop serré."
 
 Aucun bot ne prédit l'avenir. Chacun **constate** un pattern spécifique et agit en conséquence.
 
 ---
 
-## Les six bots
+## Les sept bots
 
 | Bot                     | Exchange        | Paires                                 | Logique                              | Side                | Capital                     |
 | ----------------------- | --------------- | -------------------------------------- | ------------------------------------ | ------------------- | --------------------------- |
@@ -86,6 +94,7 @@ Aucun bot ne prédit l'avenir. Chacun **constate** un pattern spécifique et agi
 | 🇬🇧**London Breakout** | Revolut X (USD) | 8 (BTC, ETH, SOL, BNB, LINK, ADA, DOT, AVAX) | Session breakout (08-16 UTC) → long | **Long Only** | 20% Revolut X |
 | ♾️**Infinity**  | Revolut X (USD) | BTC, AAVE, XLM (configs optimisées) | DCA inversé + vente paliers         | **Long Only** | 65% Revolut X (~22% par paire) |
 | 📈**DCA RSI v2** | Revolut X (USD) | BTC, ETH                               | DCA quotidien RSI + regime MA200 + MVRV progressif + caps + crash reserve | **Long Only** | DCA_CAPITAL_PCT du solde RevX (85/15) |
+| ⚡**Breakout Momentum** | Revolut X (USD) | ETH, SOL, ARB                          | Breakout high(12) 15m + trailing stop ATR | **Long Only** | 100€ fixe (isolé) |
 
 ---
 
@@ -428,7 +437,7 @@ Bougie H4 16:00 :
 
 ---
 
-## Exécution des ordres Revolut X (London + Infinity + DCA RSI)
+## Exécution des ordres Revolut X (London + Infinity + DCA RSI + Breakout)
 
 📄 **Fichier : `revolut_client.py`**
 
@@ -704,6 +713,129 @@ Chaque décision d'achat est loggée dans Firebase (`events` collection, type `D
 - Raison textuelle (ex: "NEUTRAL RSI=48.2, MVRV=0.92 → ×1.5, regime=NORMAL")
 
 Ces données alimentent le **dashboard Analytics** (onglet DCA) : cockpit régime, graphe MVRV, distribution brackets, log des décisions.
+
+---
+
+## Bot 7 — Breakout Momentum (Revolut X)
+
+C'est le bot **momentum court terme**. Il détecte les cassures de plus haut récent sur bougies 15 minutes et surfe le mouvement avec un trailing stop serré.
+
+### L'idée {#lidée-breakout}
+
+> "Quand le prix casse son plus haut des 12 dernières bougies 15m, **avec** du volume élevé et une expansion de volatilité (ATR), c'est probablement le début d'un mouvement directionnel. J'entre long et je laisse le trailing stop protéger mes gains."
+
+📄 **Fichier : `breakout_engine.py`**
+
+**Capital isolé** : Le bot opère avec un budget **fixe de 100€** (`BRK_ALLOCATED_BALANCE`), totalement isolé du capital DCA ($13K). Il ne touche pas au solde Revolut X utilisé par les autres bots.
+
+### Détection du breakout
+
+Le bot analyse les bougies 15m pour chaque paire (ETH-USD, SOL-USD, ARB-USD). Un signal est validé quand **4 conditions** sont réunies simultanément :
+
+```
+Condition 1 : ATR(14) ≥ seuil minimum (0.1% du prix)
+  → "La volatilité est suffisante pour que le trade vaille le coup"
+
+Condition 2 : Close > rolling_high(12)
+  → "Le prix vient de casser son plus haut des 3 dernières heures"
+
+Condition 3 : ATR actuel > ATR_MA(8) × 1.05
+  → "La volatilité est en expansion (pas un faux breakout plat)"
+
+Condition 4 : Volume > Volume_MA(20) × 1.0
+  → "Le volume confirme l'intérêt du marché"
+```
+
+Si les 4 conditions sont remplies :
+
+```
+Signal BREAKOUT ✅
+  entry  = close actuel
+  SL     = entry - 0.8 × ATR    ← stop serré
+  TP     = entry + 2.0 × ATR    ← target large (R:R = 2.5:1)
+  trail_activation = 0.3 × ATR  ← le trailing s'active après +0.3×ATR
+  trail_distance   = 0.2 × ATR  ← distance du trailing au peak
+```
+
+### Entrée et sizing {#entrée-et-sizing-breakout}
+
+Le sizing est basé sur le **risque fixe** :
+
+```
+capital     = BRK_ALLOCATED_BALANCE (100€ fixe)
+risk_amount = capital × BRK_RISK_PERCENT (3%)  = 3€
+sl_distance = 0.8 × ATR                        = ex: 2.40$
+position_size = risk_amount / sl_distance       = 1.25 unités
+
+Plafond : position_size × entry ≤ capital × BRK_MAX_POSITION_PCT (50%)
+```
+
+L'exécution utilise le même mécanisme maker-only que les autres bots Revolut X :
+- Maker #1 → attente 60s → fill ? ✅ (0% frais)
+- Sinon Maker #2 (mid price) → attente 60s
+- Sinon Taker (market) → 0.09% frais
+
+### Trailing stop
+
+C'est la particularité de ce bot : au lieu d'un TP fixe, il utilise un **trailing stop dynamique** qui capture le maximum du mouvement.
+
+```
+Phase 1 : Prix monte mais < entry + trail_activation
+  → SL reste fixe à entry - 0.8×ATR
+
+Phase 2 : Prix atteint entry + 0.3×ATR → Trailing activé ✅
+  → peak_price = prix le plus haut observé
+  → SL dynamique = peak_price - trail_distance (0.2×ATR)
+  → Chaque nouveau high → le SL monte avec lui
+
+Phase 3 : Prix redescend sous le trailing SL
+  → Vente immédiate au marché
+  → Profit = (prix de sortie - entry) net
+```
+
+Exemple concret :
+```
+ETH-USD, ATR = 8.00$
+  Entry   = 3 500.00$
+  SL init = 3 493.60$ (-0.8 × 8 = -6.40$)
+  Trail activation = +2.40$ (0.3 × 8)
+  Trail distance   = +1.60$ (0.2 × 8)
+
+  Prix monte à 3 502.50 → trail activé (> 3 502.40)
+  Peak = 3 502.50, trailing SL = 3 500.90
+  Prix monte à 3 510.00 → peak = 3 510, trailing SL = 3 508.40
+  Prix redescend à 3 508.30 → ❌ trailing SL touché
+  → Vente à ~3 508.30 → Profit +8.30$ (+0.24%)
+```
+
+### Anti-tilt
+
+Le bot intègre un **système anti-tilt** pour éviter les spirales de pertes :
+
+```
+Cooldown normal : 4 bougies 15m (1h) entre deux trades sur la même paire
+  → Empêche le re-entry immédiat après un SL
+
+Anti-tilt : 3 pertes consécutives sur une paire → cooldown renforcé de 8 bougies (2h)
+  → "La paire est hostile en ce moment, je prends du recul"
+  → Le compteur reset dès qu'un trade est gagnant
+```
+
+### Paramètres clés
+
+```
+Paires         : ETH-USD, SOL-USD, ARB-USD (les plus performantes en backtest)
+Timeframe      : 15 minutes
+Capital        : 100€ fixe (isolé du reste)
+Risk/trade     : 3% (3€ par trade)
+Max positions  : 3 (1 par paire)
+Polling        : 15 secondes
+Heartbeat      : 10 minutes
+
+Backtest (ULTRATRAIL, walk-forward validé) :
+  PF 4.51 | WR 67.1% | +764$/an sur $1,500
+  Attendu avec 100€ : ~0.37€/jour (+135€/an)
+```
 
 ---
 
@@ -1008,6 +1140,8 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 | `dca_engine.py`           | 📈 Logique DCA RSI v2 : brackets RSI, MVRV progressif, régime MA200, spending caps, DCADecision |
 | `bot_dca.py`              | 📈 Boucle principale DCA RSI (Revolut X, BTC+ETH, maker-only)           |
 | `onchain.py`              | 📈 Métriques on-chain (MVRV via CoinMetrics Community API, cache 1h) |
+| `breakout_engine.py`      | ⚡ Logique breakout momentum : détection breakout, trailing stop, ATR/volume filters |
+| `bot_breakout.py`         | ⚡ Boucle principale Breakout Momentum (Revolut X, ETH+SOL+ARB, maker-only, trailing) |
 | `bot.py`                  | (legacy) Ancien bot Dow Theory Revolut X                                |
 | `binance_client.py`       | Communique avec l'API Binance (OCO, market, balances)                   |
 | `revolut_client.py`       | Communique avec l'API Revolut X (Ed25519, limit orders)                 |
@@ -1020,7 +1154,7 @@ Le capital de chaque bot est calculé en prenant le solde fiat + la valeur des p
 
 | Dashboard            | Port | Description                                           |
 | -------------------- | ---- | ----------------------------------------------------- |
-| 📊 Dashboard unifié | 8502 | 7 onglets : Overview, Trail Range, CrashBot, Listing, Infinity, London, DCA |
+| 📊 Dashboard unifié | 8502 | 8 onglets : Overview, Trail Range, CrashBot, Listing, Infinity, London, DCA, Breakout |
 
 ---
 
@@ -1409,7 +1543,86 @@ RSI = 40.0 | MVRV = 0.88 → Base 90$ × 1.5 = 135$
 
 ---
 
-## Ce que les bots ne font PAS
+## Exemple concret — Trade BREAKOUT MOMENTUM
+
+Imaginons ETH-USD sur bougies 15 minutes :
+
+### 1️⃣ Détection du breakout
+
+```
+🕐 14:15 UTC — Nouvelle bougie 15m clôturée
+ETH-USD : Close = 3 502.30$
+
+  ATR(14) = 8.00$ → ATR% = 0.23% > 0.1% ✅
+  Rolling high(12) = 3 500.00$ → Close 3 502.30 > 3 500.00 ✅
+  ATR_expansion : ATR 8.00 > SMA(ATR, 8) × 1.05 = 7.80 ✅
+  Volume : 12 500 > SMA(vol, 20) × 1.0 = 11 000 ✅
+
+→ ⚡ BREAKOUT SIGNAL validé !
+  entry  = 3 502.30$
+  SL     = 3 502.30 - 0.8 × 8.00 = 3 495.90$ (-0.18%)
+  TP     = 3 502.30 + 2.0 × 8.00 = 3 518.30$ (+0.46%)
+  Trail activation = 3 502.30 + 0.3 × 8.00 = 3 504.70$
+  Trail distance   = 0.2 × 8.00 = 1.60$
+```
+
+### 2️⃣ Entrée maker-only
+
+```
+Capital = 100€ | Risk = 3% → risk_amount = 3.00€
+SL distance = 6.40$ → size = 3.00 / 6.40 = 0.469 ETH
+
+  Plafond : 0.469 × 3 502 = 1 641$ > 50€ (50% de 100€) → clamp à 50 / 3 502 = 0.014 ETH
+  → Taille finale : 0.014 ETH ($49.03)
+
+⚡ BUY — ETH-USD BREAKOUT MOMENTUM
+  Ordre limit maker @ 3 502.30$ ✅ (0% frais)
+  Size: 0.014 ETH | Risque: 3% (3.00€)
+```
+
+### 3️⃣ Le prix monte → Trailing activé
+
+```
+14:30 UTC — Prix = 3 504.80$ → > trail_activation (3 504.70)
+  → 🔄 Trailing stop ACTIVÉ
+  Peak = 3 504.80 | Trailing SL = 3 504.80 - 1.60 = 3 503.20
+
+14:45 UTC — Prix = 3 510.50$
+  → Peak = 3 510.50 | Trailing SL monte à 3 508.90
+
+15:00 UTC — Prix = 3 514.20$
+  → Peak = 3 514.20 | Trailing SL monte à 3 512.60
+
+15:15 UTC — Prix redescend à 3 512.40$ → < trailing SL (3 512.60)
+  → ❌ Trailing SL touché !
+  → Vente market @ 3 512.40$
+  → PnL = (3 512.40 - 3 502.30) × 0.014 = +0.14$ 🎉
+```
+
+### 4️⃣ Scénario SL direct (perdant)
+
+```
+15:30 UTC — Nouveau breakout ETH-USD
+  entry = 3 508.00 | SL = 3 501.60 | ATR = 8.00
+
+15:45 UTC — Faux breakout, le prix retombe
+  Prix = 3 501.50 → < SL (3 501.60) ❌
+  → Vente market | PnL = -0.09$ (-6.40 × 0.014)
+  → consecutive_losses["ETH-USD"] = 1
+  → Cooldown : 4 bougies (1h)
+```
+
+### 5️⃣ Anti-tilt déclenché
+
+```
+3 pertes consécutives sur SOL-USD
+  consecutive_losses["SOL-USD"] = 3 ≥ max (3)
+  → 🛑 Cooldown renforcé : 8 bougies (2h)
+  → "SOL-USD est hostile, pause étendue"
+  → Cooldown reset au prochain trade gagnant
+```
+
+---
 
 | ❌ Ne fait pas        | ✅ Fait à la place                                          |
 | --------------------- | ------------------------------------------------------------ |
@@ -1545,6 +1758,32 @@ RSI = 40.0 | MVRV = 0.88 → Base 90$ × 1.5 = 135$
 | `DCA_HEARTBEAT_SECONDS`         | 600s       | Heartbeat Telegram (10 min)                    |
 | `DCA_MAKER_WAIT_SECONDS`        | 60s        | Attente max pour fill maker                    |
 
+### Breakout Momentum ⚡
+
+| Paramètre                        | Valeur     | Ce que ça fait                                |
+| ---------------------------------- | ---------- | ---------------------------------------------- |
+| `BRK_ALLOCATED_BALANCE`          | 100€      | Budget fixe isolé (pas un % du solde)          |
+| `BRK_TRADING_PAIRS`             | ETH-USD,SOL-USD,ARB-USD | Paires tradées (walk-forward validées) |
+| `BRK_RISK_PERCENT`              | 3%         | Risque par trade                               |
+| `BRK_MAX_POSITIONS`             | 3          | Max 3 positions simultanées (1 par paire)     |
+| `BRK_CANDLE_INTERVAL`           | 15         | Timeframe en minutes                           |
+| `BRK_LOOKBACK`                  | 12         | Nombre de bougies pour le rolling high         |
+| `BRK_ATR_PERIOD`                | 14         | Période ATR                                   |
+| `BRK_TP_ATR_MULT`               | 2.0        | TP = entry + mult × ATR                       |
+| `BRK_SL_ATR_MULT`               | 0.8        | SL = entry - mult × ATR                       |
+| `BRK_TRAIL_ACTIVATION_ATR`      | 0.3        | Trailing s'active après +0.3×ATR              |
+| `BRK_TRAIL_DISTANCE_ATR`        | 0.2        | Distance trailing vs peak                      |
+| `BRK_ATR_EXPANSION_LOOKBACK`    | 8          | Fenêtre SMA pour l'expansion ATR              |
+| `BRK_ATR_EXPANSION_RATIO`       | 1.05       | Ratio expansion (ATR > SMA × ratio)           |
+| `BRK_VOLUME_SPIKE_MULT`         | 1.0        | Volume minimum vs MA20                         |
+| `BRK_MIN_ATR_PCT`               | 0.001      | ATR minimum en % du prix (0.1%)               |
+| `BRK_COOLDOWN_BARS`             | 4          | Cooldown normal entre trades (1h)              |
+| `BRK_MAX_CONSECUTIVE_LOSSES`    | 3          | Pertes consécutives avant anti-tilt           |
+| `BRK_COOLDOWN_BARS_AFTER_TILT`  | 8          | Cooldown renforcé anti-tilt (2h)              |
+| `BRK_POLLING_SECONDS`           | 15s        | Fréquence de polling                           |
+| `BRK_HEARTBEAT_SECONDS`         | 600s       | Heartbeat Telegram (10 min)                    |
+| `BRK_MAKER_WAIT_SECONDS`        | 60s        | Attente max pour fill maker                    |
+
 ---
 
 ## Infrastructure & Déploiement
@@ -1570,6 +1809,7 @@ RSI = 40.0 | MVRV = 0.88 → Base 90$ × 1.5 = 135$
 | `tradex-london`          | Bot London Breakout (8 paires USD, Revolut X)   | —   |
 | `tradex-infinity`          | Bot Infinity (BTC+AAVE+XLM, DCA inversé, Revolut X)   | —   |
 | `tradex-dca`               | Bot DCA RSI v2 (BTC+ETH, RSI+MVRV+regime+caps, Revolut X) | —   |
+| `tradex-breakout`          | Bot Breakout Momentum (ETH+SOL+ARB, trailing, Revolut X) | —   |
 | `tradex-dashboard-unified` | Dashboard Streamlit unifié                     | 8502 |
 | `tradex-dca-dashboard`     | Dashboard DCA standalone (Plotly)               | 8503 |
 | `tradex-telegram-commands` | Bot Telegram de pilotage opérateur             | —   |
@@ -1584,9 +1824,10 @@ ssh BOT-VPS 'sudo journalctl -u tradex-listing -f'
 ssh BOT-VPS 'sudo journalctl -u tradex-london -f'
 ssh BOT-VPS 'sudo journalctl -u tradex-infinity -f'
 ssh BOT-VPS 'sudo journalctl -u tradex-dca -f'
+ssh BOT-VPS 'sudo journalctl -u tradex-breakout -f'
 
 # État de tous les services
-ssh BOT-VPS 'for svc in tradex-binance tradex-binance-crashbot tradex-listing tradex-london tradex-infinity tradex-dca tradex-dashboard-unified tradex-dca-dashboard; do echo -n "$svc: "; sudo systemctl is-active $svc; done'
+ssh BOT-VPS 'for svc in tradex-binance tradex-binance-crashbot tradex-listing tradex-london tradex-infinity tradex-dca tradex-breakout tradex-dashboard-unified tradex-dca-dashboard; do echo -n "$svc: "; sudo systemctl is-active $svc; done'
 
 # Redémarrer un bot
 ssh BOT-VPS 'sudo systemctl restart tradex-binance'

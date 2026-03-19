@@ -23,6 +23,7 @@ BOT_LABELS = {
     "london-breakout": "London Breakout",
     "listing": "Listing Event",
     "dca": "DCA RSI",
+    "breakout": "Breakout Momentum",
     "trend-legacy": "Trend Legacy",
     "unknown": "UNKNOWN",
 }
@@ -48,6 +49,8 @@ def classify_bot(trade: dict) -> str:
         return "london-breakout"
     if strategy == "DCA" or exchange == "revolut-dca":
         return "dca"
+    if strategy == "BREAKOUT" or exchange == "revolut-breakout":
+        return "breakout"
     if strategy == "RANGE":
         if symbol.endswith("USDC"):
             return "trail-range"

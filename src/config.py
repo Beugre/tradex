@@ -327,6 +327,41 @@ LON_BREAKEVEN_AFTER_TP1: bool = os.getenv(
 ).lower() in ("true", "1", "yes")
 
 # ── Listing Bot (bot_binance_listing.py) ─────────────────────────────────────
+
+# ── Breakout Momentum Bot (bot_breakout.py) ────────────────────────────────────
+BRK_TRADING_PAIRS: list[str] = [
+    p.strip() for p in os.getenv(
+        "BRK_TRADING_PAIRS",
+        "ETH-USD,SOL-USD,ARB-USD"
+    ).split(",") if p.strip()
+]
+BRK_ALLOCATED_BALANCE: float = float(
+    os.getenv("BRK_ALLOCATED_BALANCE", "100")           # Budget fixe en USD (isolé)
+)
+BRK_RISK_PERCENT: float = float(os.getenv("BRK_RISK_PERCENT", "0.03"))  # 3% par trade
+BRK_MAX_POSITIONS: int = int(os.getenv("BRK_MAX_POSITIONS", "3"))
+BRK_POLLING_SECONDS: int = int(os.getenv("BRK_POLLING_SECONDS", "15"))
+BRK_HEARTBEAT_SECONDS: int = int(os.getenv("BRK_HEARTBEAT_SECONDS", "600"))
+BRK_MAKER_WAIT_SECONDS: int = int(os.getenv("BRK_MAKER_WAIT_SECONDS", "60"))
+
+# Stratégie Breakout Momentum
+BRK_LOOKBACK: int = int(os.getenv("BRK_LOOKBACK", "12"))               # High(12) barres 15m
+BRK_ATR_PERIOD: int = int(os.getenv("BRK_ATR_PERIOD", "14"))
+BRK_VOL_MA_PERIOD: int = int(os.getenv("BRK_VOL_MA_PERIOD", "20"))
+BRK_TP_ATR_MULT: float = float(os.getenv("BRK_TP_ATR_MULT", "2.0"))   # TP = entry + 2.0*ATR
+BRK_SL_ATR_MULT: float = float(os.getenv("BRK_SL_ATR_MULT", "0.8"))   # SL = entry - 0.8*ATR
+BRK_TRAIL_ACTIVATION_ATR: float = float(os.getenv("BRK_TRAIL_ACTIVATION_ATR", "0.3"))  # Trailing actif à +0.3*ATR
+BRK_TRAIL_DISTANCE_ATR: float = float(os.getenv("BRK_TRAIL_DISTANCE_ATR", "0.2"))      # Trailing suit à -0.2*ATR
+BRK_ATR_EXPANSION_LOOKBACK: int = int(os.getenv("BRK_ATR_EXPANSION_LOOKBACK", "8"))
+BRK_ATR_EXPANSION_RATIO: float = float(os.getenv("BRK_ATR_EXPANSION_RATIO", "1.05"))
+BRK_VOLUME_SPIKE_MULT: float = float(os.getenv("BRK_VOLUME_SPIKE_MULT", "1.0"))
+BRK_MIN_ATR_PCT: float = float(os.getenv("BRK_MIN_ATR_PCT", "0.001"))  # ATR min en % du prix
+BRK_COOLDOWN_BARS: int = int(os.getenv("BRK_COOLDOWN_BARS", "4"))
+BRK_MAX_CONSECUTIVE_LOSSES: int = int(os.getenv("BRK_MAX_CONSECUTIVE_LOSSES", "3"))
+BRK_COOLDOWN_BARS_AFTER_TILT: int = int(os.getenv("BRK_COOLDOWN_BARS_AFTER_TILT", "8"))
+BRK_CANDLE_INTERVAL: int = int(os.getenv("BRK_CANDLE_INTERVAL", "15"))  # 15 minutes
+
+# ── Listing Bot (bot_binance_listing.py) ─────────────────────────────────────
 # Fallback statique si DYNAMIC_ALLOCATION_ENABLED=false
 LISTING_ALLOCATED_BALANCE: float = float(
     os.getenv("LISTING_ALLOCATED_BALANCE", "500")
