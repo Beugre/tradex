@@ -49,6 +49,16 @@ BOTS = {
         "label": "DCA RSI",
         "heartbeat_default": config.DCA_HEARTBEAT_SECONDS,
     },
+    "breakout": {
+        "exchange": "revolut-breakout",
+        "label": "Breakout Momentum",
+        "heartbeat_default": config.BRK_HEARTBEAT_SECONDS,
+    },
+    "listing": {
+        "exchange": "binance-listing",
+        "label": "Listing Bot",
+        "heartbeat_default": config.LISTING_HEARTBEAT_SECONDS,
+    },
 }
 
 ALIAS = {
@@ -64,6 +74,11 @@ ALIAS = {
     "dca": "dca",
     "dcasri": "dca",
     "dcarsi": "dca",
+    "breakout": "breakout",
+    "brk": "breakout",
+    "momentum": "breakout",
+    "listing": "listing",
+    "list": "listing",
 }
 
 
