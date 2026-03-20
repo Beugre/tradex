@@ -64,6 +64,7 @@ def compute_allocation(
     trail_pf: float,
     trail_trade_count: int,
     listing_pct: float = _LISTING_PCT_DEFAULT,
+    trail_pct_override: float | None = None,
 ) -> AllocationResult:
     """Calcule la répartition Crash/Trail/Listing basée sur le PF du Trail Range.
 
@@ -75,6 +76,8 @@ def compute_allocation(
         trail_pf: Profit Factor du bot Trail Range sur 90 jours
         trail_trade_count: Nombre de trades clôturés du Trail Range sur 90 jours
         listing_pct: Part fixe allouée au Listing Bot (défaut 0.30)
+        trail_pct_override: Si fourni, écrase le trail_pct issu du PF
+            (utile quand Trail Range est en dry-run → 0.0)
 
     Returns:
         AllocationResult avec les montants alloués à chaque bot
@@ -105,6 +108,10 @@ def compute_allocation(
             f"PF={trail_pf:.2f} > {_PF_HIGH} "
             f"sur {trail_trade_count} trades → Agressif"
         )
+
+    # Override trail_pct si fourni (ex: Trail Range en dry-run → 0.0)
+    if trail_pct_override is not None:
+        trail_pct = trail_pct_override
 
     crash_pct = round(1.0 - listing_pct - trail_pct, 10)
     crash_balance = round(total_balance * crash_pct, 2)

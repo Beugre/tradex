@@ -496,6 +496,8 @@ class TradeXBinanceCrashBot:
                 total_balance=total_balance,
                 trail_pf=trail_pf,
                 trail_trade_count=trail_trades,
+                listing_pct=config.LISTING_CAPITAL_PCT,
+                trail_pct_override=config.TRAIL_CAPITAL_PCT_OVERRIDE,
             )
 
             self._allocated_balance = result.crash_balance

@@ -153,6 +153,10 @@ BINANCE_CRASHBOT_MAX_RISK_PCT: float = float(
 )
 
 # Heartbeat Telegram CrashBot
+# Override pour forcer trail_pct (None = PF-based, 0.0 = Trail dry-run)
+_trail_ovr = os.getenv("TRAIL_CAPITAL_PCT_OVERRIDE")
+TRAIL_CAPITAL_PCT_OVERRIDE: float | None = float(_trail_ovr) if _trail_ovr is not None else None
+
 CRASHBOT_HEARTBEAT_TELEGRAM_SECONDS: int = int(
     os.getenv("CRASHBOT_HEARTBEAT_TELEGRAM_SECONDS", "600")
 )
