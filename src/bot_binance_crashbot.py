@@ -177,6 +177,7 @@ class TradeXBinanceCrashBot:
 
         # OCO tracking (SL + TP sur l'exchange)
         self._oco_orders: dict[str, dict] = {}     # symbol → {"order_list_id": int}
+        self._oco_notional_skip: set[str] = set()   # symboles où l'OCO est impossible (notionnel trop faible)
 
         # Cooldown par paire (timestamp ms de la dernière fermeture)
         self._last_trade_close_ts: dict[str, int] = {}
@@ -1052,6 +1053,19 @@ class TradeXBinanceCrashBot:
         sl_limit = current_sl * (1 - offset)
         sl_limit_str = self._client.format_price(symbol, sl_limit)
 
+        # ── Check notionnel : si la position est trop petite pour un OCO limit,
+        # on skip et on s'appuie sur le fallback SL en polling.
+        oco_qty = position.size
+        if not self._client.check_min_notional(symbol, oco_qty, current_sl):
+            if symbol not in self._oco_notional_skip:
+                self._oco_notional_skip.add(symbol)
+                logger.warning(
+                    "[%s] ⚠️ OCO impossible (NOTIONAL trop faible: %.4f @ %.8f). "
+                    "Fallback SL polling actif.",
+                    symbol, oco_qty * current_sl, current_sl,
+                )
+            return False
+
         # Quantité = taille de la position, ajustée au solde réel disponible
         base_currency = symbol.replace("USDC", "")
         balances = self._client.get_balances()
@@ -1488,8 +1502,11 @@ class TradeXBinanceCrashBot:
 
         # 4. Si pas d'OCO actif et pas de step → tenter de placer l'OCO
         elif not has_oco and not self.dry_run:
+            # Skip si notionnel trop faible (déjà loggé, fallback polling actif)
+            if symbol in self._oco_notional_skip:
+                pass
             # Vérifier que TP est au-dessus du prix et SL en-dessous
-            if current_tp > price > current_sl:
+            elif current_tp > price > current_sl:
                 self._place_oco(symbol, position)
 
         # 4. Kill-switch check
