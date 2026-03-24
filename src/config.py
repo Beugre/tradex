@@ -151,6 +151,12 @@ BINANCE_CRASHBOT_MIN_RISK_PCT: float = float(
 BINANCE_CRASHBOT_MAX_RISK_PCT: float = float(
     os.getenv("BINANCE_CRASHBOT_MAX_RISK_PCT", "0.10")
 )
+# Max SL distance from entry — clamp pour respecter le filtre PERCENT_PRICE_BY_SIDE
+# Sur les micro-caps, l'ATR peut donner un SL à -60%+ → rejeté par Binance.
+# On clamp le SL à max -30% du prix d'entrée (conservatif, passe tous les filtres).
+BINANCE_CRASHBOT_MAX_SL_DIST_PCT: float = float(
+    os.getenv("BINANCE_CRASHBOT_MAX_SL_DIST_PCT", "0.30")
+)
 
 # Heartbeat Telegram CrashBot
 # Override pour forcer trail_pct (None = PF-based, 0.0 = Trail dry-run)

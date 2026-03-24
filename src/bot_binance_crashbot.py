@@ -1023,6 +1023,21 @@ class TradeXBinanceCrashBot:
             logger.warning("[%s] Pas de TP → OCO impossible", symbol)
             return False
 
+        # ── Clamp SL : filtre PERCENT_PRICE_BY_SIDE ──────────────────────
+        # Sur les micro-caps, l'ATR peut produire un SL à -60%+ du prix
+        # d'entrée → rejeté par Binance. On clamp au max configuré.
+        max_sl_pct = config.BINANCE_CRASHBOT_MAX_SL_DIST_PCT
+        min_allowed_sl = position.entry_price * (1 - max_sl_pct)
+        if current_sl < min_allowed_sl:
+            logger.warning(
+                "[%s] ⚠️ SL clampé (PERCENT_PRICE_BY_SIDE): %.8f → %.8f "
+                "(max -%.0f%% de entry=%.8f)",
+                symbol, current_sl, min_allowed_sl,
+                max_sl_pct * 100, position.entry_price,
+            )
+            current_sl = min_allowed_sl
+            self._trail_sl[symbol] = current_sl
+
         # Formater les prix
         tp_price_str = self._client.format_price(symbol, current_tp)
         sl_stop_str = self._client.format_price(symbol, current_sl)
