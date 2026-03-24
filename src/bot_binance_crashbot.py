@@ -1055,14 +1055,15 @@ class TradeXBinanceCrashBot:
 
         # ── Check notionnel : si la position est trop petite pour un OCO limit,
         # on skip et on s'appuie sur le fallback SL en polling.
+        # On vérifie avec sl_limit (prix le plus bas, donc le plus restrictif)
         oco_qty = position.size
-        if not self._client.check_min_notional(symbol, oco_qty, current_sl):
+        if not self._client.check_min_notional(symbol, oco_qty, sl_limit):
             if symbol not in self._oco_notional_skip:
                 self._oco_notional_skip.add(symbol)
                 logger.warning(
-                    "[%s] ⚠️ OCO impossible (NOTIONAL trop faible: %.4f @ %.8f). "
+                    "[%s] ⚠️ OCO impossible (NOTIONAL trop faible: $%.4f = %.2f × %.8f). "
                     "Fallback SL polling actif.",
-                    symbol, oco_qty * current_sl, current_sl,
+                    symbol, oco_qty * sl_limit, oco_qty, sl_limit,
                 )
             return False
 
