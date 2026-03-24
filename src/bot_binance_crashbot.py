@@ -1105,8 +1105,18 @@ class TradeXBinanceCrashBot:
             return True
 
         except Exception as e:
-            logger.error("[%s] ❌ OCO placement échoué: %s", symbol, e)
-            self._telegram.notify_error(f"CrashBot OCO {symbol} échoué: {e}")
+            err_str = str(e)
+            # Si erreur NOTIONAL ou PERCENT_PRICE → OCO impossible pour ce symbole,
+            # ne plus retenter (le fallback SL polling reste actif).
+            if "NOTIONAL" in err_str or "PERCENT_PRICE" in err_str:
+                self._oco_notional_skip.add(symbol)
+                logger.warning(
+                    "[%s] ⚠️ OCO impossible (%s) — fallback SL polling actif",
+                    symbol, err_str.split(":")[-1].strip() if ":" in err_str else err_str,
+                )
+            else:
+                logger.error("[%s] ❌ OCO placement échoué: %s", symbol, e)
+                self._telegram.notify_error(f"CrashBot OCO {symbol} échoué: {e}")
             return False
 
     # ═══════════════════════════════════════════════════════════════════════════
