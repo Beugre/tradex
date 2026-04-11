@@ -13,7 +13,7 @@
 | **London Breakout** | Revolut X (USD) | Session breakout (range 08-16 UTC → breakout LONG) | H4 | BTC, ETH, SOL, BNB, LINK, ADA, DOT, AVAX |
 | **DCA RSI v2** | Revolut X (USD) | DCA quotidien RSI + MVRV progressif + régime MA200 + spending caps + crash reserve | Daily | BTC, ETH |
 | **Breakout Momentum** | Revolut X (USD) | Breakout high(12) 15m + trailing stop ATR + anti-tilt | 15m | ETH, SOL, ARB |
-| **Adaptive Bull** | Binance (USDC) | Bull Trend Following EMA50/EMA200 15m + filtre régime 1H | 15m + 1H | BTC, ETH, SOL, BNB, XRP |
+| **Adaptive Bull** | Binance (USDC) | Bull Trend Following EMA50/EMA200 15m + filtre régime 1H + ranking priorité | 15m + 1H | BTC, ETH, SOL, XRP, AVAX, NEAR |
 
 - **Langage** : Python 3.10+ (VPS), Python 3.12+ (dev local)
 - **Notifications** : Telegram Bot API (entrée, SL, TP, clôture, heartbeat)
@@ -405,12 +405,12 @@ BRK_HEARTBEAT_SECONDS=600
 BRK_MAKER_WAIT_SECONDS=60
 
 # ── Adaptive Bull (bot_adaptive.py) ──
-ADT_TRADING_PAIRS=BTCUSDC,ETHUSDC,SOLUSDC,BNBUSDC,XRPUSDC
+ADT_TRADING_PAIRS=BTCUSDC,ETHUSDC,SOLUSDC,XRPUSDC,AVAXUSDC,NEARUSDC
 ADT_ALLOCATED_BALANCE=1000.0
-ADT_MAX_POSITIONS=2
+ADT_MAX_POSITIONS=3
 ADT_POLLING_SECONDS=60
 ADT_HEARTBEAT_SECONDS=600
-ADT_BULL_ALLOC_PCT=0.99
+ADT_BULL_ALLOC_PCT=0.33
 ADT_BULL_SL_PCT=0.015
 ADT_BULL_TRAIL_PCT=0.025
 ADT_BULL_TP_PCT=0.080
@@ -431,12 +431,13 @@ ADT_COOLDOWN_BARS=16
   6. **Trend Break** : Sortie si EMA50 < EMA200 sur nouvelle bougie 15m
   7. **Pyramiding** : +15% du budget restant sur position gagnante (1× par trade)
   8. **Circuit-breaker** : DD journalier max -5%
-- **Paires** : BTC, ETH, SOL, BNB, XRP (USDC), auto-configurées via `ADT_TRADING_PAIRS`
+- **Paires** : BTC, ETH, SOL, XRP, AVAX, NEAR (6 paires USDC), auto-configurées via `ADT_TRADING_PAIRS`
 - **Capital** : Budget fixe isolé (`ADT_ALLOCATED_BALANCE=1000`), sans lien avec l'allocateur Trail/Crash/Listing
 - **Exécution** : MARKET orders (taker 0.1%) — pas de maker-only retry
 - **Polling** : Toutes les 60s (chaque tick check ticker pour SL/TP + nouvelle bougie pour signaux)
 - **Heartbeat** : Toutes les 10 minutes
 - **State** : Persisté dans `data/state_adaptive.json`
+- **Ranking** : `PAIR_PRIORITY` (SOL=1 > BTC=2 > AVAX=3 > NEAR=4 > XRP=5 > ETH=6) — quand plusieurs signaux simultanés, exécution par ordre d'espérance; BNB retiré (backtest -21.5%)
 - **Backtest** : PF 1.18, WR 34.1%, walk-forward 3/3 🟢 OOS PF 1.14, +405% sur 6 ans ($1k → $5k), CAGR +31%, DD max -20.8%
 
 

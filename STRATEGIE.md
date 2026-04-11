@@ -84,7 +84,7 @@ Aucun bot ne prédit l'avenir. Chacun **constate** un pattern spécifique et agi
 
 ---
 
-## Les sept bots
+## Les huit bots
 
 | Bot                     | Exchange        | Paires                                 | Logique                              | Side                | Capital                     |
 | ----------------------- | --------------- | -------------------------------------- | ------------------------------------ | ------------------- | --------------------------- |
@@ -95,6 +95,7 @@ Aucun bot ne prédit l'avenir. Chacun **constate** un pattern spécifique et agi
 | ♾️**Infinity**  | Revolut X (USD) | BTC, AAVE, XLM (configs optimisées) | DCA inversé + vente paliers         | **Long Only** | 65% Revolut X (~22% par paire) |
 | 📈**DCA RSI v2** | Revolut X (USD) | BTC, ETH                               | DCA quotidien RSI + regime MA200 + MVRV progressif + caps + crash reserve | **Long Only** | DCA_CAPITAL_PCT du solde RevX (85/15) |
 | ⚡**Breakout Momentum** | Revolut X (USD) | ETH, SOL, ARB                          | Breakout high(12) 15m + trailing stop ATR | **Long Only** | 100€ fixe (isolé) |
+| 🐂**Adaptive Bull** | Binance (USDC)  | BTC, ETH, SOL, XRP, AVAX, NEAR (6 paires) | Bull Trend Following 15m + régime 1H + ranking priorité | **Long Only** | 1000 USDC fixe (isolé) |
 
 ---
 
@@ -1784,6 +1785,70 @@ SL distance = 6.40$ → size = 3.00 / 6.40 = 0.469 ETH
 | `BRK_HEARTBEAT_SECONDS`         | 600s       | Heartbeat Telegram (10 min)                    |
 | `BRK_MAKER_WAIT_SECONDS`        | 60s        | Attente max pour fill maker                    |
 
+### Adaptive Bull 🐂
+
+| Paramètre                  | Valeur                                          | Ce que ça fait                                              |
+| -------------------------- | ----------------------------------------------- | ------------------------------------------------------------ |
+| `ADT_TRADING_PAIRS`        | BTCUSDC,ETHUSDC,SOLUSDC,XRPUSDC,AVAXUSDC,NEARUSDC | 6 paires validées en backtest (retrait BNB, ajout AVAX+NEAR) |
+| `ADT_ALLOCATED_BALANCE`    | 1000 USDC                                       | Budget fixe isolé (hors allocateur Trail/Crash/Listing)     |
+| `ADT_MAX_POSITIONS`        | 3                                               | Max 3 positions simultanées                                 |
+| `ADT_BULL_ALLOC_PCT`       | 0.33                                            | 33% du budget par position (3 × 33% = 99% max exposé)       |
+| `ADT_BULL_SL_PCT`          | 1.5%                                            | Stop-loss fixe sous le prix d'entrée                        |
+| `ADT_BULL_TRAIL_PCT`       | 2.5%                                            | Trailing stop distance depuis le peak                       |
+| `ADT_BULL_TP_PCT`          | 8.0%                                            | Take-profit cible                                           |
+| `ADT_BULL_PYRAMID_ALLOC`   | 0.15                                            | Pyramiding : +15% du budget restant sur position gagnante   |
+| `ADT_DAILY_DD_MAX`         | 5%                                              | Circuit-breaker : DD journalier max avant pause             |
+| `ADT_COOLDOWN_BARS`        | 16                                              | Cooldown post-clôture (bougies 15m = 4h)                    |
+| `ADT_POLLING_SECONDS`      | 60s                                             | Fréquence de polling                                        |
+| `ADT_HEARTBEAT_SECONDS`    | 600s                                            | Heartbeat Telegram (10 min)                                 |
+
+**Ranking de priorité des signaux (PAIR_PRIORITY) :**
+
+Quand plusieurs paires génèrent un signal au même tick, elles sont exécutées par ordre de priorité décroissante basée sur l'espérance de gain backtest :
+
+| Rang | Paire     | PnL backtest 3 ans |
+| ---- | --------- | ------------------- |
+| 1    | SOLUSDC   | +250$ (+125%)       |
+| 2    | BTCUSDC   | +82$ (+41%)         |
+| 3    | AVAXUSDC  | +52$ (+42%)         |
+| 4    | NEARUSDC  | +44$ (+35%)         |
+| 5    | XRPUSDC   | +52$ (+26%)         |
+| 6    | ETHUSDC   | +47$ (+24%)         |
+
+---
+
+## Bot 8 — Adaptive Bull (Binance USDC)
+
+C'est le bot **bull trend following**. Il ne trade qu'en régime haussier confirmé, sur le timeframe 15m avec un filtre de régime 1H.
+
+### Logique en 3 niveaux
+
+1. **Régime 1H** : Score 5 critères (EMA50/200, ADX, RSI, BollingerBand) → entre uniquement si score ≥ 4 (BULL)
+2. **Signal 15m** : Golden cross (EMA50 > EMA200) + RSI 50–65 + slope EMA50 positif + pullback + bougie haussière
+3. **Ranking** : Si plusieurs signaux simultanés, exécution par ordre d'espérance (voir PAIR_PRIORITY ci-dessus)
+
+### Gestion de position
+
+```
+Entrée          TP (+8%)
+│               │
+├──────────────→│
+│ Trailing -2.5%│ (depuis le peak, actif dès le 1er tick)
+│               │
+SL -1.5%        ← sortie si EMA50 < EMA200 (trend break)
+```
+
+- **Pyramiding** : Si position en profit, ajout de 15% du budget restant (1× par trade)
+- **Circuit-breaker** : Si DD journalier ≥ 5% → pause jusqu'au lendemain
+- **OCO natif Binance** : TP + SL placés simultanément comme filet de sécurité
+
+### Backtest
+
+- **Big5 (3 ans, $200/paire)** : SOL +125%, BTC +41%, XRP +26%, ETH +24%, BNB -21.5%
+- **Candidats retenus** : AVAX +42%, NEAR +35% (vs DOGE +101% non retenu car volatilité trop élevée)
+- **Configuration finale** : 6 paires, PF estimé > 1.2, WR ~34%
+- **Walk-forward** : 3/3 🟢 OOS PF 1.14, +405% sur 6 ans ($1k → $5k), CAGR +31%, DD max -20.8%
+
 ---
 
 ## Infrastructure & Déploiement
@@ -1810,6 +1875,7 @@ SL distance = 6.40$ → size = 3.00 / 6.40 = 0.469 ETH
 | `tradex-infinity`          | Bot Infinity (BTC+AAVE+XLM, DCA inversé, Revolut X)   | —   |
 | `tradex-dca`               | Bot DCA RSI v2 (BTC+ETH, RSI+MVRV+regime+caps, Revolut X) | —   |
 | `tradex-breakout`          | Bot Breakout Momentum (ETH+SOL+ARB, trailing, Revolut X) | —   |
+| `tradex-adaptive`          | Bot Adaptive Bull (BTC+ETH+SOL+XRP+AVAX+NEAR USDC, 15m, Binance) | —   |
 | `tradex-dashboard-unified` | Dashboard Streamlit unifié                     | 8502 |
 | `tradex-dca-dashboard`     | Dashboard DCA standalone (Plotly)               | 8503 |
 | `tradex-telegram-commands` | Bot Telegram de pilotage opérateur             | —   |
@@ -1825,9 +1891,10 @@ ssh BOT-VPS 'sudo journalctl -u tradex-london -f'
 ssh BOT-VPS 'sudo journalctl -u tradex-infinity -f'
 ssh BOT-VPS 'sudo journalctl -u tradex-dca -f'
 ssh BOT-VPS 'sudo journalctl -u tradex-breakout -f'
+ssh BOT-VPS 'sudo journalctl -u tradex-adaptive -f'
 
 # État de tous les services
-ssh BOT-VPS 'for svc in tradex-binance tradex-binance-crashbot tradex-listing tradex-london tradex-infinity tradex-dca tradex-breakout tradex-dashboard-unified tradex-dca-dashboard; do echo -n "$svc: "; sudo systemctl is-active $svc; done'
+ssh BOT-VPS 'for svc in tradex-binance tradex-binance-crashbot tradex-listing tradex-london tradex-infinity tradex-dca tradex-breakout tradex-adaptive tradex-dashboard-unified tradex-dca-dashboard; do echo -n "$svc: "; sudo systemctl is-active $svc; done'
 
 # Redémarrer un bot
 ssh BOT-VPS 'sudo systemctl restart tradex-binance'
