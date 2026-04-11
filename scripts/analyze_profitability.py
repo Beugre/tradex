@@ -24,6 +24,9 @@ BOT_LABELS = {
     "listing": "Listing Event",
     "dca": "DCA RSI",
     "breakout": "Breakout Momentum",
+    "adaptive": "Adaptive Bull",
+    "adaptive": "Adaptive Bull",
+    "adaptive": "Adaptive Bull",
     "trend-legacy": "Trend Legacy",
     "unknown": "UNKNOWN",
 }

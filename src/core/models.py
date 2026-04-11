@@ -58,6 +58,7 @@ class StrategyType(Enum):
     LISTING = "LISTING"        # Listing Event (achat au listing + OCO dynamique)
     DCA = "DCA"                # DCA RSI-based (achat quotidien BTC/ETH)
     BREAKOUT = "BREAKOUT"      # Breakout Momentum 15m (trailing stop, Revolut X)
+    ADAPTIVE = "ADAPTIVE"      # Adaptive Bull Trend Following 15m (Binance USDC, EMA/RSI/ADX)
 
 
 # ── Structures de données ──────────────────────────────────────────────────────

@@ -74,6 +74,12 @@ _BOT_META_BY_STRATEGY: dict[str, dict[str, str]] = {
         "exchange_venue": "revolut",
         "exchange_key": "revolut-dca",
     },
+    "ADAPTIVE": {
+        "bot_id": "adaptive",
+        "bot_label": "Adaptive Bull",
+        "exchange_venue": "binance",
+        "exchange_key": "binance-adaptive",
+    },
 }
 
 

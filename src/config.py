@@ -484,3 +484,28 @@ DCA_EXECUTION_HOUR_UTC: int = int(os.getenv("DCA_EXECUTION_HOUR_UTC", "10"))
 DCA_POLLING_SECONDS: int = int(os.getenv("DCA_POLLING_SECONDS", "60"))
 DCA_HEARTBEAT_SECONDS: int = int(os.getenv("DCA_HEARTBEAT_SECONDS", "600"))
 DCA_MAKER_WAIT_SECONDS: int = int(os.getenv("DCA_MAKER_WAIT_SECONDS", "60"))
+
+# ── Adaptive Bull Bot (bot_adaptive.py) ───────────────────────────────────────
+# Paires USDC Binance (format Binance : BASEUSDC sans tiret)
+ADT_TRADING_PAIRS: list[str] = [
+    p.strip() for p in os.getenv(
+        "ADT_TRADING_PAIRS",
+        "BTCUSDC,ETHUSDC,SOLUSDC,BNBUSDC,XRPUSDC",
+    ).split(",") if p.strip()
+]
+ADT_ALLOCATED_BALANCE: float  = float(os.getenv("ADT_ALLOCATED_BALANCE", "0"))
+# 0 = utiliser 100% du solde USDC disponible sur Binance (dynamique)
+# > 0 = cap en USDC (ex: 500 → max 500 USDC alloués au bot)
+ADT_MAX_POSITIONS: int        = int(os.getenv("ADT_MAX_POSITIONS", "2"))
+ADT_POLLING_SECONDS: int      = int(os.getenv("ADT_POLLING_SECONDS", "60"))
+ADT_HEARTBEAT_SECONDS: int    = int(os.getenv("ADT_HEARTBEAT_SECONDS", "600"))
+
+# Paramètres stratégie (walk-forward validé 3/3)
+ADT_BULL_ALLOC_PCT: float     = float(os.getenv("ADT_BULL_ALLOC_PCT", "0.99"))   # ~tout le budget restant par trade
+ADT_BULL_SL_PCT: float        = float(os.getenv("ADT_BULL_SL_PCT", "0.015"))     # SL -1.5%
+ADT_BULL_TRAIL_PCT: float     = float(os.getenv("ADT_BULL_TRAIL_PCT", "0.025"))  # Trailing -2.5% du peak
+ADT_BULL_TP_PCT: float        = float(os.getenv("ADT_BULL_TP_PCT", "0.080"))     # TP +8%
+ADT_BULL_PYRAMID_ALLOC: float = float(os.getenv("ADT_BULL_PYRAMID_ALLOC", "0.15"))  # Pyramiding +15%
+ADT_DAILY_DD_MAX: float       = float(os.getenv("ADT_DAILY_DD_MAX", "0.05"))     # Circuit-breaker DD -5%/jour
+ADT_COOLDOWN_BARS: int        = int(os.getenv("ADT_COOLDOWN_BARS", "16"))        # 4h cooldown post-perte (16×15m)
+ADT_LOG_CANDLE: bool          = os.getenv("ADT_LOG_CANDLE", "true").lower() in ("true", "1", "yes")  # Log détaillé par bougie 15m (true=INFO, false=désactivé)

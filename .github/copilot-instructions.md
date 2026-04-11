@@ -13,6 +13,7 @@
 | **London Breakout** | Revolut X (USD) | Session breakout (range 08-16 UTC → breakout LONG) | H4 | BTC, ETH, SOL, BNB, LINK, ADA, DOT, AVAX |
 | **DCA RSI v2** | Revolut X (USD) | DCA quotidien RSI + MVRV progressif + régime MA200 + spending caps + crash reserve | Daily | BTC, ETH |
 | **Breakout Momentum** | Revolut X (USD) | Breakout high(12) 15m + trailing stop ATR + anti-tilt | 15m | ETH, SOL, ARB |
+| **Adaptive Bull** | Binance (USDC) | Bull Trend Following EMA50/EMA200 15m + filtre régime 1H | 15m + 1H | BTC, ETH, SOL, BNB, XRP |
 
 - **Langage** : Python 3.10+ (VPS), Python 3.12+ (dev local)
 - **Notifications** : Telegram Bot API (entrée, SL, TP, clôture, heartbeat)
@@ -33,6 +34,7 @@ src/
 │   ├── indicators.py           # Indicateurs techniques réutilisables (EMA, SMA, ATR, RSI, rolling min/max)
 │   ├── listing_detector.py     # Détection de nouveaux listings Binance + momentum filter + OCO levels
 │   ├── breakout_engine.py      # Logique breakout momentum : détection breakout high(12), trailing stop, ATR/volume filters
+│   ├── adaptive_engine.py      # Logique Adaptive Bull : régime 1H, entrée 15m (EMA/RSI/ADX), trailing stop, pyramiding
 │   ├── models.py               # Modèles de données partagés (dataclass/Pydantic)
 │   ├── onchain.py              # Métriques on-chain (MVRV via CoinMetrics Community API)
 │   ├── position_store.py       # Gestion en mémoire des positions ouvertes
@@ -57,6 +59,7 @@ src/
 ├── bot_london.py               # Bot London Breakout — Revolut X (session breakout H4, maker-only)
 ├── bot_dca.py                  # Bot DCA RSI v2 — Revolut X (achat quotidien BTC/ETH, MVRV+regime+caps, maker-only)
 ├── bot_breakout.py             # Bot Breakout Momentum — Revolut X (breakout 15m, trailing stop, anti-tilt, maker-only)
+├── bot_adaptive.py             # Bot Adaptive Bull — Binance USDC (15m + 1H régime, MARKET orders, trailing stop, pyramiding)
 ├── bot.py                      # (legacy) Bot Dow Theory Revolut X
 └── config.py                   # Chargement .env (clés API, paramètres de risque)
 dashboard/
@@ -400,11 +403,45 @@ BRK_COOLDOWN_BARS_AFTER_TILT=8
 BRK_POLLING_SECONDS=15
 BRK_HEARTBEAT_SECONDS=600
 BRK_MAKER_WAIT_SECONDS=60
+
+# ── Adaptive Bull (bot_adaptive.py) ──
+ADT_TRADING_PAIRS=BTCUSDC,ETHUSDC,SOLUSDC,BNBUSDC,XRPUSDC
+ADT_ALLOCATED_BALANCE=1000.0
+ADT_MAX_POSITIONS=2
+ADT_POLLING_SECONDS=60
+ADT_HEARTBEAT_SECONDS=600
+ADT_BULL_ALLOC_PCT=0.99
+ADT_BULL_SL_PCT=0.015
+ADT_BULL_TRAIL_PCT=0.025
+ADT_BULL_TP_PCT=0.080
+ADT_BULL_PYRAMID_ALLOC=0.15
+ADT_DAILY_DD_MAX=0.05
+ADT_COOLDOWN_BARS=16
 ```
 
-## APIs – Points clés
+## Bot 8 — Adaptive Bull (`bot_adaptive.py`)
 
-### Binance Spot (Trail Range + CrashBot)
+- **Exchange** : Binance Spot (USDC)
+- **Stratégie** : Bull Trend Following multi-régimes :
+  1. **Régime 1H** : Score 5 critères (EMA50/200/ADX/RSI/BollingerBand) → Régime BULL si score ≥ 4
+  2. **Signal 15m** : Golden cross (EMA50 > EMA200) + RSI 50-65 + slope EMA50 positif + pullback + bougie haussière
+  3. **SL** : -1.5% de l'entrée (géré par polling ticker)
+  4. **Trailing Stop** : -2.5% du peak (activé dès le premier tick)
+  5. **TP** : +8% (géré par polling ticker)
+  6. **Trend Break** : Sortie si EMA50 < EMA200 sur nouvelle bougie 15m
+  7. **Pyramiding** : +15% du budget restant sur position gagnante (1× par trade)
+  8. **Circuit-breaker** : DD journalier max -5%
+- **Paires** : BTC, ETH, SOL, BNB, XRP (USDC), auto-configurées via `ADT_TRADING_PAIRS`
+- **Capital** : Budget fixe isolé (`ADT_ALLOCATED_BALANCE=1000`), sans lien avec l'allocateur Trail/Crash/Listing
+- **Exécution** : MARKET orders (taker 0.1%) — pas de maker-only retry
+- **Polling** : Toutes les 60s (chaque tick check ticker pour SL/TP + nouvelle bougie pour signaux)
+- **Heartbeat** : Toutes les 10 minutes
+- **State** : Persisté dans `data/state_adaptive.json`
+- **Backtest** : PF 1.18, WR 34.1%, walk-forward 3/3 🟢 OOS PF 1.14, +405% sur 6 ans ($1k → $5k), CAGR +31%, DD max -20.8%
+
+
+
+### Binance Spot (Trail Range + CrashBot + Listing + Adaptive Bull)
 - **Base URL** : `https://api.binance.com`
 - **Auth** : HMAC-SHA256 (API key + secret)
 - **Ordres** : OCO orders natifs (TP + SL simultanés), limit, market
@@ -442,6 +479,7 @@ tradex-infinity             # Bot Infinity (Revolut X)
 tradex-london               # Bot London Breakout (Revolut X)
 tradex-dca                  # Bot DCA RSI (Revolut X)
 tradex-breakout             # Bot Breakout Momentum (Revolut X)
+tradex-adaptive             # Bot Adaptive Bull (Binance USDC, 15m)
 tradex-dashboard-unified    # Dashboard Streamlit (port 8502)
 ```
 

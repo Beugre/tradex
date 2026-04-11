@@ -33,6 +33,7 @@ _STRATEGY_LABEL = {
     StrategyType.LISTING: "🆕 LISTING",
     StrategyType.DCA: "📈 DCA",
     StrategyType.BREAKOUT: "⚡ BREAKOUT",
+    StrategyType.ADAPTIVE: "📈 ADAPTIVE",
 }
 
 logger = logging.getLogger(__name__)
