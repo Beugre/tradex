@@ -269,6 +269,9 @@ def log_trade_closed(
     notional_entry = exit_size * position.entry_price
     pnl_pct = pnl_gross / notional_entry if notional_entry > 0 else 0
 
+    # Récupérer le document original pour les infos exchange, holding time, etc.
+    trades = get_documents("trades", filters=[("trade_id", "==", trade_id)], limit=1)
+
     # Fees — récupérer l'exchange depuis le trade Firebase pour appliquer les bons frais
     trade_exchange = ""
     if trades:
@@ -285,8 +288,6 @@ def log_trade_closed(
     pnl_net_pct = pnl_net / notional_entry if notional_entry > 0 else 0
 
     # Holding time
-    # On retrouve l'heure d'ouverture depuis Firebase
-    trades = get_documents("trades", filters=[("trade_id", "==", trade_id)], limit=1)
     opened_at_str = trades[0].get("opened_at") if trades else None
     holding_hours = None
     if opened_at_str:
