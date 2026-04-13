@@ -58,8 +58,8 @@ def _fetch_live_trades(start: datetime, end: datetime) -> list[dict[str, Any]]:
         docs = get_documents(
             "trades",
             filters=[("bot_id", "==", "adaptive")],
-            order_by="opened_at",
         )
+        docs = sorted(docs, key=lambda d: d.get("opened_at") or "")
     except Exception as e:
         print(f"  ⚠️  Firebase non disponible: {e}")
         return []
