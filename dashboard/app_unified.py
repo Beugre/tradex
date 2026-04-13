@@ -2623,8 +2623,8 @@ def render_paper_trading():
             pf_str = f"{pf:.2f}" if pf < 999 else "∞"
             delta_str = None
             if unrealized_pnl != 0:
-                u_sign = "+" if unrealized_pnl >= 0 else ""
-                delta_str = f"{u_sign}${unrealized_pnl:.2f} latent"
+                u_sign = "+" if unrealized_pnl >= 0 else "-"
+                delta_str = f"{u_sign}${abs(unrealized_pnl):.2f} latent"
             st.metric(label, f"{pnl_sign}${total_pnl:.2f}", delta=delta_str)
             st.caption(
                 f"Réalisé: {'+'if realized_pnl>=0 else ''}${realized_pnl:.2f} · "
