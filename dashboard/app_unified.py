@@ -2565,8 +2565,36 @@ def render_paper_trading():
         st.info("Aucun trade paper enregistré. Les bots paper doivent être actifs pour générer des données.")
         return
 
+    # ── Prix live pour PnL unrealized ─────────────────────────────────────────
+    binance_prices = _fetch_binance_prices()
+    revolut_prices = _fetch_revolut_prices()
+
+    def _get_live_price(symbol: str, exchange: str) -> float | None:
+        if "revolut" in exchange:
+            return revolut_prices.get(symbol)
+        return binance_prices.get(symbol)
+
+    def _unrealized_pnl(row) -> float:
+        if row.get("status") != "OPEN":
+            return 0.0
+        entry = row.get("entry_filled") or row.get("entry_expected")
+        size = row.get("size")
+        symbol = row.get("symbol", "")
+        exchange = row.get("exchange", "")
+        if not entry or not size:
+            return 0.0
+        price = _get_live_price(symbol, exchange)
+        if not price:
+            return 0.0
+        side = str(row.get("side", "buy")).lower()
+        if side in ("sell", "short"):
+            return (float(entry) - float(price)) * float(size)
+        return (float(price) - float(entry)) * float(size)
+
+    df_all["_unrealized"] = df_all.apply(_unrealized_pnl, axis=1)
+
     # ── KPIs par bot ──────────────────────────────────────────────────────────
-    st.subheader("Performance par bot")
+    st.subheader("Performance par bot (réalisé + latent)")
 
     exchanges = sorted(df_all["exchange"].unique())
     cols = st.columns(min(len(exchanges), 3))
@@ -2578,7 +2606,10 @@ def render_paper_trading():
         open_t = df_bot[df_bot["status"] == "OPEN"]
 
         pnl_values = closed["pnl_net_usd"].dropna().astype(float) if "pnl_net_usd" in closed.columns else pd.Series(dtype=float)
-        total_pnl = pnl_values.sum()
+        realized_pnl = pnl_values.sum()
+        unrealized_pnl = df_bot["_unrealized"].sum()
+        total_pnl = realized_pnl + unrealized_pnl
+
         n_trades = len(closed)
         n_open = len(open_t)
         wins = (pnl_values > 0).sum()
@@ -2590,8 +2621,13 @@ def render_paper_trading():
         with cols[i % len(cols)]:
             pnl_sign = "+" if total_pnl >= 0 else ""
             pf_str = f"{pf:.2f}" if pf < 999 else "∞"
-            st.metric(label, f"{pnl_sign}${total_pnl:.2f}")
+            delta_str = None
+            if unrealized_pnl != 0:
+                u_sign = "+" if unrealized_pnl >= 0 else ""
+                delta_str = f"{u_sign}${unrealized_pnl:.2f} latent"
+            st.metric(label, f"{pnl_sign}${total_pnl:.2f}", delta=delta_str)
             st.caption(
+                f"Réalisé: {'+'if realized_pnl>=0 else ''}${realized_pnl:.2f} · "
                 f"Trades: {n_trades} ({n_open} open) · WR: {wr:.1f}% · PF: {pf_str}"
             )
 
