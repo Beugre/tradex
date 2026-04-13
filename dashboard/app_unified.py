@@ -2520,10 +2520,124 @@ def render_revolut_breakout():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  Paper Trading Tab
+# ══════════════════════════════════════════════════════════════════════════════
+
+PAPER_EXCHANGE_LABELS: dict[str, str] = {
+    "binance": "Trail Range",
+    "binance-crashbot": "CrashBot",
+    "binance-listing": "Listing Bot",
+    "revolut-infinity": "Infinity",
+    "revolut-london": "London Breakout",
+    "revolut-breakout": "Breakout Momentum",
+}
+
+
+def _fetch_paper_trades(days: int = 90) -> pd.DataFrame:
+    db = _get_db()
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    docs = (
+        db.collection("trades")
+        .where("paper", "==", True)
+        .where("created_at", ">=", since.isoformat())
+        .order_by("created_at", direction=firestore.Query.DESCENDING)
+        .stream()
+    )
+    rows = [doc.to_dict() | {"_id": doc.id} for doc in docs]
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    for col in ("opened_at", "closed_at", "created_at", "updated_at"):
+        if col in df.columns:
+            df[col] = _to_display_datetime(df[col])
+    return df
+
+
+def render_paper_trading():
+    st.header("📝 Paper Trading — Simulation Results")
+    st.caption("Trades simulés par les bots en paper mode. Aucun ordre réel envoyé.")
+
+    df_all = _fetch_paper_trades(days=90)
+    if df_all.empty:
+        st.info("Aucun trade paper enregistré. Les bots paper doivent être actifs pour générer des données.")
+        return
+
+    # ── KPIs par bot ──────────────────────────────────────────────────────────
+    st.subheader("Performance par bot")
+
+    exchanges = sorted(df_all["exchange"].unique())
+    cols = st.columns(min(len(exchanges), 3))
+
+    for i, exchange in enumerate(exchanges):
+        df_bot = df_all[df_all["exchange"] == exchange]
+        label = PAPER_EXCHANGE_LABELS.get(exchange, exchange)
+        closed = df_bot[df_bot["status"] == "CLOSED"]
+        open_t = df_bot[df_bot["status"] == "OPEN"]
+
+        pnl_values = closed["pnl_net_usd"].dropna().astype(float) if "pnl_net_usd" in closed.columns else pd.Series(dtype=float)
+        total_pnl = pnl_values.sum()
+        n_trades = len(closed)
+        n_open = len(open_t)
+        wins = (pnl_values > 0).sum()
+        wr = (wins / n_trades * 100) if n_trades > 0 else 0
+        sum_w = pnl_values[pnl_values > 0].sum()
+        sum_l = abs(pnl_values[pnl_values <= 0].sum())
+        pf = (sum_w / sum_l) if sum_l > 0 else (999 if sum_w > 0 else 0)
+
+        with cols[i % len(cols)]:
+            pnl_sign = "+" if total_pnl >= 0 else ""
+            pf_str = f"{pf:.2f}" if pf < 999 else "∞"
+            st.metric(label, f"{pnl_sign}${total_pnl:.2f}")
+            st.caption(
+                f"Trades: {n_trades} ({n_open} open) · WR: {wr:.1f}% · PF: {pf_str}"
+            )
+
+    # ── Equity curve par bot ──────────────────────────────────────────────────
+    st.subheader("Equity Curve (PnL cumulé)")
+
+    closed_all = df_all[df_all["status"] == "CLOSED"].copy()
+    if not closed_all.empty and "pnl_net_usd" in closed_all.columns and "closed_at" in closed_all.columns:
+        closed_all = closed_all.sort_values("closed_at")
+        closed_all["bot_label"] = closed_all["exchange"].map(PAPER_EXCHANGE_LABELS).fillna(closed_all["exchange"])
+        equity_data = []
+        for exchange in closed_all["exchange"].unique():
+            bot_df = closed_all[closed_all["exchange"] == exchange].copy()
+            bot_df["cum_pnl"] = bot_df["pnl_net_usd"].astype(float).cumsum()
+            equity_data.append(bot_df)
+
+        if equity_data:
+            eq_df = pd.concat(equity_data)
+            fig = px.line(
+                eq_df, x="closed_at", y="cum_pnl",
+                color="bot_label",
+                labels={"closed_at": "Date", "cum_pnl": "PnL cumulé ($)", "bot_label": "Bot"},
+                title="PnL cumulé par bot (paper)",
+            )
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Pas encore de trades fermés pour l'equity curve.")
+
+    # ── Trade list ────────────────────────────────────────────────────────────
+    st.subheader("Derniers trades paper")
+
+    display_cols = [
+        "exchange", "symbol", "side", "status", "entry_filled", "exit_price",
+        "pnl_net_usd", "pnl_net_pct", "exit_reason", "opened_at", "closed_at",
+    ]
+    available = [c for c in display_cols if c in df_all.columns]
+    st.dataframe(
+        df_all[available].head(50),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  Main — Tabs
 # ══════════════════════════════════════════════════════════════════════════════
 
-tab_overview, tab_binance, tab_crashbot, tab_listing, tab_infinity, tab_london, tab_dca, tab_breakout = st.tabs([
+tab_overview, tab_binance, tab_crashbot, tab_listing, tab_infinity, tab_london, tab_dca, tab_breakout, tab_paper = st.tabs([
     "🏠 Overview",
     "🟡 Binance Range",
     "💥 Binance CrashBot",
@@ -2532,6 +2646,7 @@ tab_overview, tab_binance, tab_crashbot, tab_listing, tab_infinity, tab_london, 
     "🇬🇧 Revolut London",
     "📈 Revolut DCA",
     "⚡ Revolut Breakout",
+    "📝 Paper Trading",
 ])
 
 with tab_overview:
@@ -2557,6 +2672,9 @@ with tab_dca:
 
 with tab_breakout:
     render_revolut_breakout()
+
+with tab_paper:
+    render_paper_trading()
 
 # ── Footer ─────────────────────────────────────────────────────────────────────
 

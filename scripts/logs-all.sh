@@ -55,14 +55,6 @@ tmux split-window -v -t "$SESSION:logs.4" \
 # Ajouter un 8ème pane pour Adaptive
 tmux select-pane -t "$SESSION:logs.5"
 tmux split-window -v -t "$SESSION:logs.5" \
-    "echo -ne '\033]2;📈 Adaptive\033\\'; ssh $VPS 'sudo journalctl -u tradex-adaptive
-# Ajouter un 8ème pane pour Adaptive
-tmux select-pane -t "$SESSION:logs.5"
-tmux split-window -v -t "$SESSION:logs.5" \
-    "echo -ne '\033]2;📈 Adaptive\033\\'; ssh $VPS 'sudo journalctl -u tradex-adaptive
-# Ajouter un 8ème pane pour Adaptive
-tmux select-pane -t "$SESSION:logs.5"
-tmux split-window -v -t "$SESSION:logs.5" \
     "echo -ne '\033]2;📈 Adaptive\033\\'; ssh $VPS 'sudo journalctl -u tradex-adaptive -f --no-pager -n 30'"
 
 # Activer les titres de panes (utilise le titre défini par echo)

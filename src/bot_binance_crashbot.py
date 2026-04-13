@@ -54,6 +54,7 @@ from src.core.risk_manager import (
 )
 from src.exchange.binance_client import BinanceClient
 from src.exchange.binance_data_provider import BinanceDataProvider
+from src.exchange.paper_client import PaperBinanceClient
 from src.notifications.telegram import TelegramNotifier
 from src.firebase.trade_logger import (
     log_trade_opened,
@@ -143,12 +144,23 @@ class TradeXBinanceCrashBot:
         self.dry_run = dry_run
         self._running = False
 
+        # Paper mode
+        self._paper_mode = config.is_paper("crashbot")
+
         # Services Binance (même API keys que les autres bots)
         self._client = BinanceClient(
             api_key=config.BINANCE_API_KEY,
             secret_key=config.BINANCE_SECRET_KEY,
             base_url=config.BINANCE_BASE_URL,
         )
+        if self._paper_mode:
+            self._client = PaperBinanceClient(
+                self._client, initial_balance=config.PAPER_BALANCE_CRASHBOT,
+                bot_name="crashbot",
+            )
+            from src.firebase.trade_logger import set_paper_mode
+            set_paper_mode(True)
+            logger.info("📄 [CRASHBOT] Mode PAPER TRADING activé — balance $%.0f", config.PAPER_BALANCE_CRASHBOT)
         self._data = BinanceDataProvider(self._client)
         self._telegram = TelegramNotifier(
             bot_token=config.TELEGRAM_BOT_TOKEN,
@@ -1827,6 +1839,8 @@ class TradeXBinanceCrashBot:
 
     def _maybe_heartbeat(self) -> None:
         """Heartbeat étendu — log + Telegram périodique."""
+        if self._paper_mode:
+            return
         now = time.time()
         heartbeat_seconds = get_heartbeat_override_seconds("crashbot", config.HEARTBEAT_INTERVAL_SECONDS)
         if heartbeat_seconds != self._heartbeat_seconds:

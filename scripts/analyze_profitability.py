@@ -54,6 +54,8 @@ def classify_bot(trade: dict) -> str:
         return "dca"
     if strategy == "BREAKOUT" or exchange == "revolut-breakout":
         return "breakout"
+    if strategy == "ADAPTIVE_BULL" or exchange == "binance-adaptive":
+        return "adaptive"
     if strategy == "RANGE":
         if symbol.endswith("USDC"):
             return "trail-range"

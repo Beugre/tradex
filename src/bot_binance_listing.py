@@ -50,6 +50,7 @@ from src.core.listing_detector import (
 from src.core.position_store import PositionStore
 from src.core.allocator import compute_allocation, compute_profit_factor
 from src.exchange.binance_client import BinanceClient
+from src.exchange.paper_client import PaperBinanceClient
 from src.notifications.telegram import TelegramNotifier
 from src.firebase.trade_logger import (
     log_trade_opened,
@@ -123,12 +124,23 @@ class TradeXBinanceListingBot:
         self.dry_run = dry_run
         self._running = False
 
+        # Paper mode
+        self._paper_mode = config.is_paper("listing")
+
         # Services Binance
         self._client = BinanceClient(
             api_key=config.BINANCE_API_KEY,
             secret_key=config.BINANCE_SECRET_KEY,
             base_url=config.BINANCE_BASE_URL,
         )
+        if self._paper_mode:
+            self._client = PaperBinanceClient(
+                self._client, initial_balance=config.PAPER_BALANCE_LISTING,
+                bot_name="listing",
+            )
+            from src.firebase.trade_logger import set_paper_mode
+            set_paper_mode(True)
+            logger.info("📄 [LISTING] Mode PAPER TRADING activé — balance $%.0f", config.PAPER_BALANCE_LISTING)
         self._telegram = TelegramNotifier(
             bot_token=config.TELEGRAM_BOT_TOKEN,
             chat_id=config.TELEGRAM_CHAT_ID,
@@ -242,7 +254,7 @@ class TradeXBinanceListingBot:
 
             # Heartbeat
             now = time.time()
-            if now - self._last_heartbeat_time >= config.LISTING_HEARTBEAT_SECONDS:
+            if not self._paper_mode and now - self._last_heartbeat_time >= config.LISTING_HEARTBEAT_SECONDS:
                 self._send_heartbeat()
                 self._last_heartbeat_time = now
 

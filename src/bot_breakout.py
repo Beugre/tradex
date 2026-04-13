@@ -54,6 +54,7 @@ from src.core.models import (
 )
 from src.exchange.revolut_client import RevolutXClient
 from src.exchange.data_provider import DataProvider
+from src.exchange.paper_client import PaperRevolutClient
 from src.notifications.telegram import TelegramNotifier, DASHBOARD_URL
 from src.firebase.trade_logger import (
     log_trade_opened,
@@ -257,11 +258,22 @@ class BreakoutMomentumBot:
         self.dry_run = dry_run
         self._running = False
 
+        # Paper mode
+        self._paper_mode = config.is_paper("breakout")
+
         # Services
         self._client = RevolutXClient(
             api_key=config.REVOLUT_X_API_KEY,
             private_key_path=config.REVOLUT_X_PRIVATE_KEY_PATH,
         )
+        if self._paper_mode:
+            self._client = PaperRevolutClient(
+                self._client, initial_balance=config.PAPER_BALANCE_BREAKOUT,
+                bot_name="breakout",
+            )
+            from src.firebase.trade_logger import set_paper_mode
+            set_paper_mode(True)
+            logger.info("📄 [BREAKOUT] Mode PAPER TRADING activé — balance $%.0f", config.PAPER_BALANCE_BREAKOUT)
         self._data = DataProvider(self._client)
         self._telegram = TelegramNotifier(
             bot_token=config.TELEGRAM_BOT_TOKEN,
@@ -1217,6 +1229,8 @@ class BreakoutMomentumBot:
     # ── Heartbeat ──────────────────────────────────────────────────────────
 
     def _maybe_heartbeat(self) -> None:
+        if self._paper_mode:
+            return
         now = time.time()
         heartbeat_seconds = get_heartbeat_override_seconds("breakout", BRK_HEARTBEAT_SECONDS)
         if heartbeat_seconds != self._heartbeat_seconds:

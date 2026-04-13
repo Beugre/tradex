@@ -30,6 +30,22 @@ from src.firebase.client import add_document, update_document, get_documents
 
 logger = logging.getLogger("tradex.firebase.trades")
 
+# ── Paper mode flag ───────────────────────────────────────────────────────────
+# Positionné par le bot au démarrage via set_paper_mode(True).
+# Tous les trades loggés seront taggés paper=True dans Firebase.
+_paper_mode: bool = False
+
+
+def set_paper_mode(enabled: bool) -> None:
+    """Active/désactive le mode paper pour tous les trades loggés."""
+    global _paper_mode
+    _paper_mode = enabled
+
+
+def is_paper_mode() -> bool:
+    """Retourne True si le mode paper est actif."""
+    return _paper_mode
+
 
 _BOT_META_BY_STRATEGY: dict[str, dict[str, str]] = {
     "RANGE": {
@@ -224,6 +240,7 @@ def log_trade_opened(
         # Metadata
         "bot_version": "1.0",
         "dry_run": dry_run,
+        "paper": _paper_mode,
         "created_at": now.isoformat(),
         "updated_at": now.isoformat(),
     }

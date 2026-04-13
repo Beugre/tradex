@@ -59,6 +59,11 @@ BOTS = {
         "label": "Listing Bot",
         "heartbeat_default": config.LISTING_HEARTBEAT_SECONDS,
     },
+    "adaptive": {
+        "exchange": "binance-adaptive",
+        "label": "Adaptive Bull",
+        "heartbeat_default": config.ADT_HEARTBEAT_SECONDS,
+    },
 }
 
 ALIAS = {
@@ -79,6 +84,9 @@ ALIAS = {
     "momentum": "breakout",
     "listing": "listing",
     "list": "listing",
+    "adaptive": "adaptive",
+    "adt": "adaptive",
+    "bull": "adaptive",
 }
 
 
@@ -200,6 +208,8 @@ class TelegramCommandBot:
                 return self._cmd_sl(args)
             if cmd == "tp":
                 return self._cmd_tp(args)
+            if cmd == "paper":
+                return self._cmd_paper(args)
             return "Commande inconnue. Utilise /help"
         except Exception as e:
             logger.exception("Commande échouée")
@@ -1106,45 +1116,16 @@ class TelegramCommandBot:
         action_id = self._queue_runtime_action(bot, "close", symbol, None)
         return f"Close manuel enfilé: bot={bot}, symbol={symbol}, action_id={action_id}"
 
-    def _cmd_confirm(self, args: list[str]) -> str:
-        if len(args) != 1:
-            return "Usage: /confirm <token>"
+    # ── /paper ─────────────────────────────────────────────────────────────
 
-        token = args[0].upper().strip()
-        item = self._pending_confirms.get(token)
-        if not item:
-            return "Token inconnu ou expiré."
-
-        expires_at = item.get("expires_at")
-        if not isinstance(expires_at, datetime) or datetime.now(timezone.utc) > expires_at:
-            self._pending_confirms.pop(token, None)
-            return "Token expiré."
-
-        action = str(item.get("action", ""))
-        bot = str(item.get("bot", ""))
-        symbol = str(item.get("symbol", ""))
-        value_raw = item.get("value")
-
-        self._pending_confirms.pop(token, None)
-
-        if action != "close":
-            return "Action non confirmable."
-
-        action_id = self._queue_runtime_action(bot, "close", symbol, None if value_raw is None else float(str(value_raw)))
-        now = datetime.now(timezone.utc).isoformat()
-        add_document("events", {
-            "event_type": "OPERATOR_COMMAND",
-            "symbol": symbol,
-            "exchange": BOTS[bot]["exchange"],
-            "timestamp": now,
-            "data": {
-                "command": "close_confirm",
-                "bot": bot,
-                "token": token,
-                "action_id": action_id,
-            },
-        })
-        return f"✅ Confirmation reçue. Close enfilé: bot={bot}, symbol={symbol}, action_id={action_id}"
+    def _cmd_paper(self, args: list[str]) -> str:
+        """Rapport paper trading on-demand."""
+        from src.paper_reporter import generate_paper_report
+        try:
+            report = generate_paper_report()
+            return report if report else "Aucun trade paper détecté."
+        except Exception as e:
+            return f"Erreur rapport paper: {e}"
 
     def _cmd_sl(self, args: list[str]) -> str:
         if len(args) != 4 or args[0].lower() != "set":
@@ -1183,6 +1164,20 @@ class TelegramCommandBot:
 
         action_id = self._queue_runtime_action(bot, "set_tp", symbol, price)
         return f"TP manuel enfilé: bot={bot}, symbol={symbol}, tp={price}, action_id={action_id}"
+
+
+
+
+    # ── /paper ───────────────────────────────────────────────────────────────────────
+
+    def _cmd_paper(self, args: list[str]) -> str:
+        """Rapport paper trading on-demand."""
+        from src.paper_reporter import generate_paper_report
+        try:
+            report = generate_paper_report()
+            return report if report else "Aucun trade paper détecté."
+        except Exception as e:
+            return f"Erreur rapport paper: {e}"
 
 
 def main() -> None:

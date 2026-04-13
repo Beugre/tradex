@@ -509,3 +509,31 @@ ADT_BULL_PYRAMID_ALLOC: float = float(os.getenv("ADT_BULL_PYRAMID_ALLOC", "0.15"
 ADT_DAILY_DD_MAX: float       = float(os.getenv("ADT_DAILY_DD_MAX", "0.05"))     # Circuit-breaker DD -5%/jour
 ADT_COOLDOWN_BARS: int        = int(os.getenv("ADT_COOLDOWN_BARS", "16"))        # 4h cooldown post-perte (16×15m)
 ADT_LOG_CANDLE: bool          = os.getenv("ADT_LOG_CANDLE", "true").lower() in ("true", "1", "yes")  # Log détaillé par bougie 15m (true=INFO, false=désactivé)
+
+# ── Paper Trading ──────────────────────────────────────────────────────────────
+# Bots en mode paper (simulation complète sans ordres réels)
+# Format CSV : "range,crashbot,listing,infinity,london,breakout"
+PAPER_BOTS: set[str] = {
+    b.strip().lower()
+    for b in os.getenv("PAPER_BOTS", "").split(",")
+    if b.strip()
+}
+
+# Capital virtuel initial par bot paper
+PAPER_BALANCE_RANGE: float     = float(os.getenv("PAPER_BALANCE_RANGE", "1000"))
+PAPER_BALANCE_CRASHBOT: float  = float(os.getenv("PAPER_BALANCE_CRASHBOT", "5000"))
+PAPER_BALANCE_LISTING: float   = float(os.getenv("PAPER_BALANCE_LISTING", "1500"))
+PAPER_BALANCE_INFINITY: float  = float(os.getenv("PAPER_BALANCE_INFINITY", "4000"))
+PAPER_BALANCE_LONDON: float    = float(os.getenv("PAPER_BALANCE_LONDON", "1000"))
+PAPER_BALANCE_BREAKOUT: float  = float(os.getenv("PAPER_BALANCE_BREAKOUT", "100"))
+
+# Heures UTC d'envoi du rapport paper (format CSV : "10,18")
+PAPER_REPORT_HOURS: list[int] = [
+    int(h.strip()) for h in os.getenv("PAPER_REPORT_HOURS", "10,18").split(",")
+    if h.strip()
+]
+
+
+def is_paper(bot_name: str) -> bool:
+    """True si le bot donné est en mode paper trading."""
+    return bot_name.lower() in PAPER_BOTS
