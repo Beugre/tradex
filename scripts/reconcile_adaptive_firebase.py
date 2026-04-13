@@ -139,18 +139,27 @@ def main() -> None:
         if sell_orders:
             # Prendre le dernier ordre SELL (le plus récent)
             last_sell = max(sell_orders, key=lambda o: o.get("time", 0))
-            exit_price = float(last_sell.get("price") or last_sell.get("cummulativeQuoteQty", 0) / (float(last_sell.get("executedQty", 1)) or 1))
+            # Pour MARKET orders Binance, price = "0" → utiliser cummulativeQuoteQty / executedQty
+            price_raw = float(last_sell.get("price") or 0)
+            if price_raw == 0:
+                qty = float(last_sell.get("executedQty") or 1)
+                quote = float(last_sell.get("cummulativeQuoteQty") or 0)
+                exit_price = quote / qty if qty > 0 else None
+            else:
+                exit_price = price_raw
             exit_ts    = last_sell.get("time")
-            exit_reason = _infer_exit_reason(exit_price, entry, sl, tp)
-            print(f"    Exit trouvé: {exit_price} @ {datetime.fromtimestamp(exit_ts/1000, tz=timezone.utc).isoformat()}")
-            print(f"    Raison probable: {exit_reason}")
-        else:
-            # Pas de data Binance → estimation par défaut (SL probable vu le contexte)
+            if exit_price:
+                exit_reason = _infer_exit_reason(exit_price, entry, sl, tp)
+                print(f"    Exit trouvé: {exit_price} @ {datetime.fromtimestamp(exit_ts/1000, tz=timezone.utc).isoformat()}")
+                print(f"    Raison probable: {exit_reason}")
+            else:
+                exit_price = None
+        if not exit_price:
+            # Pas de data Binance ou prix = 0 → estimation par défaut (SL probable vu le contexte)
             exit_price  = sl * 0.999 if sl else entry * 0.985
             exit_reason = "SL_HIT_ESTIMATED"
             exit_ts     = None
             print(f"    ⚠️  Pas de data Binance → prix estimé SL: {exit_price:.4f}")
-
         # Calcul PnL brut
         pnl_gross   = (exit_price - entry) * size
         pnl_pct     = pnl_gross / (entry * size) if (entry * size) > 0 else 0
