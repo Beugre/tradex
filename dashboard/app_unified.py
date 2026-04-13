@@ -2539,15 +2539,18 @@ def _fetch_paper_trades(days: int = 90) -> pd.DataFrame:
     docs = (
         db.collection("trades")
         .where("paper", "==", True)
-        .where("created_at", ">=", since.isoformat())
-        .order_by("created_at", direction=firestore.Query.DESCENDING)
         .stream()
     )
     rows = [doc.to_dict() | {"_id": doc.id} for doc in docs]
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
-    for col in ("opened_at", "closed_at", "created_at", "updated_at"):
+    # Filtrage date côté Python (évite l'index composite Firestore)
+    if "created_at" in df.columns:
+        df["created_at"] = pd.to_datetime(df["created_at"], utc=True, errors="coerce")
+        df = df[df["created_at"] >= since]
+        df = df.sort_values("created_at", ascending=False).reset_index(drop=True)
+    for col in ("opened_at", "closed_at", "updated_at"):
         if col in df.columns:
             df[col] = _to_display_datetime(df[col])
     return df
