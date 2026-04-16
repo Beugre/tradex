@@ -1167,7 +1167,12 @@ class AdaptiveBullBot:
                     avg = sum(float(f["price"]) * float(f["qty"]) for f in fills)
                     total_qty = sum(float(f["qty"]) for f in fills)
                     actual_entry = avg / total_qty if total_qty > 0 else actual_entry
-                size = float(resp.get("executedQty", size))
+                    # Frais taker prélevés en base asset → quantité nette réelle
+                    base = _base_asset(symbol)
+                    fees_in_base = sum(float(f.get("commission", 0)) for f in fills if f.get("commissionAsset") == base)
+                    size = total_qty - fees_in_base if fees_in_base > 0 else float(resp.get("executedQty", size))
+                else:
+                    size = float(resp.get("executedQty", size))
                 logger.info(
                     "[%s] 📈 ✅ BUY MARKET exécuté | qty=%s @ %s",
                     symbol, qty_str, _fmt(actual_entry),
@@ -1288,7 +1293,11 @@ class AdaptiveBullBot:
                     avg = sum(float(f["price"]) * float(f["qty"]) for f in fills)
                     total_qty = sum(float(f["qty"]) for f in fills)
                     current_price = avg / total_qty if total_qty > 0 else current_price
-                extra_size = float(resp.get("executedQty", extra_size))
+                    base = _base_asset(symbol)
+                    fees_in_base = sum(float(f.get("commission", 0)) for f in fills if f.get("commissionAsset") == base)
+                    extra_size = total_qty - fees_in_base if fees_in_base > 0 else float(resp.get("executedQty", extra_size))
+                else:
+                    extra_size = float(resp.get("executedQty", extra_size))
             except Exception as e:
                 logger.error("[%s] ❌ PYRAMID BUY échoué: %s", symbol, e)
                 return
