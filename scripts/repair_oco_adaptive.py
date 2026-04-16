@@ -36,7 +36,7 @@ def main():
 
     client = BinanceClient(
         api_key=os.environ["BINANCE_API_KEY"],
-        api_secret=os.environ["BINANCE_SECRET_KEY"],
+        secret_key=os.environ["BINANCE_SECRET_KEY"],
     )
 
     # Récupérer les balances réelles
