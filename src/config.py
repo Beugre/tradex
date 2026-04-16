@@ -3,6 +3,8 @@ Configuration du bot TradeX.
 Charge les variables d'environnement depuis .env et expose des objets typés.
 """
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -170,6 +172,11 @@ CRASHBOT_HEARTBEAT_TELEGRAM_SECONDS: int = int(
 # ── Telegram ───────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_ALLOWED_USER_IDS: set[str] = {
+    user_id.strip()
+    for user_id in os.getenv("TELEGRAM_ALLOWED_USER_IDS", "").split(",")
+    if user_id.strip()
+}
 TELEGRAM_COMMANDS_POLL_SECONDS: int = int(
     os.getenv("TELEGRAM_COMMANDS_POLL_SECONDS", "2")
 )
@@ -305,6 +312,24 @@ FIREBASE_ENABLED: bool = os.getenv(
 FIREBASE_EVENTS_RETENTION_DAYS: int = int(
     os.getenv("FIREBASE_EVENTS_RETENTION_DAYS", "2")
 )
+FIREBASE_EVENTS_TTL_DAYS: int = int(
+    os.getenv("FIREBASE_EVENTS_TTL_DAYS", str(FIREBASE_EVENTS_RETENTION_DAYS))
+)
+FIREBASE_EVENTS_NATIVE_TTL_ENABLED: bool = os.getenv(
+    "FIREBASE_EVENTS_NATIVE_TTL_ENABLED", "false"
+).lower() in ("true", "1", "yes")
+FIREBASE_HEARTBEAT_STATUS_ENABLED: bool = os.getenv(
+    "FIREBASE_HEARTBEAT_STATUS_ENABLED", "true"
+).lower() in ("true", "1", "yes")
+FIREBASE_HEARTBEAT_EVENT_ARCHIVE_ENABLED: bool = os.getenv(
+    "FIREBASE_HEARTBEAT_EVENT_ARCHIVE_ENABLED", "false"
+).lower() in ("true", "1", "yes")
+FIREBASE_DCA_HEARTBEAT_STATUS_ENABLED: bool = os.getenv(
+    "FIREBASE_DCA_HEARTBEAT_STATUS_ENABLED", "true"
+).lower() in ("true", "1", "yes")
+FIREBASE_DCA_HEARTBEAT_EVENT_ARCHIVE_ENABLED: bool = os.getenv(
+    "FIREBASE_DCA_HEARTBEAT_EVENT_ARCHIVE_ENABLED", "false"
+).lower() in ("true", "1", "yes")
 
 # ── London Breakout Bot (bot_london.py) ────────────────────────────────────────
 LON_TRADING_PAIRS: list[str] = [
@@ -490,7 +515,7 @@ DCA_MAKER_WAIT_SECONDS: int = int(os.getenv("DCA_MAKER_WAIT_SECONDS", "60"))
 ADT_TRADING_PAIRS: list[str] = [
     p.strip() for p in os.getenv(
         "ADT_TRADING_PAIRS",
-        "BTCUSDC,ETHUSDC,SOLUSDC,BNBUSDC,XRPUSDC",
+        "BTCUSDC,ETHUSDC,SOLUSDC,XRPUSDC,AVAXUSDC,NEARUSDC",
     ).split(",") if p.strip()
 ]
 ADT_ALLOCATED_BALANCE: float  = float(os.getenv("ADT_ALLOCATED_BALANCE", "0"))

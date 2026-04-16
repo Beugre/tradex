@@ -38,6 +38,8 @@ st.set_page_config(
 )
 
 DASHBOARD_TZ = ZoneInfo(os.getenv("DASHBOARD_TZ", "Europe/Paris"))
+DCA_FIREBASE_CACHE_TTL = int(os.getenv("DASHBOARD_DCA_FIREBASE_CACHE_TTL_SECONDS", "180"))
+DCA_MAX_BUYS_PER_DAY = int(os.getenv("DASHBOARD_DCA_MAX_BUYS_PER_DAY", "3"))
 
 # ── Palette ────────────────────────────────────────────────────────────────────
 
@@ -94,10 +96,11 @@ def _get_db() -> firestore.Client:
     return firestore.Client(project=cred.project_id, credentials=cred)
 
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=DCA_FIREBASE_CACHE_TTL)
 def _fetch_dca_buys(days: int = 365) -> list[dict]:
     db = _get_db()
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    limit = max(100, min(days * DCA_MAX_BUYS_PER_DAY, 1200))
     try:
         docs = (
             db.collection("events")
@@ -105,7 +108,7 @@ def _fetch_dca_buys(days: int = 365) -> list[dict]:
             .where("exchange", "==", "revolut-dca")
             .where("timestamp", ">=", since)
             .order_by("timestamp", direction=firestore.Query.DESCENDING)
-            .limit(2000)
+            .limit(limit)
             .stream()
         )
         return [doc.to_dict() for doc in docs]
@@ -113,10 +116,13 @@ def _fetch_dca_buys(days: int = 365) -> list[dict]:
         return []
 
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=DCA_FIREBASE_CACHE_TTL)
 def _fetch_dca_heartbeat() -> dict:
     db = _get_db()
     try:
+        current = db.collection("bot_status").document("revolut-dca").get()
+        if current.exists:
+            return current.to_dict() or {}
         docs = (
             db.collection("events")
             .where("event_type", "==", "DCA_HEARTBEAT")

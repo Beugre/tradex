@@ -41,6 +41,7 @@ st.set_page_config(
 )
 
 DASHBOARD_TZ = ZoneInfo(os.getenv("DASHBOARD_TZ", "Europe/Paris"))
+FIREBASE_CACHE_TTL = int(os.getenv("DASHBOARD_FIREBASE_CACHE_TTL_SECONDS", "60"))
 
 
 def _to_display_datetime(series: pd.Series, normalize_day: bool = False) -> pd.Series:
@@ -66,6 +67,7 @@ def _get_db() -> firestore.Client:
     return firestore.Client(project=cred.project_id, credentials=cred)
 
 
+@st.cache_data(ttl=FIREBASE_CACHE_TTL)
 def _fetch_trades(days: int = 90, exchange: str | None = None) -> pd.DataFrame:
     db = _get_db()
     since = datetime.now(timezone.utc) - timedelta(days=days)
@@ -88,6 +90,7 @@ def _fetch_trades(days: int = 90, exchange: str | None = None) -> pd.DataFrame:
     return df
 
 
+@st.cache_data(ttl=300)
 def _fetch_daily_snapshots(days: int = 90, exchange: str | None = None) -> pd.DataFrame:
     db = _get_db()
     since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -103,6 +106,7 @@ def _fetch_daily_snapshots(days: int = 90, exchange: str | None = None) -> pd.Da
     return df
 
 
+@st.cache_data(ttl=FIREBASE_CACHE_TTL)
 def _fetch_open_positions(exchange: str | None = None) -> pd.DataFrame:
     db = _get_db()
     query = db.collection("trades")
@@ -115,6 +119,7 @@ def _fetch_open_positions(exchange: str | None = None) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+@st.cache_data(ttl=FIREBASE_CACHE_TTL)
 def _fetch_close_failures(hours: int = 24, exchange: str | None = None) -> pd.DataFrame:
     db = _get_db()
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
@@ -145,6 +150,7 @@ def _fetch_close_failures(hours: int = 24, exchange: str | None = None) -> pd.Da
     return pd.DataFrame(rows)
 
 
+@st.cache_data(ttl=FIREBASE_CACHE_TTL)
 def _fetch_events(exchange: str, event_type: str | None = None, hours: int = 48) -> pd.DataFrame:
     db = _get_db()
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
@@ -164,9 +170,19 @@ def _fetch_events(exchange: str, event_type: str | None = None, hours: int = 48)
     return pd.DataFrame(rows)
 
 
+@st.cache_data(ttl=FIREBASE_CACHE_TTL)
 def _fetch_last_heartbeat(exchange: str, hours: int = 72) -> dict:
     """Retourne le dernier heartbeat Firebase pour un exchange donné."""
     db = _get_db()
+    current = db.collection("bot_status").document(exchange).get()
+    if current.exists:
+        data = current.to_dict() or {}
+        ts = pd.to_datetime(data.get("timestamp"), errors="coerce", utc=True)
+        if not pd.isna(ts):
+            cutoff_dt = datetime.now(timezone.utc) - timedelta(hours=hours)
+            if ts.to_pydatetime() >= cutoff_dt:
+                return data
+
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     docs = (
         db.collection("events")
@@ -192,6 +208,7 @@ def _color_pnl(val):
     return "color: #00c853" if val >= 0 else "color: #ff1744"
 
 
+@st.cache_data(ttl=FIREBASE_CACHE_TTL)
 def _fetch_current_allocation() -> dict:
     """Lit l'allocation courante depuis Firebase (doc allocation/current).
 
@@ -446,6 +463,7 @@ BOTS = {
     "infinity": {"label": "Revolut Infinity", "icon": "♾️", "exchange": "revolut-infinity", "color": "#ff6d00", "max_pos": 6},
     "london": {"label": "Revolut London", "icon": "🇬🇧", "exchange": "revolut-london", "color": "#2196f3", "max_pos": 1},
     "breakout": {"label": "Revolut Breakout", "icon": "⚡", "exchange": "revolut-breakout", "color": "#e040fb", "max_pos": 3},
+    "adaptive": {"label": "Binance Adaptive Bull", "icon": "📈", "exchange": "binance-adaptive", "color": "#00bcd4", "max_pos": 3},
 }
 
 
@@ -483,6 +501,68 @@ def _load_all(days: int):
             "dry_run_trades": dry_run_trades,
         }
     return data
+
+
+@st.cache_data(ttl=FIREBASE_CACHE_TTL)
+def _fetch_dca_dashboard_bundle(days: int = 90) -> dict:
+    db = _get_db()
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    buy_limit = max(100, min(days * 3, 400))
+    decision_limit = max(60, min(days * 2, 180))
+
+    try:
+        buy_docs = (
+            db.collection("events")
+            .where("event_type", "==", "DCA_BUY")
+            .where("exchange", "==", "revolut-dca")
+            .where("timestamp", ">=", since)
+            .order_by("timestamp", direction=firestore.Query.DESCENDING)
+            .limit(buy_limit)
+            .stream()
+        )
+        buy_events = [doc.to_dict() for doc in buy_docs]
+    except Exception:
+        buy_events = []
+
+    try:
+        hb_doc = db.collection("bot_status").document("revolut-dca").get()
+        dca_hb = hb_doc.to_dict() if hb_doc.exists else None
+    except Exception:
+        dca_hb = None
+
+    if not dca_hb:
+        try:
+            hb_docs = (
+                db.collection("events")
+                .where("event_type", "==", "DCA_HEARTBEAT")
+                .where("exchange", "==", "revolut-dca")
+                .order_by("timestamp", direction=firestore.Query.DESCENDING)
+                .limit(1)
+                .stream()
+            )
+            dca_hb = next((doc.to_dict() for doc in hb_docs), None)
+        except Exception:
+            dca_hb = None
+
+    try:
+        dec_docs = (
+            db.collection("events")
+            .where("event_type", "==", "DCA_DECISION")
+            .where("exchange", "==", "revolut-dca")
+            .where("timestamp", ">=", since)
+            .order_by("timestamp", direction=firestore.Query.DESCENDING)
+            .limit(decision_limit)
+            .stream()
+        )
+        decision_events = [doc.to_dict() for doc in dec_docs]
+    except Exception:
+        decision_events = []
+
+    return {
+        "buy_events": buy_events,
+        "heartbeat": dca_hb,
+        "decision_events": decision_events,
+    }
 
 
 INF_PAIRS = ["BTC-USD", "AAVE-USD", "XLM-USD", "ADA-USD", "DOT-USD", "LTC-USD"]
@@ -1919,52 +1999,11 @@ def render_revolut_dca():
         "filtre régime MA200, spending caps — Revolut X, maker-only"
     )
 
-    db = _get_db()
-
-    # ── Fetch DCA buy events from Firebase ─────────────────────────────────────
-    try:
-        since = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
-        docs = (
-            db.collection("events")
-            .where("event_type", "==", "DCA_BUY")
-            .where("exchange", "==", "revolut-dca")
-            .where("timestamp", ">=", since)
-            .order_by("timestamp", direction=firestore.Query.DESCENDING)
-            .limit(500)
-            .stream()
-        )
-        events = [doc.to_dict() for doc in docs]
-    except Exception:
-        events = []
-
-    # ── Fetch latest DCA heartbeat ─────────────────────────────────────────────
-    try:
-        hb_docs = (
-            db.collection("events")
-            .where("event_type", "==", "DCA_HEARTBEAT")
-            .where("exchange", "==", "revolut-dca")
-            .order_by("timestamp", direction=firestore.Query.DESCENDING)
-            .limit(1)
-            .stream()
-        )
-        dca_hb = [doc.to_dict() for doc in hb_docs]
-    except Exception:
-        dca_hb = []
-
-    # ── Fetch DCA decision events (v2 observability) ───────────────────────────
-    try:
-        dec_docs = (
-            db.collection("events")
-            .where("event_type", "==", "DCA_DECISION")
-            .where("exchange", "==", "revolut-dca")
-            .where("timestamp", ">=", since)
-            .order_by("timestamp", direction=firestore.Query.DESCENDING)
-            .limit(500)
-            .stream()
-        )
-        decision_events = [doc.to_dict() for doc in dec_docs]
-    except Exception:
-        decision_events = []
+    bundle = _fetch_dca_dashboard_bundle(days=90)
+    events = bundle.get("buy_events") or []
+    heartbeat_doc = bundle.get("heartbeat")
+    dca_hb = [heartbeat_doc] if heartbeat_doc else []
+    decision_events = bundle.get("decision_events") or []
 
     # ── Parse buy events into DataFrame ────────────────────────────────────────
     buy_rows = []
@@ -2520,6 +2559,49 @@ def render_revolut_breakout():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  Adaptive Bull Tab
+# ══════════════════════════════════════════════════════════════════════════════
+
+def render_adaptive_bull():
+    """Onglet Adaptive Bull — Binance USDC, 15m bull trend following."""
+    d = all_data["adaptive"]
+    cfg = BOTS["adaptive"]
+
+    st.title(f"{cfg['icon']} Binance Adaptive Bull")
+    st.caption(
+        "Bull Trend Following 15m — régime 1H EMA/ADX, trailing stop -2.5%, TP +8%, SL -1.5% | "
+        "Paires : BTC, ETH, SOL, XRP, AVAX, NEAR"
+    )
+    _render_last_heartbeat_cockpit("adaptive", d, cfg["max_pos"])
+    st.divider()
+    _render_kpis(d["stats"], len(d["open"]), cfg["max_pos"])
+    st.divider()
+
+    _render_positions(d["open"], bot_type="adaptive", exchange="binance")
+    _render_alerts(d["open"], cfg["exchange"])
+    st.divider()
+
+    _render_equity_curve(d["snapshots"], d["closed"], cfg["color"])
+    _render_cumulative_pnl(d["closed"], cfg["color"])
+    st.divider()
+
+    _render_daily_pnl(d["closed"])
+    _render_pair_performance(d["closed"])
+    st.divider()
+
+    _render_exit_reasons(d["closed"])
+    st.divider()
+
+    _render_last_trades(d["closed"])
+    _render_pnl_distribution(d["closed"], cfg["color"], "exit_reason")
+    st.divider()
+
+    _render_advanced_stats(d["closed"])
+    st.divider()
+    _render_dry_run_section(d["dry_run_trades"])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  Paper Trading Tab
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -2676,7 +2758,7 @@ def render_paper_trading():
 #  Main — Tabs
 # ══════════════════════════════════════════════════════════════════════════════
 
-tab_overview, tab_binance, tab_crashbot, tab_listing, tab_infinity, tab_london, tab_dca, tab_breakout, tab_paper = st.tabs([
+tab_overview, tab_binance, tab_crashbot, tab_listing, tab_infinity, tab_london, tab_dca, tab_breakout, tab_adaptive, tab_paper = st.tabs([
     "🏠 Overview",
     "🟡 Binance Range",
     "💥 Binance CrashBot",
@@ -2685,6 +2767,7 @@ tab_overview, tab_binance, tab_crashbot, tab_listing, tab_infinity, tab_london, 
     "🇬🇧 Revolut London",
     "📈 Revolut DCA",
     "⚡ Revolut Breakout",
+    "📈 Adaptive Bull",
     "📝 Paper Trading",
 ])
 
@@ -2711,6 +2794,9 @@ with tab_dca:
 
 with tab_breakout:
     render_revolut_breakout()
+
+with tab_adaptive:
+    render_adaptive_bull()
 
 with tab_paper:
     render_paper_trading()

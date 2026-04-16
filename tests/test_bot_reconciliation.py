@@ -266,7 +266,12 @@ class TestReconcileOrphans:
             symbol="BTC-USD", bid=94000.0, ask=94100.0, mid=94050.0, last_price=95000.0,
         )
 
-        bot._reconcile_positions()
+        with patch("src.bot.config") as mock_config:
+            mock_config.TRADING_PAIRS = ["BTC-USD", "SOL-USD", "XRP-USD"]
+            mock_config.ENABLE_TREND = True
+            mock_config.ENABLE_RANGE = False
+            mock_config.RECOVERY_SL_PERCENT = 0.05
+            bot._reconcile_positions()
 
         assert "BTC-USD" in bot._positions
         pos = bot._positions["BTC-USD"]
@@ -348,7 +353,9 @@ class TestReconcileOrphans:
             _make_balance("USD", 1000.0),
         ]
 
-        bot._reconcile_positions()
+        with patch("src.bot.config") as mock_config:
+            mock_config.TRADING_PAIRS = ["BTC-USD", "SOL-USD", "XRP-USD"]  # pas DOGE
+            bot._reconcile_positions()
 
         call_args = bot._telegram.notify_reconciliation.call_args[0]
         orphans = call_args[2]

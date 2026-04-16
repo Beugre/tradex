@@ -68,8 +68,16 @@ def get_pending_runtime_actions(bot_key: str) -> list[dict[str, Any]]:
     try:
         rows = get_documents(
             "runtime_actions",
-            filters=[("status", "==", "pending")],
+            filters=[
+                ("status", "==", "pending"),
+                ("bot", "==", bot_key),
+            ],
         )
+        if not rows:
+            rows = get_documents(
+                "runtime_actions",
+                filters=[("status", "==", "pending")],
+            )
         out: list[dict[str, Any]] = []
         for row in rows:
             if str(row.get("bot", "")).lower().strip() != bot_key:

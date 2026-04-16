@@ -375,6 +375,7 @@ class AdaptiveBullBot:
         # Stats
         self._total_trades: int = 0
         self._total_wins: int = 0
+        self._total_pnl: float = 0.0
 
         if dry_run:
             logger.info("🔧 Mode DRY-RUN — aucun ordre ne sera exécuté")
@@ -433,6 +434,7 @@ class AdaptiveBullBot:
                     logger.warning("⚠️ Position %s corrompue ignorée: %s", sym, e)
 
             self._virtual_balance    = state.get("virtual_balance", 0.0)
+            self._total_pnl          = state.get("total_pnl", 0.0)
             self._last_candle_ts_15m = state.get("last_candle_ts_15m", {})
             self._last_candle_ts_1h  = state.get("last_candle_ts_1h", {})
             self._cooldowns          = state.get("cooldowns", {})
@@ -841,6 +843,7 @@ class AdaptiveBullBot:
         is_win = pnl >= 0
         if is_win:
             self._total_wins += 1
+        self._total_pnl += pnl
 
         # Cooldown post-perte
         if not is_win:
@@ -1333,24 +1336,33 @@ class AdaptiveBullBot:
             regime_summary.append(f"{_base_asset(sym)}:{r.value[:1]}")
 
         pos_lines = []
+        total_latent_pnl = 0.0
         for sym, pos in self._positions.items():
             try:
                 price = self._client.get_ticker_price(sym)
             except Exception:
                 price = pos.entry_price
             pnl_pct = (price - pos.entry_price) / pos.entry_price * 100 if pos.entry_price > 0 else 0
+            pnl_usdc = (price - pos.entry_price) * pos.size
+            total_latent_pnl += pnl_usdc
             emoji = "🟢" if pnl_pct >= 0 else "🔴"
             pos_lines.append(
-                f"  {emoji} `{sym}` `{pnl_pct:+.1f}%` | SL `{_fmt(pos.sl_price)}`"
+                f"  {emoji} `{sym}` `{pnl_pct:+.1f}%` (`{pnl_usdc:+.2f}$`) | SL `{_fmt(pos.sl_price)}`"
                 + (" 🔶pyramided" if pos.pyramided else "")
             )
+
+        pnl_closed_emoji = "🟢" if self._total_pnl >= 0 else "🔴"
+        pnl_latent_emoji = "🟢" if total_latent_pnl >= 0 else "🔴"
 
         lines = [
             f"💓 *ADAPTIVE BULL Heartbeat* 📈",
             f"  Budget: `${equity:.2f}` / `${ADT_ALLOCATED_BALANCE:.0f}`",
             f"  Pos: `{open_pos}/{ADT_MAX_POSITIONS}` | Trades: {self._total_trades} | WR: `{wr:.0f}%`",
-            f"  Régimes: {' '.join(regime_summary)}",
+            f"  {pnl_closed_emoji} PnL clôturé: `{self._total_pnl:+.2f} USDC`",
         ]
+        if open_pos > 0:
+            lines.append(f"  {pnl_latent_emoji} PnL latent: `{total_latent_pnl:+.2f} USDC`")
+        lines.append(f"  Régimes: {' '.join(regime_summary)}")
         if pos_lines:
             lines.append("")
             lines.extend(pos_lines)
@@ -1562,6 +1574,7 @@ class AdaptiveBullBot:
             self._store.save(
                 positions=self._positions,
                 virtual_balance=self._virtual_balance,
+                total_pnl=self._total_pnl,
                 last_candle_ts_15m=self._last_candle_ts_15m,
                 last_candle_ts_1h=self._last_candle_ts_1h,
                 cooldowns=self._cooldowns,

@@ -26,7 +26,7 @@ from src.core.models import (
     StrategyType,
     TrendDirection,
 )
-from src.firebase.client import add_document, update_document, get_documents
+from src.firebase.client import add_document, update_document, get_document, get_documents
 
 logger = logging.getLogger("tradex.firebase.trades")
 
@@ -89,6 +89,12 @@ _BOT_META_BY_STRATEGY: dict[str, dict[str, str]] = {
         "bot_label": "DCA RSI",
         "exchange_venue": "revolut",
         "exchange_key": "revolut-dca",
+    },
+    "BREAKOUT": {
+        "bot_id": "breakout",
+        "bot_label": "Breakout Momentum",
+        "exchange_venue": "revolut",
+        "exchange_key": "revolut-breakout",
     },
     "ADAPTIVE": {
         "bot_id": "adaptive",
@@ -198,6 +204,7 @@ def log_trade_opened(
         "entry_expected": position.entry_price,
         "entry_filled": position.entry_price,                # Même chose pour limit
         "entry_slippage_pct": 0.0,                           # Limit = 0 slippage théorique
+        "entry_fill_type": fill_type,
         "maker_or_taker": fill_type,
         "maker_wait_seconds": maker_wait_seconds,
 
@@ -293,7 +300,10 @@ def log_trade_closed(
     trade_exchange = ""
     if trades:
         trade_exchange = trades[0].get("exchange", "")
-        entry_fill_type = trades[0].get("entry_fill_type", "maker")
+        entry_fill_type = trades[0].get(
+            "entry_fill_type",
+            trades[0].get("maker_or_taker", "maker"),
+        )
     else:
         entry_fill_type = "maker"
     fee_entry = _estimate_fee(exit_size * position.entry_price, entry_fill_type, trade_exchange)
@@ -409,6 +419,9 @@ def log_event(
         "dry_run": dry_run,
         "data": data,
     }
+    expires_at = _event_expires_at(now)
+    if expires_at is not None:
+        doc["expires_at"] = expires_at
     return add_document("events", doc)
 
 
@@ -434,12 +447,48 @@ def log_heartbeat(
     dry_run: bool = False,
 ) -> Optional[str]:
     """Log un heartbeat périodique."""
-    return log_event("HEARTBEAT", {
+    now = datetime.now(timezone.utc)
+    payload = {
         "open_positions": open_positions,
         "total_equity": total_equity,
         "total_risk_pct": round(total_risk_pct, 4),
         "pairs_count": pairs_count,
-    }, exchange=exchange, dry_run=dry_run)
+    }
+
+    current_id: Optional[str] = None
+    if config.FIREBASE_HEARTBEAT_STATUS_ENABLED:
+        current_id = add_document("bot_status", {
+            "event_type": "HEARTBEAT",
+            "exchange": exchange,
+            "timestamp": now.isoformat(),
+            "updated_at": now.isoformat(),
+            "dry_run": dry_run,
+            "data": payload,
+        }, doc_id=exchange)
+
+    if config.FIREBASE_HEARTBEAT_EVENT_ARCHIVE_ENABLED:
+        event_id = log_event("HEARTBEAT", payload, exchange=exchange, dry_run=dry_run)
+        return event_id or current_id
+
+    return current_id
+
+
+def get_latest_heartbeat(exchange: str, max_age_hours: int = 72) -> Optional[dict[str, Any]]:
+    """Retourne le dernier heartbeat courant d'un exchange, avec fallback historique."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+    current = get_document("bot_status", exchange)
+    if current:
+        dt = _parse_datetime(current.get("timestamp"))
+        if dt is not None and dt >= cutoff:
+            return current
+
+    rows = get_documents(
+        "events",
+        filters=[("event_type", "==", "HEARTBEAT"), ("exchange", "==", exchange)],
+        order_by="timestamp",
+        limit=1,
+    )
+    return rows[0] if rows else None
 
 
 def log_close_failure(
@@ -527,6 +576,10 @@ def cleanup_old_events(retention_days: Optional[int] = None) -> int:
     """
     from src.firebase.client import delete_documents_batch
 
+    if config.FIREBASE_EVENTS_NATIVE_TTL_ENABLED:
+        logger.debug("🧹 Firebase cleanup: désactivé (TTL natif activé)")
+        return 0
+
     days = retention_days or config.FIREBASE_EVENTS_RETENTION_DAYS
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     cutoff_iso = cutoff.isoformat()
@@ -551,6 +604,29 @@ def cleanup_old_events(retention_days: Optional[int] = None) -> int:
 # ═══════════════════════════════════════════════════════════════════════════════
 # HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _event_expires_at(now: datetime) -> Optional[str]:
+    ttl_days = max(0, int(config.FIREBASE_EVENTS_TTL_DAYS))
+    if ttl_days <= 0:
+        return None
+    return (now + timedelta(days=ttl_days)).isoformat()
+
+
+def _parse_datetime(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str) and value:
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except Exception:
+            return None
+    else:
+        return None
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 def _estimate_fee(notional_usd: float, fill_type: str, exchange: str = "revolut") -> float:
@@ -604,36 +680,26 @@ def get_daily_pnl(exchange: str, date: str | None = None) -> tuple[float, int]:
     """
     if date is None:
         date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day_start = f"{date}T00:00:00+00:00"
+    next_day = (
+        datetime.fromisoformat(day_start) + timedelta(days=1)
+    ).isoformat()
     trades = get_documents(
         "trades",
         filters=[
             ("exchange", "==", exchange),
             ("status", "==", "CLOSED"),
+            ("closed_at", ">=", day_start),
+            ("closed_at", "<", next_day),
         ],
     )
     daily_pnl = 0.0
     daily_trades = 0
     for t in trades:
-        closed_at = t.get("closed_at")
-        is_same_day = False
-
-        if isinstance(closed_at, datetime):
-            dt = closed_at
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            else:
-                dt = dt.astimezone(timezone.utc)
-            is_same_day = dt.strftime("%Y-%m-%d") == date
-        elif isinstance(closed_at, str):
-            is_same_day = closed_at.startswith(date)
-        elif closed_at is not None:
-            is_same_day = str(closed_at).startswith(date)
-
-        if is_same_day:
-            pnl = t.get("pnl_net_usd")
-            if pnl is not None:
-                daily_pnl += float(pnl)
-            daily_trades += 1
+        pnl = t.get("pnl_net_usd")
+        if pnl is not None:
+            daily_pnl += float(pnl)
+        daily_trades += 1
     logger.info(
         "🔥 Daily PnL [%s] %s = $%+.2f (%d trades)",
         exchange, date, daily_pnl, daily_trades,

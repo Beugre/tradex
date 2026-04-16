@@ -112,6 +112,23 @@ ssh vps 'sudo journalctl -u tradex -n 50 --no-pager'
 ssh vps 'sudo systemctl status tradex'
 ```
 
+## 💸 Firebase Low-Cost
+
+Configuration recommandée dans `.env` :
+
+```bash
+FIREBASE_HEARTBEAT_STATUS_ENABLED=true
+FIREBASE_HEARTBEAT_EVENT_ARCHIVE_ENABLED=false
+FIREBASE_EVENTS_TTL_DAYS=2
+FIREBASE_EVENTS_NATIVE_TTL_ENABLED=true
+```
+
+Notes :
+- Les heartbeats génériques sont gardés dans `bot_status/<exchange>` au lieu d'accumuler des documents dans `events`.
+- Les documents de `events` reçoivent un champ `expires_at` prêt pour le TTL natif Firestore.
+- Active le TTL côté projet Firebase sur `events.expires_at`, puis passe `FIREBASE_EVENTS_NATIVE_TTL_ENABLED=true` pour désactiver le cleanup applicatif.
+- `trades` et `daily_snapshots` restent conservés sans expiration.
+
 ### Redémarrer
 ```bash
 ssh vps 'sudo systemctl restart tradex'

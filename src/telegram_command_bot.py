@@ -11,7 +11,7 @@ import httpx
 
 from src import config
 from src.firebase.client import add_document, get_document, get_documents
-from src.firebase.trade_logger import get_daily_pnl
+from src.firebase.trade_logger import get_daily_pnl, get_latest_heartbeat
 from src.runtime_overrides import get_all_heartbeat_overrides
 
 logging.basicConfig(
@@ -48,6 +48,7 @@ BOTS = {
         "exchange": "revolut-dca",
         "label": "DCA RSI",
         "heartbeat_default": config.DCA_HEARTBEAT_SECONDS,
+        "heartbeat_event": "DCA_HEARTBEAT",
     },
     "breakout": {
         "exchange": "revolut-breakout",
@@ -94,6 +95,7 @@ class TelegramCommandBot:
     def __init__(self) -> None:
         self._token = config.TELEGRAM_BOT_TOKEN
         self._allowed_chat = str(config.TELEGRAM_CHAT_ID or "").strip()
+        self._allowed_user_ids = set(config.TELEGRAM_ALLOWED_USER_IDS)
         self._poll_seconds = max(1, config.TELEGRAM_COMMANDS_POLL_SECONDS)
         self._offset = 0
         self._running = True
@@ -160,6 +162,10 @@ class TelegramCommandBot:
 
         if chat_id != self._allowed_chat:
             logger.warning("Message ignoré chat_id non autorisé: %s", chat_id)
+            return
+
+        if not self._is_authorized_sender(msg):
+            logger.warning("Message ignoré: auteur Telegram non autorisé pour chat=%s", chat_id)
             return
 
         response = self._dispatch(text)
@@ -395,6 +401,99 @@ class TelegramCommandBot:
         dt = self._parse_ts(value)
         return dt.strftime("%m-%d %H:%M") if dt else "n/a"
 
+    def _is_authorized_sender(self, msg: dict) -> bool:
+        chat = msg.get("chat") or {}
+        chat_type = str(chat.get("type") or "").lower()
+        if chat_type == "private":
+            return True
+
+        sender = msg.get("from") or {}
+        sender_id = str(sender.get("id") or "").strip()
+        if not sender_id:
+            return False
+        if self._allowed_user_ids:
+            return sender_id in self._allowed_user_ids
+        return False
+
+    def _get_active_trades(self, exchange: str) -> list[dict]:
+        rows = get_documents(
+            "trades",
+            filters=[("exchange", "==", exchange), ("status", "==", "OPEN")],
+        )
+        trailing_rows = get_documents(
+            "trades",
+            filters=[("exchange", "==", exchange), ("status", "==", "TRAILING")],
+        )
+        merged: dict[str, dict] = {}
+        for row in rows + trailing_rows:
+            key = str(row.get("_id") or row.get("trade_id") or id(row))
+            merged[key] = row
+        return list(merged.values())
+
+    def _get_recent_events(
+        self,
+        exchange: str,
+        limit: int,
+        *,
+        include_heartbeat: bool = False,
+        event_type: str | None = None,
+    ) -> list[dict]:
+        filters = [("exchange", "==", exchange)]
+        fetch_limit = max(limit * 10, 50)
+        if event_type:
+            filters.append(("event_type", "==", event_type))
+            fetch_limit = max(limit * 3, limit)
+
+        rows = get_documents(
+            "events",
+            filters=filters,
+            order_by="timestamp",
+            limit=fetch_limit,
+        )
+        if not rows:
+            rows = get_documents("events", filters=filters)
+
+        if not include_heartbeat and event_type is None:
+            rows = [row for row in rows if str(row.get("event_type", "")) != "HEARTBEAT"]
+
+        def _sort_key(row: dict) -> float:
+            dt = self._parse_ts(row.get("timestamp"))
+            return dt.timestamp() if dt else 0.0
+
+        return sorted(rows, key=_sort_key, reverse=True)[:limit]
+
+    def _get_recent_operator_commands(self, limit: int) -> list[dict]:
+        rows = get_documents(
+            "events",
+            filters=[("event_type", "==", "OPERATOR_COMMAND")],
+            order_by="timestamp",
+            limit=limit,
+        )
+        if not rows:
+            rows = get_documents(
+                "events",
+                filters=[("event_type", "==", "OPERATOR_COMMAND")],
+            )
+
+        def _sort_key(row: dict) -> float:
+            dt = self._parse_ts(row.get("timestamp"))
+            return dt.timestamp() if dt else 0.0
+
+        return sorted(rows, key=_sort_key, reverse=True)[:limit]
+
+    def _get_latest_heartbeat_entry(self, bot_key: str, exchange: str) -> Optional[dict]:
+        heartbeat_event = str(BOTS.get(bot_key, {}).get("heartbeat_event") or "HEARTBEAT")
+        if heartbeat_event == "HEARTBEAT":
+            return get_latest_heartbeat(exchange)
+
+        rows = get_documents(
+            "events",
+            filters=[("event_type", "==", heartbeat_event), ("exchange", "==", exchange)],
+            order_by="timestamp",
+            limit=1,
+        )
+        return rows[0] if rows else None
+
     def _resolve_bot(self, raw: str) -> str:
         key = raw.lower().strip()
         if key in ALIAS:
@@ -575,22 +674,13 @@ class TelegramCommandBot:
         for bot in bot_keys:
             meta = BOTS[bot]
             exchange = meta["exchange"]
-            hb = get_documents(
-                "events",
-                filters=[("event_type", "==", "HEARTBEAT"), ("exchange", "==", exchange)],
-                order_by="timestamp",
-                limit=1,
-            )
-            open_trades = get_documents(
-                "trades",
-                filters=[("exchange", "==", exchange), ("status", "==", "OPEN")],
-            )
-            failure_events = get_documents(
-                "events",
-                filters=[
-                    ("event_type", "==", "CLOSE_FAILURE"),
-                    ("exchange", "==", exchange),
-                ],
+            hb = self._get_latest_heartbeat_entry(bot, exchange)
+            open_trades = self._get_active_trades(exchange)
+            failure_events = self._get_recent_events(
+                exchange,
+                limit=200,
+                include_heartbeat=True,
+                event_type="CLOSE_FAILURE",
             )
             failures_24h = 0
             for ev in failure_events:
@@ -613,7 +703,7 @@ class TelegramCommandBot:
 
             hb_age_min = 9999.0
             if hb:
-                ts = hb[0].get("timestamp")
+                ts = hb.get("timestamp")
                 try:
                     if isinstance(ts, datetime):
                         dt = ts
@@ -878,10 +968,7 @@ class TelegramCommandBot:
         total = 0
         for bot in bot_keys:
             meta = BOTS[bot]
-            open_trades = get_documents(
-                "trades",
-                filters=[("exchange", "==", meta["exchange"]), ("status", "==", "OPEN")],
-            )
+            open_trades = self._get_active_trades(meta["exchange"])
             total += len(open_trades)
             symbols = sorted({str(t.get("symbol", "?")) for t in open_trades})
             symbols_str = ", ".join(symbols[:6]) if symbols else "—"
@@ -945,16 +1032,7 @@ class TelegramCommandBot:
                 return "Usage: /cmdlog [n]"
         n = max(1, min(n, 50))
 
-        rows = get_documents(
-            "events",
-            filters=[("event_type", "==", "OPERATOR_COMMAND")],
-        )
-
-        def _sort_key(row: dict) -> float:
-            dt = self._parse_ts(row.get("timestamp"))
-            return dt.timestamp() if dt else 0.0
-
-        rows_sorted = sorted(rows, key=_sort_key, reverse=True)[:n]
+        rows_sorted = self._get_recent_operator_commands(n)
         if not rows_sorted:
             return "Command log: aucun événement opérateur."
 
@@ -1004,17 +1082,7 @@ class TelegramCommandBot:
         lines = [f"Logs récents (n={n}, sans HEARTBEAT)"]
         for bot in bot_keys:
             meta = BOTS[bot]
-            events = get_documents(
-                "events",
-                filters=[("exchange", "==", meta["exchange"])],
-            )
-            filtered = [e for e in events if str(e.get("event_type", "")) != "HEARTBEAT"]
-
-            def _sort_key(row: dict) -> float:
-                dt = self._parse_ts(row.get("timestamp"))
-                return dt.timestamp() if dt else 0.0
-
-            rows = sorted(filtered, key=_sort_key, reverse=True)[:n]
+            rows = self._get_recent_events(meta["exchange"], n)
             lines.append(f"- {meta['label']}")
             if not rows:
                 lines.append("  • aucun event récent")
@@ -1115,6 +1183,36 @@ class TelegramCommandBot:
 
         action_id = self._queue_runtime_action(bot, "close", symbol, None)
         return f"Close manuel enfilé: bot={bot}, symbol={symbol}, action_id={action_id}"
+
+    def _cmd_confirm(self, args: list[str]) -> str:
+        if len(args) != 1:
+            return "Usage: /confirm <token>"
+
+        token = args[0].upper().strip()
+        pending = self._pending_confirms.get(token)
+        if not pending:
+            return "Token invalide ou expiré."
+
+        expires_at = pending.get("expires_at")
+        if isinstance(expires_at, datetime) and expires_at < datetime.now(timezone.utc):
+            self._pending_confirms.pop(token, None)
+            return "Token expiré. Relance la commande."
+
+        self._pending_confirms.pop(token, None)
+
+        action = str(pending.get("action") or "")
+        bot = str(pending.get("bot") or "")
+        symbol = str(pending.get("symbol") or "")
+        value = pending.get("value")
+
+        if action == "close" and bot and symbol:
+            action_id = self._queue_runtime_action(bot, "close", symbol, None)
+            return (
+                f"Confirmation reçue: close enfilé "
+                f"bot={bot}, symbol={symbol}, action_id={action_id}"
+            )
+
+        return "Action de confirmation inconnue."
 
     # ── /paper ─────────────────────────────────────────────────────────────
 

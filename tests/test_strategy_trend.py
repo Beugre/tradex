@@ -154,7 +154,7 @@ class TestBuildOrders:
         assert payload["symbol"] == "BTC-USD"
         assert payload["side"] == "buy"
         assert payload["order_configuration"]["limit"]["base_size"] == "0.00100000"
-        assert payload["order_configuration"]["limit"]["price"] == "95000.00"
+        assert payload["order_configuration"]["limit"]["price"] == "95000.0000"
 
     def test_build_exit_order_reverses_side(self):
         pos = Position(

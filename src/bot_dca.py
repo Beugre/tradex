@@ -78,6 +78,7 @@ from src.firebase.trade_logger import (
     log_daily_snapshot as fb_log_daily_snapshot,
     cleanup_old_events as fb_cleanup_events,
 )
+from src.firebase.client import add_document as fb_add_document
 from src.runtime_overrides import (
     get_heartbeat_override_seconds,
 )
@@ -1116,37 +1117,54 @@ class DCABot:
         # Firebase heartbeat (use log_event directly — DCA has different data shape)
         if not self.dry_run:
             try:
-                fb_log_event(
-                    "DCA_HEARTBEAT",
-                    {
-                        "rsi": rsi,
-                        "bracket": bracket.value,
-                        "total_spent": total_spent,
-                        "pnl": pnl,
-                        "pnl_pct": pnl_pct,
-                        "btc_accumulated": self._state.total_btc_bought,
-                        "eth_accumulated": self._state.total_eth_bought,
-                        "dca_remaining": summary["dca_remaining"],
-                        "crash_remaining": summary["crash_remaining"],
-                        "mvrv": mvrv,
-                        "mvrv_mult": mvrv_mult,
-                        "regime": self._regime.value,
-                        "ma200": self._ma200,
-                        "equity": portfolio_value,
-                        "rolling_high": rolling_high,
-                        "drop_pct": drop_pct,
-                        "crash_levels_triggered": self._state.crash_levels_triggered,
-                        "buy_count": self._state.buy_count,
-                        "crash_buy_count": self._state.crash_buy_count,
-                        "days_active": self._state.total_days_active,
-                        "monthly_spent": self._state.monthly_spent,
-                        "monthly_cap": self._cfg.monthly_cap,
-                        "weekly_spent": self._state.weekly_spent,
-                        "weekly_cap": self._cfg.weekly_cap,
-                    },
-                    symbol="DCA",
-                    exchange="revolut-dca",
-                )
+                hb_payload = {
+                    "rsi": rsi,
+                    "bracket": bracket.value,
+                    "total_spent": total_spent,
+                    "pnl": pnl,
+                    "pnl_pct": pnl_pct,
+                    "btc_accumulated": self._state.total_btc_bought,
+                    "eth_accumulated": self._state.total_eth_bought,
+                    "dca_remaining": summary["dca_remaining"],
+                    "crash_remaining": summary["crash_remaining"],
+                    "mvrv": mvrv,
+                    "mvrv_mult": mvrv_mult,
+                    "regime": self._regime.value,
+                    "ma200": self._ma200,
+                    "equity": portfolio_value,
+                    "rolling_high": rolling_high,
+                    "drop_pct": drop_pct,
+                    "crash_levels_triggered": self._state.crash_levels_triggered,
+                    "buy_count": self._state.buy_count,
+                    "crash_buy_count": self._state.crash_buy_count,
+                    "days_active": self._state.total_days_active,
+                    "monthly_spent": self._state.monthly_spent,
+                    "monthly_cap": self._cfg.monthly_cap,
+                    "weekly_spent": self._state.weekly_spent,
+                    "weekly_cap": self._cfg.weekly_cap,
+                }
+                now_iso = datetime.now(timezone.utc).isoformat()
+                if config.FIREBASE_DCA_HEARTBEAT_STATUS_ENABLED:
+                    fb_add_document(
+                        "bot_status",
+                        {
+                            "event_type": "DCA_HEARTBEAT",
+                            "exchange": "revolut-dca",
+                            "symbol": "DCA",
+                            "timestamp": now_iso,
+                            "updated_at": now_iso,
+                            "dry_run": False,
+                            "data": hb_payload,
+                        },
+                        doc_id="revolut-dca",
+                    )
+                if config.FIREBASE_DCA_HEARTBEAT_EVENT_ARCHIVE_ENABLED:
+                    fb_log_event(
+                        "DCA_HEARTBEAT",
+                        hb_payload,
+                        symbol="DCA",
+                        exchange="revolut-dca",
+                    )
             except Exception:
                 pass
 
