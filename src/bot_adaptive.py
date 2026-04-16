@@ -275,6 +275,7 @@ class AdaptiveStateStore:
         self,
         positions: dict[str, AdaptivePosition],
         virtual_balance: float,
+        total_pnl: float,
         last_candle_ts_15m: dict[str, int],
         last_candle_ts_1h: dict[str, int],
         cooldowns: dict[str, int],
@@ -285,6 +286,7 @@ class AdaptiveStateStore:
         state = {
             "positions": {s: p.to_dict() for s, p in positions.items()},
             "virtual_balance": virtual_balance,
+            "total_pnl": total_pnl,
             "last_candle_ts_15m": last_candle_ts_15m,
             "last_candle_ts_1h": last_candle_ts_1h,
             "cooldowns": cooldowns,
