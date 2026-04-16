@@ -733,14 +733,28 @@ class AdaptiveBullBot:
             bull_trail_pct=ADT_BULL_TRAIL_PCT,
         )
         sl_updated = new_sl > pos.sl_price or new_peak > pos.peak_price
+        old_sl = pos.sl_price
+        was_below_entry = old_sl < pos.entry_price
         pos.peak_price = new_peak
         if new_sl > pos.sl_price:
-            old_sl = pos.sl_price
             pos.sl_price = new_sl
-            logger.debug(
-                "[%s] 🔒 Trail update | peak=%s | SL: %s → %s",
-                symbol, _fmt(pos.peak_price), _fmt(old_sl), _fmt(pos.sl_price),
+            locked_pnl = (pos.sl_price - pos.entry_price) * pos.size
+            locked_pct = (pos.sl_price - pos.entry_price) / pos.entry_price * 100
+            lock_emoji = "🔒" if locked_pnl >= 0 else "⚠️"
+            logger.info(
+                "[%s] %s Trail SL: %s → %s | peak=%s | verrouillé: %+.2f USDC (%+.1f%%)",
+                symbol, lock_emoji, _fmt(old_sl), _fmt(pos.sl_price),
+                _fmt(pos.peak_price), locked_pnl, locked_pct,
             )
+            # Notification Telegram lors du passage en territoire positif (SL > entry)
+            now_above_entry = pos.sl_price > pos.entry_price
+            if was_below_entry and now_above_entry:
+                self._telegram._send(
+                    f"🔒 *Trail SL en positif — {symbol}* 📈 ADAPTIVE BULL\n"
+                    f"  Entrée: `{_fmt(pos.entry_price)}` | Peak: `{_fmt(pos.peak_price)}`\n"
+                    f"  SL verrouillé: `{_fmt(pos.sl_price)}` → gain min garanti: `{locked_pnl:+.2f} USDC` (`{locked_pct:+.1f}%`)\n"
+                    f"[Dashboard]({DASHBOARD_URL})"
+                )
 
         # SL check (initial ou trailing)
         if price <= pos.sl_price:
@@ -1348,8 +1362,17 @@ class AdaptiveBullBot:
             pnl_usdc = (price - pos.entry_price) * pos.size
             total_latent_pnl += pnl_usdc
             emoji = "🟢" if pnl_pct >= 0 else "🔴"
+            # Gain verrouillé par le trailing SL
+            locked_pnl = (pos.sl_price - pos.entry_price) * pos.size
+            locked_pct = (pos.sl_price - pos.entry_price) / pos.entry_price * 100 if pos.entry_price > 0 else 0
+            if locked_pnl > 0:
+                lock_str = f" | 🔒 min `{locked_pnl:+.2f}$` (`{locked_pct:+.1f}%`)"
+            elif locked_pnl < -0.01:
+                lock_str = f" | ⚠️ SL `{_fmt(pos.sl_price)}`"
+            else:
+                lock_str = f" | SL `{_fmt(pos.sl_price)}`"
             pos_lines.append(
-                f"  {emoji} `{sym}` `{pnl_pct:+.1f}%` (`{pnl_usdc:+.2f}$`) | SL `{_fmt(pos.sl_price)}`"
+                f"  {emoji} `{sym}` `{pnl_pct:+.1f}%` (`{pnl_usdc:+.2f}$`) | peak `{_fmt(pos.peak_price)}`{lock_str}"
                 + (" 🔶pyramided" if pos.pyramided else "")
             )
 
