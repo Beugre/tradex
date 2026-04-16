@@ -750,9 +750,10 @@ class AdaptiveBullBot:
             now_above_entry = pos.sl_price > pos.entry_price
             if was_below_entry and now_above_entry:
                 self._telegram._send(
-                    f"🔒 *Trail SL en positif — {symbol}* 📈 ADAPTIVE BULL\n"
+                    f"🔒 *Trail SL en positif \u2014 {symbol}* 📈 ADAPTIVE BULL\n"
                     f"  Entrée: `{_fmt(pos.entry_price)}` | Peak: `{_fmt(pos.peak_price)}`\n"
-                    f"  SL verrouillé: `{_fmt(pos.sl_price)}` → gain min garanti: `{locked_pnl:+.2f} USDC` (`{locked_pct:+.1f}%`)\n"
+                    f"  SL verrouillé: `{_fmt(pos.sl_price)}`\n"
+                    f"  Gain min garanti: `{locked_pnl:+.2f} USDC` soit `{locked_pct:+.1f}%`\n"
                     f"[Dashboard]({DASHBOARD_URL})"
                 )
 
@@ -881,7 +882,7 @@ class AdaptiveBullBot:
             f"{pnl_emoji} *Position fermée – {symbol}* 📈 ADAPTIVE BULL\n"
             f"  Raison: {reason}\n"
             f"  Entrée: `{_fmt(pos.entry_price)}` → Sortie: `{_fmt(exit_price)}`\n"
-            f"  P&L: `{pnl:+.2f} USDC` (`{pnl_pct:+.1f}%`)\n"
+            f"  P&L: `{pnl:+.2f} USDC` soit `{pnl_pct:+.1f}%`\n"
             f"  Peak: `{_fmt(pos.peak_price)}` | Size: `{exit_size:.8f} {base}`\n"
             f"[Dashboard]({DASHBOARD_URL})"
         )
@@ -1213,9 +1214,9 @@ class AdaptiveBullBot:
 
         self._telegram._send(
             f"📈 *BUY déclenché – {symbol}* ADAPTIVE BULL\n"
-            f"  Entrée: `{_fmt(actual_entry)}` | SL: `{_fmt(real_sl)}` (-{sl_pct:.1f}%)\n"
-            f"  TP: `{_fmt(real_tp)}` (+{tp_pct:.1f}%) | Trail: -{ADT_BULL_TRAIL_PCT*100:.1f}% du peak\n"
-            f"  Size: `{size:.8f} {base}` (`${real_cost:.2f} USDC`)\n"
+            f"  Entrée: `{_fmt(actual_entry)}` | SL: `{_fmt(real_sl)}` −{sl_pct:.1f}%\n"
+            f"  TP: `{_fmt(real_tp)}` +{tp_pct:.1f}% | Trail: −{ADT_BULL_TRAIL_PCT*100:.1f}% du peak\n"
+            f"  Size: `{size:.8f} {base}` | `${real_cost:.2f} USDC`\n"
             f"  RSI: {signal.rsi:.1f} | EMA50: `{_fmt(signal.ema50)}`\n"
             f"  Budget restant: `${self._virtual_balance:.2f}` / `${ADT_ALLOCATED_BALANCE:.0f}`\n"
             f"[Dashboard]({DASHBOARD_URL})"
@@ -1366,13 +1367,13 @@ class AdaptiveBullBot:
             locked_pnl = (pos.sl_price - pos.entry_price) * pos.size
             locked_pct = (pos.sl_price - pos.entry_price) / pos.entry_price * 100 if pos.entry_price > 0 else 0
             if locked_pnl > 0:
-                lock_str = f" | 🔒 min `{locked_pnl:+.2f}$` (`{locked_pct:+.1f}%`)"
+                lock_str = f" | 🔒 min `{locked_pnl:+.2f}$` soit `{locked_pct:+.1f}%`"
             elif locked_pnl < -0.01:
                 lock_str = f" | ⚠️ SL `{_fmt(pos.sl_price)}`"
             else:
                 lock_str = f" | SL `{_fmt(pos.sl_price)}`"
             pos_lines.append(
-                f"  {emoji} `{sym}` `{pnl_pct:+.1f}%` (`{pnl_usdc:+.2f}$`) | peak `{_fmt(pos.peak_price)}`{lock_str}"
+                f"  {emoji} `{sym}` `{pnl_pct:+.1f}%` `{pnl_usdc:+.2f}$` pk:`{_fmt(pos.peak_price)}`{lock_str}"
                 + (" 🔶pyramided" if pos.pyramided else "")
             )
 
