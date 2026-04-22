@@ -26,6 +26,28 @@ from src.core.models import Balance, Candle, OrderSide, TickerData
 
 logger = logging.getLogger(__name__)
 
+
+# ── Exceptions typées ─────────────────────────────────────────────────────────
+
+class BinanceAPIError(RuntimeError):
+    """Erreur API Binance — porte le status_code pour faciliter le filtrage."""
+    def __init__(self, status_code: int, method: str, path: str, body: str) -> None:
+        super().__init__(f"Binance API {status_code} {method} {path} | {body[:500]}")
+        self.status_code = status_code
+
+
+class BinanceAuthError(BinanceAPIError):
+    """401 — clé invalide ou IP non autorisée. Le bot doit s'arrêter."""
+
+
+class BinanceRateLimitError(BinanceAPIError):
+    """429 / 418 — rate limit ou IP bannée, backoff requis."""
+
+
+class BinanceServerError(BinanceAPIError):
+    """5xx — erreur serveur temporaire, retry possible."""
+
+
 # Intervalles Binance pour les klines
 _INTERVAL_MAP = {
     240: "4h",   # H4
@@ -521,9 +543,14 @@ class BinanceClient:
                 "API error %d: %s %s → %s",
                 response.status_code, method, path, resp_text,
             )
-            raise RuntimeError(
-                f"Binance API {response.status_code} {method} {path} | {resp_text[:500]}"
-            )
+            sc = response.status_code
+            if sc == 401:
+                raise BinanceAuthError(sc, method, path, resp_text)
+            if sc in (429, 418):  # 418 = IP banned
+                raise BinanceRateLimitError(sc, method, path, resp_text)
+            if sc >= 500:
+                raise BinanceServerError(sc, method, path, resp_text)
+            raise BinanceAPIError(sc, method, path, resp_text)
 
         return response.json()
 

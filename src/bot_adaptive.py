@@ -120,19 +120,7 @@ PAIR_PRIORITY: dict[str, int] = {
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _fmt(price: float) -> str:
-    if price >= 1000:
-        return f"{price:,.4f}"
-    if price >= 1:
-        return f"{price:.4f}"
-    if price >= 0.0001:
-        return f"{price:.6f}"
-    decimals = 6
-    temp = price
-    while temp < 0.01 and decimals < 10:
-        temp *= 10
-        decimals += 1
-    return f"{price:.{decimals}f}"
+from src.core.formatting import fmt_price as _fmt
 
 
 def _base_asset(symbol: str) -> str:
@@ -685,7 +673,8 @@ class AdaptiveBullBot:
                 logger.info("[%s] 📉 TREND_BREAK (EMA50 < EMA200 15m) → sortie", symbol)
                 try:
                     price = self._client.get_ticker_price(symbol)
-                except Exception:
+                except Exception as e:
+                    logger.warning("[%s] Impossible de récupérer le ticker pour TREND_BREAK, fallback entry_price: %s", symbol, e)
                     price = pos_after.entry_price
                 self._close_position(symbol, price, "TREND_BREAK")
                 self._save_state()
@@ -908,8 +897,9 @@ class AdaptiveBullBot:
                     exit_price=exit_price,
                     reason=reason,
                     fill_type="taker",
-                    equity_after=self._virtual_balance,
+                    equity_after=self._compute_equity(),
                     actual_exit_size=exit_size,
+                    pnl_override=pnl,
                 )
             except Exception as e:
                 logger.warning("🔥 Firebase log_trade_closed échoué: %s", e)

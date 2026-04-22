@@ -6,6 +6,8 @@ Module sans I/O — utilisable dans core/ et backtest/.
 
 from __future__ import annotations
 
+from collections import deque
+
 from src.core.models import Candle
 
 
@@ -87,18 +89,28 @@ def rsi_series(candles: list[Candle], period: int = 14) -> list[float]:
 # ── Rolling Min / Max ──────────────────────────────────────────────────────────
 
 def rolling_min(values: list[float], period: int) -> list[float]:
-    """Min glissant."""
-    result = []
-    for i in range(len(values)):
-        start = max(0, i - period + 1)
-        result.append(min(values[start:i + 1]))
+    """Min glissant — O(n) via deque monotone croissante."""
+    result: list[float] = []
+    dq: deque[int] = deque()  # indices, valeurs croissantes
+    for i, v in enumerate(values):
+        while dq and dq[0] < i - period + 1:
+            dq.popleft()
+        while dq and values[dq[-1]] >= v:
+            dq.pop()
+        dq.append(i)
+        result.append(values[dq[0]])
     return result
 
 
 def rolling_max(values: list[float], period: int) -> list[float]:
-    """Max glissant."""
-    result = []
-    for i in range(len(values)):
-        start = max(0, i - period + 1)
-        result.append(max(values[start:i + 1]))
+    """Max glissant — O(n) via deque monotone décroissante."""
+    result: list[float] = []
+    dq: deque[int] = deque()  # indices, valeurs décroissantes
+    for i, v in enumerate(values):
+        while dq and dq[0] < i - period + 1:
+            dq.popleft()
+        while dq and values[dq[-1]] <= v:
+            dq.pop()
+        dq.append(i)
+        result.append(values[dq[0]])
     return result

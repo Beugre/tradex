@@ -272,12 +272,16 @@ def log_trade_closed(
     fill_type: str,
     equity_after: float,
     actual_exit_size: Optional[float] = None,
+    pnl_override: Optional[float] = None,
 ) -> bool:
     """Met à jour le trade avec les données de clôture.
 
     Args:
         actual_exit_size: Taille réellement vendue (après ajustement au solde réel).
                           Si None, utilise position.size (comportement legacy).
+        pnl_override: PnL net (après fees) déjà calculé par le bot. Si fourni,
+                      utilisé directement — évite la double-estimation des fees
+                      et les erreurs sur positions pyramidées (cost_usdc ≠ entry_price × size).
     """
     now = datetime.now(timezone.utc)
 
@@ -310,8 +314,11 @@ def log_trade_closed(
     fee_exit = _estimate_fee(exit_size * exit_price, fill_type, trade_exchange)
     fees_total = fee_entry + fee_exit
 
-    # PnL net = brut - fees
-    pnl_net = pnl_gross - fees_total
+    # PnL net = brut - fees (ou valeur fournie par le bot si plus précise)
+    if pnl_override is not None:
+        pnl_net = pnl_override
+    else:
+        pnl_net = pnl_gross - fees_total
     pnl_net_pct = pnl_net / notional_entry if notional_entry > 0 else 0
 
     # Holding time

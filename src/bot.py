@@ -84,23 +84,7 @@ logger = logging.getLogger("tradex.bot")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-
-def _fmt(price: float) -> str:
-    """Formate un prix de façon lisible selon sa grandeur (min 4 décimales)."""
-    if price >= 1000:
-        return f"{price:,.4f}"
-    elif price >= 1:
-        return f"{price:.4f}"
-    elif price >= 0.0001:
-        return f"{price:.6f}"
-    else:
-        # Sub-cent tokens (PEPE, SHIB, BONK, FLOKI…)
-        decimals = 6
-        temp = price
-        while temp < 0.01 and decimals < 10:
-            temp *= 10
-            decimals += 1
-        return f"{price:.{decimals}f}"
+from src.core.formatting import fmt_price as _fmt
 
 
 def _pct_dist(current: float, target: float) -> str:

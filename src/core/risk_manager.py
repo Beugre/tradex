@@ -115,6 +115,9 @@ def get_fiat_balance(balances: list[Balance]) -> tuple[float, str]:
         Tuple (montant en USD équivalent, devise d'origine).
     """
     # Taux de conversion approximatifs vers USD
+    # AVERTISSEMENT : taux statiques — si EUR/USD ou GBP/USD bouge de plus de 5%,
+    # le sizing des positions Revolut X dévie en silence. À surveiller ou remplacer
+    # par un fetch live si la devise principale devient EUR/GBP.
     fiat_to_usd = {
         "USD": 1.0,
         "EUR": 1.05,

@@ -34,6 +34,11 @@ class Regime(Enum):
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Indicateurs (copie fidèle du backtest run_backtest_adaptive.py)
+# NOTE seed EMA : _ema() s'initialise sur SMA(period), indices 0..period-2 = 0.0,
+# conformément au backtest walk-forward validé. indicators.ema() s'initialise sur
+# values[0] (approche différente). Les deux convergent après ~period barres — avec
+# un buffer de 210 bougies 15m, l'écart en production est < 0.001%.
+# NE PAS harmoniser sans re-valider le backtest.
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _ema(closes: list[float], period: int) -> list[float]:

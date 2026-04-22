@@ -11,6 +11,7 @@ Aucun appel réseau, aucune dépendance I/O.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 
@@ -56,14 +57,25 @@ def compute_sma(values: list[float], period: int) -> list[float]:
 
 
 def rolling_high(highs: list[float], lookback: int) -> list[float]:
-    """Plus haut glissant sur *lookback* barres (exclut la barre courante)."""
+    """Plus haut glissant sur *lookback* barres (exclut la barre courante) — O(n)."""
     result: list[float] = []
+    # dq contient des indices dont les valeurs sont décroissantes
+    dq: deque[int] = deque()
     for i in range(len(highs)):
         if i < 1:
             result.append(highs[0])
-        else:
-            start = max(0, i - lookback)
-            result.append(max(highs[start:i]))
+            continue
+        # Fenêtre = [max(0, i-lookback) .. i-1] (exclut i)
+        start = max(0, i - lookback)
+        # Expirer indices hors fenêtre
+        while dq and dq[0] < start:
+            dq.popleft()
+        # Insérer i-1 dans le deque (valeur highs[i-1])
+        new_idx = i - 1
+        while dq and highs[dq[-1]] <= highs[new_idx]:
+            dq.pop()
+        dq.append(new_idx)
+        result.append(highs[dq[0]])
     return result
 
 

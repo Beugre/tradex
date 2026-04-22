@@ -290,6 +290,16 @@ def _run_adaptive_pair(
     stag_min_atr_fees: float = 2.0,
     # ─ Contrôle des régimes actifs ─
     bull_only: bool = False,    # True = BULL uniquement (RANGE + STAG désactivés)
+    # ─ Améliorations v2 ─
+    use_atr_sl: bool = False,               # SL = entry - atr_sl_mult × ATR (au lieu de % fixe)
+    atr_sl_mult: float = 1.5,
+    use_atr_trail: bool = False,            # trail_dist = max(trail_pct, atr_trail_mult × ATR/peak)
+    atr_trail_mult: float = 1.5,
+    use_volume_filter: bool = False,        # signal BULL valide ssi volume > MA20 × vol_spike_mult
+    vol_spike_mult: float = 1.2,
+    use_conditional_pyramid: bool = False,  # pyramiding uniquement si (TP-prix)/TP > pyramid_remaining_pct
+    pyramid_remaining_pct: float = 0.50,
+    use_progressive_cooldown: bool = False, # après circuit-breaker DD: cooldown × 3 le lendemain
 ) -> tuple[float, list[AdaptiveTrade], list[float]]:
     """Stratégie adaptative — BULL / RANGE / STAGNATION uniquement (BEAR = pas de trade)."""
 
@@ -319,6 +329,7 @@ def _run_adaptive_pair(
     ema200_15   = _ema(closes_15m, 200)  # BULL slow (EMA200 = "EMA slow"  dans TF_S10_RSI_PYR)
     rsi_15      = _rsi(closes_15m, 14)
     atr_15      = _atr(candles_15m, 14)
+    vol_ma20_15 = _sma(volumes_15m, 20)
 
     # Index de correspondance 15m → 1H  (bisect O(log n))
     ts_1h = [c.timestamp for c in candles_1h]
@@ -334,6 +345,7 @@ def _run_adaptive_pair(
     cooldown   = 0
     daily_start_balance = initial_balance
     last_day: int | None = None
+    circuit_breaker_hit = False  # flag pour progressive_cooldown
 
     for i in range(60, n15):
         c     = candles_15m[i]
@@ -347,9 +359,15 @@ def _run_adaptive_pair(
         if day_key != last_day:
             last_day            = day_key
             daily_start_balance = balance + sum(p.cost for p in positions)
+            # Progressive cooldown : si circuit-breaker touché hier → cooldown × 3
+            if use_progressive_cooldown and circuit_breaker_hit:
+                cooldown = max(cooldown, cooldown_bars * 3)
+                circuit_breaker_hit = False
 
         daily_equity = balance + sum(p.size * price for p in positions)
         daily_dd = (daily_equity - daily_start_balance) / daily_start_balance if daily_start_balance > 0 else 0.0
+        if daily_dd <= -daily_dd_max:
+            circuit_breaker_hit = True
 
         # ── Régime 1H ────────────────────────────────────────────────────
         h_idx  = _get_1h_idx(c.timestamp)
@@ -372,7 +390,11 @@ def _run_adaptive_pair(
 
             # Trailing stop BULL : -bull_trail_pct% du peak (actif dès entrée)
             if pos.regime == Regime.BULL:
-                trail_sl = pos.peak * (1.0 - bull_trail_pct)
+                if use_atr_trail and atr_15[i] > 0:
+                    trail_dist = max(bull_trail_pct, atr_trail_mult * atr_15[i] / pos.peak)
+                    trail_sl = pos.peak * (1.0 - trail_dist)
+                else:
+                    trail_sl = pos.peak * (1.0 - bull_trail_pct)
                 if trail_sl > pos.sl:
                     pos.sl = trail_sl
 
@@ -469,17 +491,27 @@ def _run_adaptive_pair(
             bull_candle = c.close > c.open and c.close > closes_15m[i - 1]
             # Max 1 position BULL simultanée
             bull_open = sum(1 for p in positions if p.regime == Regime.BULL)
+            # Volume filter v2 : volume > MA20 × vol_spike_mult
+            vol_ok = not use_volume_filter or (
+                vol_ma20_15[i] > 0 and vol >= vol_spike_mult * vol_ma20_15[i]
+            )
 
-            if trend_ok and price_ok and rsi_ok and rsi_up and slope_ok and pullback_ok and bull_candle and bull_open == 0:
+            if trend_ok and price_ok and rsi_ok and rsi_up and slope_ok and pullback_ok and bull_candle and bull_open == 0 and vol_ok:
                 cost = balance * bull_alloc_pct
                 if cost > 1.0:
                     actual_entry = c.close * (1.0 + slippage_pct)
                     fee_in  = cost * entry_fee
                     size    = (cost - fee_in) / actual_entry
                     balance -= cost
+                    # SL : basé sur ATR (v2) ou % fixe (baseline)
+                    if use_atr_sl and atr_v > 0:
+                        sl_price = actual_entry - atr_sl_mult * atr_v
+                        sl_price = max(sl_price, actual_entry * 0.95)  # hard cap -5%
+                    else:
+                        sl_price = actual_entry * (1.0 - bull_sl_pct)
                     positions.append(_Position(
                         entry=actual_entry, size=size, cost=cost,
-                        sl=actual_entry * (1.0 - bull_sl_pct),
+                        sl=sl_price,
                         tp=actual_entry * (1.0 + bull_tp_pct),
                         peak=actual_entry, regime=Regime.BULL,
                     ))
@@ -487,6 +519,9 @@ def _run_adaptive_pair(
 
             # ── Pyramiding BULL ──────────────────────────────────────────
             for pos in positions:
+                # Pyramiding conditionnel v2 : n'ajouter que si encore ≥ X% du chemin vers TP
+                remaining_to_tp = (pos.tp - c.close) / pos.tp if pos.tp > 0 else 0.0
+                pyramid_ok = not use_conditional_pyramid or remaining_to_tp > pyramid_remaining_pct
                 if (
                     pos.regime == Regime.BULL
                     and not pos.trail_active    # réutilise trail_active comme flag pyramided
@@ -495,6 +530,7 @@ def _run_adaptive_pair(
                     and trend_ok
                     and slope_ok
                     and balance > 10.0
+                    and pyramid_ok
                 ):
                     extra = balance * bull_pyramid_alloc
                     if extra > 1.0:
@@ -692,7 +728,115 @@ def _print_results(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Runner multi-paires
+# Grille comparative des 5 améliorations v2
+# ═══════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class _V2Config:
+    name: str
+    use_atr_sl: bool = False
+    use_atr_trail: bool = False
+    use_volume_filter: bool = False
+    use_conditional_pyramid: bool = False
+    use_progressive_cooldown: bool = False
+
+
+_V2_VARIANTS: list[_V2Config] = [
+    _V2Config("BASELINE"),
+    _V2Config("1_ATR_SL",          use_atr_sl=True),
+    _V2Config("2_ATR_TRAIL",       use_atr_trail=True),
+    _V2Config("3_VOL_FILTER",      use_volume_filter=True),
+    _V2Config("4_COND_PYRAMID",    use_conditional_pyramid=True),
+    _V2Config("5_PROG_COOLDOWN",   use_progressive_cooldown=True),
+    _V2Config("ALL_5",             use_atr_sl=True, use_atr_trail=True,
+                                   use_volume_filter=True, use_conditional_pyramid=True,
+                                   use_progressive_cooldown=True),
+]
+
+
+def run_v2_grid(
+    balance: float,
+    start: datetime,
+    end: datetime,
+    pairs: list[str] = PAIRS_BIG5,
+    label: str = "",
+) -> None:
+    """Compare BASELINE vs 5 améliorations v2 — téléchargement unique, N variantes."""
+    per_pair = balance / len(pairs)
+    n_years  = (end - start).days / 365.25
+    tag      = label or f"{n_years:.1f} ans"
+
+    print(f"\n📥 Données ({start.date()} → {end.date()})…")
+    c1h_all:  dict[str, list[Candle]] = {}
+    c15m_all: dict[str, list[Candle]] = {}
+    for pair in pairs:
+        c1h_all[pair]  = download_candles(pair, start, end, interval="1h")
+        c15m_all[pair] = download_candles(pair, start, end, interval="15m")
+        print(f"  ✓ {pair}: {len(c1h_all[pair]):,} 1H | {len(c15m_all[pair]):,} 15m")
+
+    _W2 = 95
+    print(f"\n{'═' * _W2}")
+    print(f"  GRILLE AMÉLIORATIONS V2 — {tag} | ${balance:,.0f} | {start.date()} → {end.date()}")
+    print(f"{'═' * _W2}")
+    print(f"\n  {'Config':<22s}  {'Trades':>6s}  {'WR':>6s}  {'PF':>5s}  {'PnL':>10s}  {'CAGR':>7s}  {'DD':>7s}")
+    print("  " + "─" * 68)
+
+    for cfg in _V2_VARIANTS:
+        all_trades: list[AdaptiveTrade] = []
+        combined_eq: list[float]        = []
+        final_bal = 0.0
+
+        for pair in pairs:
+            c15 = c15m_all.get(pair, [])
+            c1h = c1h_all.get(pair, [])
+            if not c15 or not c1h:
+                final_bal += per_pair
+                continue
+            bal, trades, eq = _run_adaptive_pair(
+                c15, c1h, per_pair,
+                use_atr_sl=cfg.use_atr_sl,
+                use_atr_trail=cfg.use_atr_trail,
+                use_volume_filter=cfg.use_volume_filter,
+                use_conditional_pyramid=cfg.use_conditional_pyramid,
+                use_progressive_cooldown=cfg.use_progressive_cooldown,
+            )
+            all_trades.extend(trades)
+            final_bal += bal
+            combined_eq = [a + b for a, b in zip(combined_eq, eq)] if combined_eq else list(eq)
+
+        n = len(all_trades)
+        if n == 0:
+            print(f"  ⬜ {cfg.name:<20s}  {'0':>6s}  {'─':>6s}  {'─':>5s}  {'$0.00':>10s}  {'─':>7s}  {'─':>7s}")
+            continue
+
+        wins   = [t for t in all_trades if t.is_win]
+        losses = [t for t in all_trades if not t.is_win]
+        gp     = sum(t.pnl_abs for t in wins)
+        gl     = abs(sum(t.pnl_abs for t in losses)) or 1e-9
+        pf     = gp / gl
+        wr     = len(wins) / n
+        total_pnl = final_bal - balance
+        cagr   = (final_bal / balance) ** (1.0 / max(n_years, 0.01)) - 1.0 if balance > 0 else 0.0
+
+        # DD sur equity combinée
+        peak_eq = dd = 0.0
+        for v in combined_eq:
+            if v > peak_eq:
+                peak_eq = v
+            if peak_eq > 0:
+                dd = min(dd, (v - peak_eq) / peak_eq)
+
+        mark = "🟢" if pf > 1.2 and total_pnl > 0 else ("🟡" if total_pnl > 0 else "🔴")
+        pf_s = f"{pf:.2f}" if pf < 99 else ">99"
+        print(
+            f"  {mark} {cfg.name:<20s}  {n:>6d}  {wr:>5.1%}  {pf_s:>5s}  "
+            f"${total_pnl:>+9.2f}  {cagr:>+6.1%}  {dd:>6.1%}"
+        )
+    print()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Runner multi-paires (baseline)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def run_adaptive(
@@ -744,12 +888,18 @@ def run_adaptive(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--balance", type=float, default=1_000.0)
-    parser.add_argument("--years",   type=int,   default=3)
-    parser.add_argument("--start",   type=str,   default=None)
-    parser.add_argument("--end",     type=str,   default=None)
-    parser.add_argument("--pairs",   type=str,   default="big5",
+    parser.add_argument("--balance",     type=float, default=1_000.0)
+    parser.add_argument("--years",       type=int,   default=3)
+    parser.add_argument("--start",       type=str,   default=None)
+    parser.add_argument("--end",         type=str,   default=None)
+    parser.add_argument("--pairs",       type=str,   default="big5",
                         help="big5 | candidates | all | PAIR1,PAIR2,...")
+    parser.add_argument("--v2-grid",     action="store_true",
+                        help="Grille comparative des 5 améliorations v2")
+    parser.add_argument("--multi-years", action="store_true",
+                        help="Lance la grille v2 sur 1, 3 et 6 ans successivement")
+    parser.add_argument("--last-days",   type=int, default=0,
+                        help="Comparaison live : backtest sur les N derniers jours (ex: 5)")
     args = parser.parse_args()
 
     if args.pairs == "big5":
@@ -762,6 +912,32 @@ def main() -> None:
         pairs = [p.strip() for p in args.pairs.split(",")]
 
     now = datetime.now(tz=timezone.utc)
+
+    if args.last_days > 0:
+        end   = now
+        # Warmup 30j pour chauffer les indicateurs (EMA200 1H = 200h ≈ 8.3j)
+        start = end - timedelta(days=args.last_days + 30)
+        run_v2_grid(balance=args.balance, start=start, end=end, pairs=pairs,
+                    label=f"LIVE {args.last_days}j (warmup 30j inclus)")
+        return
+
+    if args.v2_grid or args.multi_years:
+        if args.multi_years:
+            for y in (1, 3, 6):
+                s = now - timedelta(days=365 * y)
+                run_v2_grid(balance=args.balance, start=s, end=now, pairs=pairs,
+                            label=f"{y} an{'s' if y > 1 else ''}")
+        else:
+            if args.start and args.end:
+                start = datetime.strptime(args.start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                end   = datetime.strptime(args.end,   "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            else:
+                end   = now
+                start = end - timedelta(days=365 * args.years)
+            run_v2_grid(balance=args.balance, start=start, end=end, pairs=pairs,
+                        label=f"{args.years} ans")
+        return
+
     if args.start and args.end:
         start = datetime.strptime(args.start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         end   = datetime.strptime(args.end,   "%Y-%m-%d").replace(tzinfo=timezone.utc)

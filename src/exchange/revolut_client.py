@@ -35,6 +35,27 @@ from src.core.models import Balance, Candle, OrderRequest, OrderSide, TickerData
 logger = logging.getLogger(__name__)
 
 
+# ── Exceptions typées ─────────────────────────────────────────────────────────
+
+class RevolutAPIError(RuntimeError):
+    """Erreur API Revolut X — porte le status_code pour faciliter le filtrage."""
+    def __init__(self, status_code: int, method: str, path: str, body: str) -> None:
+        super().__init__(f"API {status_code} {method} {path} | {body[:500]}")
+        self.status_code = status_code
+
+
+class RevolutAuthError(RevolutAPIError):
+    """401 — clé invalide ou signature incorrecte. Le bot doit s'arrêter."""
+
+
+class RevolutRateLimitError(RevolutAPIError):
+    """429 — rate limit atteint, backoff requis."""
+
+
+class RevolutServerError(RevolutAPIError):
+    """5xx — erreur serveur temporaire, retry possible."""
+
+
 class RevolutXClient:
     """Client pour l'API REST Revolut X avec authentification Ed25519."""
 
@@ -278,9 +299,9 @@ class RevolutXClient:
                 if recheck_status == "FILLED":
                     logger.info("💰 MAKER-FIRST | ✅ Rempli entre-temps — fee 0%%")
                     return {"venue_order_id": venue_order_id, "fill_type": "maker", "actual_price": float(order.price), "response": recheck}
-            except Exception:
+            except Exception as e_recheck:
+                logger.debug("💰 MAKER-FIRST | Re-check statut échoué: %s", e_recheck)
                 pass
-            # Si c'est un 409 et qu'on ne peut pas vérifier, assumer filled
             if is_conflict:
                 logger.warning("💰 MAKER-FIRST | ⚠️ 409 Conflict + re-check échoué → assume filled")
                 return {"venue_order_id": venue_order_id, "fill_type": "maker", "actual_price": float(order.price), "response": resp}
@@ -391,10 +412,14 @@ class RevolutXClient:
                 path,
                 resp_text,
             )
-            # Inclure le body API dans l'exception pour faciliter le diagnostic
-            raise RuntimeError(
-                f"API {response.status_code} {method} {path} | {resp_text[:500]}"
-            )
+            sc = response.status_code
+            if sc == 401:
+                raise RevolutAuthError(sc, method, path, resp_text)
+            if sc == 429:
+                raise RevolutRateLimitError(sc, method, path, resp_text)
+            if sc >= 500:
+                raise RevolutServerError(sc, method, path, resp_text)
+            raise RevolutAPIError(sc, method, path, resp_text)
 
         return response.json()
 

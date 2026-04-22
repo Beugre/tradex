@@ -216,21 +216,7 @@ INF_TRADING_PAIRS: list[str] = [
 H4_INTERVAL = 240  # H4 en minutes
 
 
-def _fmt(price: float) -> str:
-    """Formate un prix lisible."""
-    if price >= 1000:
-        return f"{price:,.4f}"
-    elif price >= 1:
-        return f"{price:.4f}"
-    elif price >= 0.0001:
-        return f"{price:.6f}"
-    else:
-        decimals = 6
-        temp = price
-        while temp < 0.01 and decimals < 10:
-            temp *= 10
-            decimals += 1
-        return f"{price:.{decimals}f}"
+from src.core.formatting import fmt_price as _fmt
 
 
 # ── Live Cycle State ──────────────────────────────────────────────────────────
@@ -1166,7 +1152,12 @@ class InfinityBot:
         )
 
         # Firebase : close all trade docs
-        self._log_cycle_close_firebase(ctx, cycle.pmp, pnl_usd, "TP_COMPLETE")
+        # Prix de sortie effectif = moyenne pondérée de tous les TPs
+        total_sold = cycle.total_size - cycle.size_remaining
+        effective_exit_price = (
+            cycle.total_proceeds / total_sold if total_sold > 0 else cycle.pmp
+        )
+        self._log_cycle_close_firebase(ctx, effective_exit_price, pnl_usd, "TP_COMPLETE")
 
         # Reset cycle
         ctx.cycle = InfLiveCycle()

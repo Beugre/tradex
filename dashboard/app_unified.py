@@ -2574,7 +2574,29 @@ def render_adaptive_bull():
     )
     _render_last_heartbeat_cockpit("adaptive", d, cfg["max_pos"])
     st.divider()
-    _render_kpis(d["stats"], len(d["open"]), cfg["max_pos"])
+
+    # KPIs Adaptive — P&L affiché = delta equity (heartbeat) vs capital de départ
+    # car la somme des clôtures est trompeuse (capital souvent en position ouverte)
+    stats = d["stats"].copy() if d["stats"] else {}
+    hb_data = (d.get("heartbeat") or {}).get("data") or {}
+    current_equity = float(hb_data.get("total_equity", 0.0))
+    if current_equity > 0:
+        # Capital initial = premier equity_at_entry connu dans les trades clôturés
+        initial_capital = None
+        closed_df = d.get("closed")
+        if closed_df is not None and not closed_df.empty and "equity_at_entry" in closed_df.columns:
+            first_eq = pd.to_numeric(closed_df["equity_at_entry"], errors="coerce").dropna()
+            if not first_eq.empty:
+                initial_capital = float(first_eq.iloc[0])
+        if initial_capital and initial_capital > 0:
+            stats["total_pnl"] = current_equity - initial_capital
+        stats.setdefault("n_trades", 0)
+        stats.setdefault("n_wins", 0)
+        stats.setdefault("n_losses", 0)
+        stats.setdefault("win_rate", 0.0)
+        stats.setdefault("profit_factor", 0.0)
+        stats["equity"] = current_equity
+    _render_kpis(stats, len(d["open"]), cfg["max_pos"])
     st.divider()
 
     _render_positions(d["open"], bot_type="adaptive", exchange="binance")

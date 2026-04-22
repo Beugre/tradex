@@ -116,21 +116,7 @@ MAX_MAKER_RETRIES = 2
 BRK_STATE_DIR: str = os.path.join(os.path.dirname(__file__), "..", "data")
 
 
-def _fmt(price: float) -> str:
-    """Formate un prix lisible."""
-    if price >= 1000:
-        return f"{price:,.4f}"
-    elif price >= 1:
-        return f"{price:.4f}"
-    elif price >= 0.0001:
-        return f"{price:.6f}"
-    else:
-        decimals = 6
-        temp = price
-        while temp < 0.01 and decimals < 10:
-            temp *= 10
-            decimals += 1
-        return f"{price:.{decimals}f}"
+from src.core.formatting import fmt_price as _fmt
 
 
 # ─────────────────────────────────────────────────────────────────────

@@ -94,21 +94,7 @@ _SKIPPED_SYMBOLS_FILE = os.path.join(
 )
 
 
-def _fmt(price: float) -> str:
-    """Formate un prix de façon lisible."""
-    if price >= 1000:
-        return f"{price:,.4f}"
-    elif price >= 1:
-        return f"{price:.4f}"
-    elif price >= 0.0001:
-        return f"{price:.6f}"
-    else:
-        decimals = 6
-        temp = price
-        while temp < 0.01 and decimals < 10:
-            temp *= 10
-            decimals += 1
-        return f"{price:.{decimals}f}"
+from src.core.formatting import fmt_price as _fmt
 
 
 def _pct(a: float, b: float) -> str:
