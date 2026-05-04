@@ -305,6 +305,8 @@ def check_bull_entry(
     bull_slope_bars: int = 10,
     bull_slope_min_pct: float = 0.001,
     bull_pullback_bars: int = 3,
+    use_volume_filter: bool = False,
+    vol_spike_mult: float = 1.2,
 ) -> Optional[BullSignal]:
     """
     Retourne un BullSignal si toutes les conditions d'entrée BULL sont réunies.
@@ -318,6 +320,7 @@ def check_bull_entry(
     6. Slope EMA50 ≥ +bull_slope_min_pct% sur bull_slope_bars barres
     7. Pullback récent : un low des N dernières barres ≤ EMA50 × 1.012
     8. Bougie haussière (close > open et close > close[-1])
+    9. Volume filter (optionnel) : volume > MA20 × vol_spike_mult
 
     Retourne None si conditions non réunies ou données insuffisantes.
     """
@@ -332,10 +335,12 @@ def check_bull_entry(
     idx = n - 1
     closes  = [c.close for c in candles_15m]
     lows    = [c.low   for c in candles_15m]
+    volumes = [c.volume for c in candles_15m]
 
     ema50_arr  = _ema(closes, 50)
     ema200_arr = _ema(closes, 200)
     rsi_arr    = _rsi(closes, 14)
+    vol_ma20   = _sma(volumes, 20) if use_volume_filter else None
 
     e50  = ema50_arr[idx]
     e200 = ema200_arr[idx]
@@ -389,6 +394,13 @@ def check_bull_entry(
     bull_candle = c.close > c.open and c.close > closes[idx - 1]
     if not bull_candle:
         return None
+
+    # 8. Volume filter (optionnel)
+    if use_volume_filter and vol_ma20 is not None:
+        vol_current = volumes[idx] if idx < len(volumes) else 0
+        vol_ma = vol_ma20[idx] if idx < len(vol_ma20) else 0
+        if vol_ma > 0 and vol_current < vol_spike_mult * vol_ma:
+            return None
 
     # Signal validé
     return BullSignal(
@@ -588,6 +600,8 @@ def check_bull_entry_debug(
     bull_slope_bars: int = 10,
     bull_slope_min_pct: float = 0.001,
     bull_pullback_bars: int = 3,
+    use_volume_filter: bool = False,
+    vol_spike_mult: float = 1.2,
 ) -> EntryDebug:
     """
     Identique à check_bull_entry() mais retourne toutes les conditions intermédiaires

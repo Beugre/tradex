@@ -531,6 +531,8 @@ ADT_BULL_SL_PCT: float        = float(os.getenv("ADT_BULL_SL_PCT", "0.015"))    
 ADT_BULL_TRAIL_PCT: float     = float(os.getenv("ADT_BULL_TRAIL_PCT", "0.025"))  # Trailing -2.5% du peak
 ADT_BULL_TP_PCT: float        = float(os.getenv("ADT_BULL_TP_PCT", "0.080"))     # TP +8%
 ADT_BULL_PYRAMID_ALLOC: float = float(os.getenv("ADT_BULL_PYRAMID_ALLOC", "0.15"))  # Pyramiding +15%
+ADT_USE_VOLUME_FILTER: bool   = os.getenv("ADT_USE_VOLUME_FILTER", "true").lower() in ("true", "1", "yes")  # Volume filter entrée BULL
+ADT_VOL_SPIKE_MULT: float     = float(os.getenv("ADT_VOL_SPIKE_MULT", "1.2"))     # Volume > MA20 × 1.2
 ADT_DAILY_DD_MAX: float       = float(os.getenv("ADT_DAILY_DD_MAX", "0.05"))     # Circuit-breaker DD -5%/jour
 ADT_COOLDOWN_BARS: int        = int(os.getenv("ADT_COOLDOWN_BARS", "16"))        # 4h cooldown post-perte (16×15m)
 ADT_LOG_CANDLE: bool          = os.getenv("ADT_LOG_CANDLE", "true").lower() in ("true", "1", "yes")  # Log détaillé par bougie 15m (true=INFO, false=désactivé)

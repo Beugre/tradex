@@ -98,6 +98,8 @@ ADT_BULL_SL_PCT: float         = config.ADT_BULL_SL_PCT
 ADT_BULL_TRAIL_PCT: float      = config.ADT_BULL_TRAIL_PCT
 ADT_BULL_TP_PCT: float         = config.ADT_BULL_TP_PCT
 ADT_BULL_PYRAMID_ALLOC: float  = config.ADT_BULL_PYRAMID_ALLOC
+ADT_USE_VOLUME_FILTER: bool    = config.ADT_USE_VOLUME_FILTER
+ADT_VOL_SPIKE_MULT: float      = config.ADT_VOL_SPIKE_MULT
 ADT_DAILY_DD_MAX: float        = config.ADT_DAILY_DD_MAX
 ADT_COOLDOWN_BARS: int         = config.ADT_COOLDOWN_BARS
 ADT_LOG_CANDLE: bool           = config.ADT_LOG_CANDLE
@@ -1076,6 +1078,8 @@ class AdaptiveBullBot:
             bull_rsi_max=65.0,
             bull_sl_pct=ADT_BULL_SL_PCT,
             bull_tp_pct=ADT_BULL_TP_PCT,
+            use_volume_filter=ADT_USE_VOLUME_FILTER,
+            vol_spike_mult=ADT_VOL_SPIKE_MULT,
         )
 
         if signal is None:
@@ -1474,6 +1478,8 @@ class AdaptiveBullBot:
             buf_15m, rdebug.regime,
             bull_rsi_min=50.0, bull_rsi_max=65.0,
             bull_sl_pct=ADT_BULL_SL_PCT, bull_tp_pct=ADT_BULL_TP_PCT,
+            use_volume_filter=ADT_USE_VOLUME_FILTER,
+            vol_spike_mult=ADT_VOL_SPIKE_MULT,
         )
 
         logger.info(
