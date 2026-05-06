@@ -1795,6 +1795,9 @@ SL distance = 6.40$ → size = 3.00 / 6.40 = 0.469 ETH
 | `ADT_BULL_ALLOC_PCT`       | 0.33                                            | 33% du budget par position (3 × 33% = 99% max exposé)       |
 | `ADT_BULL_SL_PCT`          | 1.5%                                            | Stop-loss fixe sous le prix d'entrée                        |
 | `ADT_BULL_TRAIL_PCT`       | 2.5%                                            | Trailing stop distance depuis le peak                       |
+| `ADT_USE_BREAKEVEN_LOCK`   | true                                            | Active le verrou net des coûts après validation du move     |
+| `ADT_BREAKEVEN_TRIGGER_PCT`| 2.0%                                            | Seuil de peak pour activer le plancher de SL net            |
+| `ADT_BREAKEVEN_EXIT_SLIPPAGE_PCT` | 0.05%                                  | Slippage SELL estimé utilisé dans le calcul du plancher     |
 | `ADT_BULL_TP_PCT`          | 8.0%                                            | Take-profit cible                                           |
 | `ADT_BULL_PYRAMID_ALLOC`   | 0.15                                            | Pyramiding : +15% du budget restant sur position gagnante   |
 | `ADT_DAILY_DD_MAX`         | 5%                                              | Circuit-breaker : DD journalier max avant pause             |
@@ -1834,6 +1837,7 @@ Entrée          TP (+8%)
 │               │
 ├──────────────→│
 │ Trailing -2.5%│ (depuis le peak, actif dès le 1er tick)
+│ BE lock +2.0% │ (plancher SL net des coûts, puis le trailing continue de monter)
 │               │
 SL -1.5%        ← sortie si EMA50 < EMA200 (trend break)
 ```

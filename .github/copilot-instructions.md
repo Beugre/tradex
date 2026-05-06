@@ -413,6 +413,9 @@ ADT_HEARTBEAT_SECONDS=600
 ADT_BULL_ALLOC_PCT=0.33
 ADT_BULL_SL_PCT=0.015
 ADT_BULL_TRAIL_PCT=0.025
+ADT_USE_BREAKEVEN_LOCK=true
+ADT_BREAKEVEN_TRIGGER_PCT=0.02
+ADT_BREAKEVEN_EXIT_SLIPPAGE_PCT=0.0005
 ADT_BULL_TP_PCT=0.080
 ADT_BULL_PYRAMID_ALLOC=0.15
 ADT_DAILY_DD_MAX=0.05
@@ -427,10 +430,11 @@ ADT_COOLDOWN_BARS=16
   2. **Signal 15m** : Golden cross (EMA50 > EMA200) + RSI 50-65 + slope EMA50 positif + pullback + bougie haussière
   3. **SL** : -1.5% de l'entrée (géré par polling ticker)
   4. **Trailing Stop** : -2.5% du peak (activé dès le premier tick)
-  5. **TP** : +8% (géré par polling ticker)
-  6. **Trend Break** : Sortie si EMA50 < EMA200 sur nouvelle bougie 15m
-  7. **Pyramiding** : +15% du budget restant sur position gagnante (1× par trade)
-  8. **Circuit-breaker** : DD journalier max -5%
+  5. **Breakeven Lock** : dès que le peak atteint +2%, SL plancher net des coûts (frais + slippage), puis le trailing continue de monter
+  6. **TP** : +8% (géré par polling ticker)
+  7. **Trend Break** : Sortie si EMA50 < EMA200 sur nouvelle bougie 15m
+  8. **Pyramiding** : +15% du budget restant sur position gagnante (1× par trade)
+  9. **Circuit-breaker** : DD journalier max -5%
 - **Paires** : BTC, ETH, SOL, XRP, AVAX, NEAR (6 paires USDC), auto-configurées via `ADT_TRADING_PAIRS`
 - **Capital** : Budget fixe isolé (`ADT_ALLOCATED_BALANCE=1000`), sans lien avec l'allocateur Trail/Crash/Listing
 - **Exécution** : MARKET orders (taker 0.1%) — pas de maker-only retry

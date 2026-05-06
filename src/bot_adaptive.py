@@ -98,6 +98,9 @@ ADT_BULL_SL_PCT: float         = config.ADT_BULL_SL_PCT
 ADT_BULL_TRAIL_PCT: float      = config.ADT_BULL_TRAIL_PCT
 ADT_BULL_TP_PCT: float         = config.ADT_BULL_TP_PCT
 ADT_BULL_PYRAMID_ALLOC: float  = config.ADT_BULL_PYRAMID_ALLOC
+ADT_USE_BREAKEVEN_LOCK: bool   = config.ADT_USE_BREAKEVEN_LOCK
+ADT_BREAKEVEN_TRIGGER_PCT: float = config.ADT_BREAKEVEN_TRIGGER_PCT
+ADT_BREAKEVEN_EXIT_SLIPPAGE_PCT: float = config.ADT_BREAKEVEN_EXIT_SLIPPAGE_PCT
 ADT_USE_VOLUME_FILTER: bool    = config.ADT_USE_VOLUME_FILTER
 ADT_VOL_SPIKE_MULT: float      = config.ADT_VOL_SPIKE_MULT
 ADT_DAILY_DD_MAX: float        = config.ADT_DAILY_DD_MAX
@@ -387,6 +390,14 @@ class AdaptiveBullBot:
                      ADT_BULL_ALLOC_PCT * 100, ADT_MAX_POSITIONS)
         logger.info("   SL: -%.1f%% | Trail: -%.1f%% | TP: +%.1f%%",
                      ADT_BULL_SL_PCT * 100, ADT_BULL_TRAIL_PCT * 100, ADT_BULL_TP_PCT * 100)
+        if ADT_USE_BREAKEVEN_LOCK:
+            logger.info(
+                "   BE lock   : ON (trigger +%.1f%% | exit slippage %.2f%%)",
+                ADT_BREAKEVEN_TRIGGER_PCT * 100,
+                ADT_BREAKEVEN_EXIT_SLIPPAGE_PCT * 100,
+            )
+        else:
+            logger.info("   BE lock   : OFF")
         logger.info("   Pyramid   : %.0f%% | DD max jour: %.0f%%",
                      ADT_BULL_PYRAMID_ALLOC * 100, ADT_DAILY_DD_MAX * 100)
         logger.info("   Cooldown  : %d barres 15m | Polling: %ds",
@@ -747,6 +758,37 @@ class AdaptiveBullBot:
                     f"  Gain min garanti: `{locked_pnl:+.2f} USDC` soit `{locked_pct:+.1f}%`\n"
                     f"[Dashboard]({DASHBOARD_URL})"
                 )
+
+        # Breakeven lock net des coûts : dès +trigger atteint, on pose un plancher de SL.
+        # Le trailing continue ensuite de monter normalement au-dessus de ce plancher.
+        if ADT_USE_BREAKEVEN_LOCK and pos.peak_price >= pos.entry_price * (1.0 + ADT_BREAKEVEN_TRIGGER_PCT):
+            fee_rate = config.BINANCE_TAKER_FEE
+            denom = pos.size * (1.0 - ADT_BREAKEVEN_EXIT_SLIPPAGE_PCT) * (1.0 - fee_rate)
+            if denom > 0:
+                be_sl = pos.cost_usdc / denom
+                if be_sl > pos.sl_price:
+                    prev_sl = pos.sl_price
+                    pos.sl_price = be_sl
+                    sl_updated = True
+                    locked_pnl = (pos.sl_price - pos.entry_price) * pos.size
+                    locked_pct = (pos.sl_price - pos.entry_price) / pos.entry_price * 100
+                    logger.info(
+                        "[%s] 🔒 BE lock: %s → %s | trigger=+%.1f%% | verrouillé: %+.2f USDC (%+.1f%%)",
+                        symbol,
+                        _fmt(prev_sl),
+                        _fmt(pos.sl_price),
+                        ADT_BREAKEVEN_TRIGGER_PCT * 100,
+                        locked_pnl,
+                        locked_pct,
+                    )
+                    if prev_sl < pos.entry_price and pos.sl_price > pos.entry_price:
+                        self._telegram._send(
+                            f"🔒 *Trail SL en positif — {symbol}* 📈 ADAPTIVE BULL\n"
+                            f"  Entrée: `{_fmt(pos.entry_price)}` | Peak: `{_fmt(pos.peak_price)}`\n"
+                            f"  SL verrouillé: `{_fmt(pos.sl_price)}`\n"
+                            f"  Gain min garanti: `{locked_pnl:+.2f} USDC` soit `{locked_pct:+.1f}%`\n"
+                            f"[Dashboard]({DASHBOARD_URL})"
+                        )
 
         # SL check (initial ou trailing)
         if price <= pos.sl_price:
