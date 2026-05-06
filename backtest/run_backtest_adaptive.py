@@ -297,7 +297,7 @@ def _run_adaptive_pair(
     atr_trail_mult: float = 1.5,
     use_volume_filter: bool = False,        # signal BULL valide ssi volume > MA20 × vol_spike_mult
     vol_spike_mult: float = 1.2,
-    use_breakeven_lock: bool = False,       # verrouille un SL net flat (frais+slippage) après un move minimal
+    use_breakeven_lock: bool = False,       # verrouille un plancher de SL à +trigger après un move minimal
     breakeven_trigger_pct: float = 0.012,   # activation du verrou à +1.2% depuis l'entrée
     use_conditional_pyramid: bool = False,  # pyramiding uniquement si (TP-prix)/TP > pyramid_remaining_pct
     pyramid_remaining_pct: float = 0.50,
@@ -400,16 +400,12 @@ def _run_adaptive_pair(
                 if trail_sl > pos.sl:
                     pos.sl = trail_sl
 
-                # Verrou breakeven net des coûts: dès qu'un minimum de hausse est atteint,
-                # on force un SL qui couvre frais d'entrée/sortie + slippage de sortie.
+                # Verrou du gain: dès qu'un minimum de hausse est atteint,
+                # on force un plancher de SL à +trigger depuis l'entrée.
                 if use_breakeven_lock and pos.peak >= pos.entry * (1.0 + breakeven_trigger_pct):
-                    # PnL >= 0 si: size * exit * (1-slip) * (1-exit_fee) >= cost
-                    # donc exit >= cost / (size * (1-slip) * (1-exit_fee)).
-                    denom = pos.size * (1.0 - slippage_pct) * (1.0 - exit_fee)
-                    if denom > 0:
-                        be_price = pos.cost / denom
-                        if be_price > pos.sl:
-                            pos.sl = be_price
+                    lock_floor_sl = pos.entry * (1.0 + breakeven_trigger_pct)
+                    if lock_floor_sl > pos.sl:
+                        pos.sl = lock_floor_sl
 
             # TP (RANGE, STAGNATION ET BULL avec TP fixe)
             if pos.tp > 0 and price >= pos.tp:
@@ -922,9 +918,9 @@ def main() -> None:
     parser.add_argument("--last-days",   type=int, default=0,
                         help="Comparaison live : backtest sur les N derniers jours (ex: 5)")
     parser.add_argument("--use-breakeven-lock", action="store_true",
-                        help="Backtest: verrouille un SL net flat (frais + slippage) après un move minimal")
+                        help="Backtest: verrouille un plancher de SL a +trigger apres un move minimal")
     parser.add_argument("--breakeven-trigger-pct", type=float, default=0.012,
-                        help="Seuil d'activation du lock breakeven (ex: 0.012 = +1.2%)")
+                        help="Seuil d'activation du lock gain (ex: 0.012 = +1.2%)")
     args = parser.parse_args()
 
     if args.pairs == "big5":
